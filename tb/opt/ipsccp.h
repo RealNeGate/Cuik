@@ -167,9 +167,10 @@ static void func_sccp_rewrite_task(TPool* tp, void** arg) {
         worklist_clear(ws);
     }
 
-    // we've rewritten the graph now, let's get the initial sizes for IPSCCP
+    // we've rewritten the graph now, let's get the size metrics
+    // for inlining.
     IPOSolver* ipo = m->ipo;
-    ipo->size_classes[f->uid] = classify_size(f, ws);
+    ipo->size_metric[f->uid] = compute_size(f, ws);
 
     tb_arena_destroy(&f->tmp_arena);
     cuikperf_region_end();
@@ -238,7 +239,7 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
             TB_Function* f = (TB_Function*) s;
             Lattice* args = f->ipsccp_args ? f->ipsccp_args : &TOP_IN_THE_SKY;
             Lattice* ret  = f->ipsccp_ret  ? f->ipsccp_ret  : &TOP_IN_THE_SKY;
-            if (args != &TOP_IN_THE_SKY && ret != &TOP_IN_THE_SKY) {
+            if (args != &TOP_IN_THE_SKY) {
                 #if 0
                 printf("%s: ", f->super.name);
                 print_lattice(args);

@@ -525,6 +525,30 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
     }
 }
 
+static Lattice* lattice_remove_widen(TB_Function* f, Lattice* a) {
+    if (a->tag == LATTICE_INT && a->_int.widen != 0) {
+        LatticeInt aa = a->_int;
+        aa.widen = 0;
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = aa });
+    }
+
+    return a;
+}
+
+// lattice elements are equivalent disregarding the widening
+static bool lattice_spec_eq(TB_Function* f, Lattice* a, Lattice* b) {
+    if (a == b) {
+        return true;
+    } else if (a->tag == LATTICE_INT && b->tag == LATTICE_INT) {
+        LatticeInt aa = a->_int;
+        LatticeInt bb = a->_int;
+        aa.widen = 0, bb.widen = 0;
+        return memcmp(&aa, &bb, sizeof(aa)) == 0;
+    } else {
+        return false;
+    }
+}
+
 // least upper bound between a and b
 static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b) {
     a = lattice_dual(f, a);

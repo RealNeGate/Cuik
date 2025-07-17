@@ -282,6 +282,7 @@ static CProp_Partition* cprop_split(TB_Function* f, CProp* cprop, CProp_Partitio
 }
 
 static void* cprop_what_type(TB_Function* f, CProp* cprop, CProp_Node* node) {
+    // return lattice_remove_widen(f, latuni_get(f, node->n));
     return latuni_get(f, node->n);
 }
 
@@ -527,6 +528,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
 
                             if (latuni_set_progress(f, USERN(u), new_type->elems[index])) {
                                 push_cprop_users(f, cprop, USERN(u));
+                                sparse_set_put(&cprop->fallen, USERN(u)->gvn);
                             }
                         }
                     }

@@ -417,6 +417,10 @@ struct TB_Function {
         // IPO lock
         Futex ipo_lock;
 
+        #if TB_OPTDEBUG_SERVER
+        int dbg_server_t;
+        #endif
+
         // nice stats
         struct {
             #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_ISEL
@@ -611,6 +615,13 @@ typedef struct {
     // thus function_sym_start tells you what the starting point is in the symbol table
     TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_Arena* arena);
 } IDebugFormat;
+
+typedef struct OutStream {
+    void (*color)(struct OutStream* s, int ansi_code);
+    void (*write)(struct OutStream* s, size_t n, const char* data);
+    int (*writef)(struct OutStream* s, const char* fmt, va_list ap);
+    bool quoted;
+} OutStream;
 
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
 

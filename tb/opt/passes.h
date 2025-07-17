@@ -1,5 +1,6 @@
 #pragma once
 #include "../tb_internal.h"
+#include "streams.h"
 #include <arena_array.h>
 #include <limits.h>
 

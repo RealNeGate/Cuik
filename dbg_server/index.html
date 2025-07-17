@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap" rel="stylesheet">
+<script src="diff.js"></script>
+
+<body style="color: #FFF; margin: 0">
+<style>
+html, body {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
+.column {
+  float: left;
+  height: inherit;
+  padding: 1em;
+  box-sizing: border-box;
+  display: flex;
+  flex-flow: column;
+
+  border: 1px solid;
+  border-color: black;
+}
+
+.row {
+  height: inherit;
+}
+
+ins {
+  background-color: #4C7C25;
+  display: block;
+  max-width: inherit;
+  text-decoration: none;
+}
+
+del {
+  display: block;
+  max-width: inherit;
+  background-color: #6F1313;
+  text-decoration: none;
+}
+
+.pass-sidebar {
+  width: fit-content;
+  background-color: #222;
+}
+
+.pass-button {
+  background-color: #666;
+  width: 100%;
+  border: 1px solid;
+  border-color: black;
+  color: white;
+  padding: 15px 32px;
+  text-align: center;
+  text-decoration: none;
+  display: block;
+  font-size: 16px;
+}
+
+.heading {
+  width: fit-content;
+}
+
+.func-lister {
+  float: right;
+  height: 100%;
+}
+
+.pass-active {
+  background-color: #AAA;
+}
+
+.pass-changed {
+  color: #1de01d;
+}
+
+.pass-button:hover {
+  background-color: #3e8e41;
+}
+
+.ir-view {
+  flex: 1;
+  overflow: auto;
+  height: inherit;
+}
+
+/* Clear floats after the columns */
+.row:after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+.mono {
+  color: #FFF;
+  font-family: "Roboto Mono", monospace;
+  font-weight: 400;
+  margin: 0;
+  background-color: #1E1E1E;
+}
+
+ul.no-bullets {
+  list-style-type: none; /* Remove bullets */
+  padding: 0; /* Remove padding */
+  margin: 0; /* Remove margins */
+}
+</style>
+
+<div class="row">
+  <div class="column" style="width: 10%; background-color:#555;">
+    <button onclick="startup()" id="connect_btn">Connect</button>
+  </div>
+  <div class="column" style="width: 45%; background-color:#555">
+    <div style="margin-bottom: 1em">
+      <h1 class="heading" style="float: left">IR View</h1>
+      <select class="func-lister" id="func_lister" onchange="refresh_func_view(true)" style="width: 30%"></select>
+    </div>
+    <div style="flex-grow: 1; min-height: 0;">
+      <div style="display: flex; flex-direction: row; height: 100%;">
+        <div id="pass-list" class="pass-sidebar" style="overflow-y: auto; border-right: 1px solid; border-color: black;">
+        </div>
+        <pre id="ir_view" class="mono ir-view" style="padding-left: 1em;">...</pre>
+      </div>
+    </div>
+  </div>
+  <div class="column" style="width: 45%; background-color:#555;">
+    <div style="margin-bottom: 1em">
+      <h1 class="heading" style="float: left">Logs</h1>
+    </div>
+    <p id="log" class="mono" style="flex: 1 1 auto; overflow: scroll;">NOT CONNECTED!</p>
+  </div>
+</div>
+
+<script src="./main.js"></script>
+</body>

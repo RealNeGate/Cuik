@@ -207,6 +207,45 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Nod
     tb_arena_restore(arena, sp);
 }
 
+static bool should_full_inline_by_size(TB_Module* m, IPOSolver* ipo, int caller_size, TB_Function* target) {
+    SizeClass caller_class = classify_size(caller_size);
+    int target_size = ipo->size_metric[target->uid];
+
+    // if all callsites inlined, how big would that get?
+    int upper_inline_bound = ipo->ref_count[target->uid];
+    if (is_function_root(target)) {
+        // we need at least one uninlined, addressable version of the function
+        upper_inline_bound += 1;
+    }
+    upper_inline_bound *= target_size;
+
+    SizeClass lower_class = classify_size(target_size);
+    SizeClass upper_class = classify_size(upper_inline_bound);
+
+    TB_OPTDEBUG(INLINE)(printf("  lower=%d,%s   upper=%d,%s\n", target_size, size_strs[lower_class], upper_inline_bound, size_strs[upper_class]));
+
+    // large functions will stop inlining completely
+    if (caller_class == SIZE_LARGE || lower_class == SIZE_LARGE) {
+        return false;
+    }
+
+    // we can always inline "small" functions
+    if (lower_class == SIZE_SMALL) {
+        TB_OPTDEBUG(INLINE)(printf("  YES, the target is tiny!\n"));
+        return true;
+    }
+
+    // sometimes a function is a bit larger but since there's so
+    // little references to it, inlining it might not actually be
+    // so bad.
+    if (upper_class <= SIZE_SMALL_MED) {
+        TB_OPTDEBUG(INLINE)(printf("  YES, the upper bound on inlining was small enough!\n"));
+        return true;
+    }
+
+    return false;
+}
+
 static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws, TPool* pool) {
     bool progress = false;
     TB_OPTDEBUG(INLINE)(printf("BOTTOM-UP ORDER:\n"));
@@ -258,9 +297,8 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
         cuikperf_region_end();
 
         SCCNode* node = nl_table_get(&scc->nodes, f);
-
-        SizeClass size = ipo->size_classes[f->uid];
-        TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s (%s)\n", f->super.name, size_strs[size]));
+        int size = ipo->size_metric[f->uid];
+        TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s (%d, %s)\n", f->super.name, size, classify_size_str(size)));
 
         for (size_t i = 1; i < callgraph->input_count;) {
             TB_Node* call = callgraph->inputs[i++];
@@ -270,22 +308,15 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
             }
 
             cuikperf_region_start("inline?", target->super.name);
-            SizeClass target_size = ipo->size_classes[target->uid];
+            TB_OPTDEBUG(INLINE)(printf("  -> %s?", target->super.name));
 
-            bool should = false;
-            // large functions will stop inlining completely
-            if (size != SIZE_LARGE && target_size != SIZE_LARGE) {
-                if (target_size == SIZE_SMALL) {
-                    should = true;
-                }
-            }
-
-            TB_OPTDEBUG(INLINE)(printf("  -> %s (from %%%u, %s)... %s\n", target->super.name, call->gvn, size_strs[target_size], should ? "YES" : "NO"));
-
+            bool should = should_full_inline_by_size(m, ipo, size, target);
             if (should) {
                 inline_into(scc->arena, f, ws, call, target);
                 i -= 1;
                 progress = true;
+
+                TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Inlining '%s'", target->super.name));
 
                 // remove edge on graph
                 ipo->ref_count[target->uid] -= 1;
@@ -296,11 +327,13 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
                 }
 
                 // re-evaluate our code size
-                SizeClass new_size = classify_size(f, ws);
-                if (size != new_size) {
-                    TB_OPTDEBUG(INLINE)(printf("  -> grown to %s\n", size_strs[new_size]));
-                    ipo->size_classes[f->uid] = size = new_size;
+                int new_size = compute_size(f, ws);
+                if (classify_size(size) != classify_size(new_size)) {
+                    TB_OPTDEBUG(INLINE)(printf("  -> grown to %d, %s\n", new_size, classify_size_str(new_size)));
                 }
+                ipo->size_metric[f->uid] = size = new_size;
+            } else {
+                TB_OPTDEBUG(INLINE)(printf("  NO, the upper bound on inlining was small enough!\n"));
             }
             cuikperf_region_end();
         }

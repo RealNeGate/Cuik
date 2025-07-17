@@ -14,6 +14,8 @@
 #include "passes.h"
 #include <log.h>
 
+#include "../sandbird/sandbird.h"
+
 // helps us do some matching later
 static void remove_user(TB_Function* f, TB_Node* n, int slot);
 static void remove_input(TB_Function* f, TB_Node* n, size_t i);
@@ -235,6 +237,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "list_sched.h"
 #include "bb_placement.h"
 #include "interp.h"
+#include "dbg_server.h"
 #include "dbg.h"
 
 static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
@@ -1302,6 +1305,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
     TB_OPTDEBUG(PEEP)(log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(f->worklist), f->node_count));
 
+    TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Initial"));
     TB_OPTDEBUG(PASSES)(printf("FUNCTION %s:\n", f->super.name));
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
 
@@ -1333,6 +1337,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
                 TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
                 dirty |= ALL_DIRTY;
             }
+            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Peepholes"));
 
             #if TB_OPTDEBUG_STATS
             if (f->stats.solver_n > 0) {
@@ -1351,6 +1356,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
                 dirty |= ALL_DIRTY;
             }
             // total += cuik_time_in_nanos() - start;
+
+            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Memory"));
         }
         cuikperf_region_end();
 
@@ -1362,6 +1369,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
+
+            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Compact"));
         }
 
         if (dirty & LOOP_DIRTY) {
@@ -1374,6 +1383,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             if (tb_opt_loops(f)) {
                 dirty |= CPROP_DIRTY;
             }
+
+            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Loops"));
         }
         // don't worry, we'll scan all the nodes regardless
         worklist_clear(f->worklist);
@@ -1392,6 +1403,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             k = tb_opt_cprop_rewrite(f);
             tb_opt_cprop_deinit(f, &cprop);
             cuikperf_region_end();
+
+            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Optimistic"));
 
             if (k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));

@@ -153,140 +153,143 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
     }
 }
 
-static int print_type(TB_DataType dt, FILE* fp) {
+static const char* plain_type_name(TB_DataType dt) {
     switch (dt.type) {
-        case TB_TAG_VOID:    return fprintf(fp, "void");
-        case TB_TAG_BOOL:    return fprintf(fp, "bool");
-        case TB_TAG_I8:      return fprintf(fp, "i8");
-        case TB_TAG_I16:     return fprintf(fp, "i16");
-        case TB_TAG_I32:     return fprintf(fp, "i32");
-        case TB_TAG_I64:     return fprintf(fp, "i64");
-        case TB_TAG_PTR:     return dt.elem_or_addrspace == 0 ? fprintf(fp, "ptr") : fprintf(fp, "ptr%d", dt.elem_or_addrspace);
-        case TB_TAG_F32:     return fprintf(fp, "f32");
-        case TB_TAG_F64:     return fprintf(fp, "f64");
+        case TB_TAG_VOID:    return "void";
+        case TB_TAG_BOOL:    return "bool";
+        case TB_TAG_I8:      return "i8";
+        case TB_TAG_I16:     return "i16";
+        case TB_TAG_I32:     return "i32";
+        case TB_TAG_I64:     return "i64";
+        case TB_TAG_PTR:     return dt.elem_or_addrspace == 0 ? "ptr" : NULL;
+        case TB_TAG_F32:     return "f32";
+        case TB_TAG_F64:     return "f64";
+        case TB_TAG_TUPLE:   return "tuple";
+        case TB_TAG_CONTROL: return "ctrl";
+        case TB_TAG_MEMORY:  return  "mem";
+
         case TB_TAG_V64:
         case TB_TAG_V128:
         case TB_TAG_V256:
-        case TB_TAG_V512: {
-            int s = fprintf(fp, "v%d[", 1u << ((dt.type - TB_TAG_V64) + 6));
-            s += print_type((TB_DataType){ .type = dt.elem_or_addrspace }, fp);
-            s += fprintf(fp, "]");
-            return s;
-        }
-        case TB_TAG_TUPLE:   return fprintf(fp, "tuple");
-        case TB_TAG_CONTROL: return fprintf(fp, "ctrl");
-        case TB_TAG_MEMORY:  return fprintf(fp, "mem");
-        default: tb_todo();  return 0;
+        case TB_TAG_V512:
+        return NULL; // not plain types
+
+        default: return NULL;
     }
 }
 
-static void print_type2(TB_DataType dt) {
-    #if 0
-    printf("\x1b[96m");
-    print_type(dt);
-    printf("\x1b[0m");
-    #else
-    print_type(dt, stdout);
-    #endif
+static int print_type(OutStream* s, TB_DataType dt) {
+    const char* plain = plain_type_name(dt);
+    if (plain) {
+        return s_writef(s, plain);
+    } else if (TB_IS_VECTOR_TYPE(dt)) {
+        const char* elem_plain = plain_type_name((TB_DataType){ .type = dt.elem_or_addrspace });
+        return s_writef(s, "v%d[%s]", 1u << ((dt.type - TB_TAG_V64) + 6));
+    } else if (dt.type == TB_TAG_PTR && dt.elem_or_addrspace != 0) {
+        return s_writef(s, "ptr%d", dt.elem_or_addrspace);
+    } else {
+        tb_todo();
+    }
 }
 
-static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
+static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, OutStream* s, bool def) {
     if (n == NULL) {
-        printf("_");
+        s_writef(s, "_");
     } else if (n->type == TB_ROOT) {
-        printf("%s", ctx->f->super.name);
+        s_writef(s, "%s", ctx->f->super.name);
 
         if (def) {
-            printf("(");
+            s_writef(s, "(");
             TB_Node** params = ctx->f->params;
             FOR_N(i, 1, 3 + ctx->f->param_count) {
-                if (i > 1) printf(", ");
+                if (i > 1) s_writef(s, ", ");
 
                 if (params[i] == NULL) {
-                    printf("_");
+                    s_writef(s, "_");
                 } else {
-                    TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(params[i]->gvn)));
-                    printf("%%%u: ", params[i]->gvn);
-                    TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
-                    print_type2(params[i]->dt);
+                    s_color(s, cool_ansi_color(params[i]->gvn));
+                    s_writef(s, "%%%u: ", params[i]->gvn);
+                    s_color(s, 0);
+                    print_type(s, params[i]->dt);
                 }
             }
 
             FOR_USERS(u, n) if (USERN(u)->type == TB_MACH_PROJ) {
-                printf(", ");
-                TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(USERN(u)->gvn)));
-                printf("%%%u: ", USERN(u)->gvn);
-                TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
-                print_type2(USERN(u)->dt);
+                s_writef(s, ", ");
+                s_color(s, cool_ansi_color(USERN(u)->gvn));
+                s_writef(s, "%%%u: ", USERN(u)->gvn);
+                s_color(s, 0);
+                print_type(s, USERN(u)->dt);
             }
-            printf(")");
+            s_writef(s, ")");
         }
     } else if (cfg_is_region(n)) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-        TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
+        s_color(s, cool_ansi_color(n->gvn));
         if (r->tag != NULL) {
-            printf("%%%u.%s", n->gvn, r->tag);
+            s_writef(s, "%%%u.%s", n->gvn, r->tag);
         } else {
-            printf("%%%u", n->gvn);
+            s_writef(s, "%%%u", n->gvn);
         }
-        TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
+        s_color(s, 0);
 
         if (def) {
             bool first = true;
-            printf("(");
+            s_writef(s, "(");
             FOR_USERS(u, n) {
                 if (USERN(u)->type == TB_PHI) {
                     if (first) {
                         first = false;
                     } else {
-                        printf(", ");
+                        s_writef(s, ", ");
                     }
 
-                    TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(USERN(u)->gvn)));
-                    printf("%%%u: ", USERN(u)->gvn);
-                    TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
-                    print_type2(USERN(u)->dt);
+                    s_color(s, cool_ansi_color(USERN(u)->gvn));
+                    s_writef(s, "%%%u: ", USERN(u)->gvn);
+                    s_color(s, 0);
+                    print_type(s, USERN(u)->dt);
                 }
             }
-            printf(")");
-            if (n->type == TB_NATURAL_LOOP) printf(" !natural");
-            if (n->type == TB_AFFINE_LOOP) printf(" !affine");
+            s_writef(s, ")");
+            if (n->type == TB_NATURAL_LOOP) s_writef(s, " !natural");
+            if (n->type == TB_AFFINE_LOOP) s_writef(s, " !affine");
         }
     } else if (n->type == TB_F32CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
-        printf("%f", f->value);
+        s_writef(s, "%f", f->value);
     } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
-        printf("%f", f->value);
+        s_writef(s, "%f", f->value);
     } else if (n->type == TB_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
         if (sym->name[0]) {
-            printf("%s", sym->name);
+            s_writef(s, "%s", sym->name);
         } else {
-            printf("sym%p", sym);
+            s_writef(s, "sym%p", sym);
         }
     } else if (cfg_is_cproj(n)) {
         if (n->inputs[0]->type == TB_ROOT) {
-            print_ref_to_node(ctx, n->inputs[0], def);
+            print_ref_to_node(ctx, n->inputs[0], s, def);
         } else {
-            TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-            printf("%%%u", n->gvn);
-            TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
-            if (def) { printf("()"); }
+            s_color(s, cool_ansi_color(n->gvn));
+            s_writef(s, "%%%u", n->gvn);
+            s_color(s, 0);
+
+            if (def) { s_writef(s, "()"); }
         }
     } else if (n->type == TB_ICONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
         if (num->value < 0xFFFF) {
             int bits = tb_data_type_bit_size(ctx->f->super.module, n->dt.type);
-            printf("%"PRId64, tb__sxt(num->value, bits, 64));
+            s_writef(s, "%"PRId64, tb__sxt(num->value, bits, 64));
         } else {
-            printf("%#0"PRIx64, num->value);
+            s_writef(s, "%#0"PRIx64, num->value);
         }
     } else {
-        TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-        printf("%%%u", n->gvn);
-        TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
+        s_color(s, cool_ansi_color(n->gvn));
+        s_writef(s, "%%%u", n->gvn);
+        s_color(s, 0);
     }
 }
 
@@ -300,12 +303,12 @@ static bool is_empty_cproj(PrinterCtx* ctx, TB_Node* n) {
 }
 
 // deals with printing BB params
-static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
+static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, OutStream* s, bool fallthru) {
     TB_Node* target = fallthru || is_empty_cproj(ctx, n) ? cfg_next_control(n) : n;
-    print_ref_to_node(ctx, target, false);
+    print_ref_to_node(ctx, target, s, false);
 
     // print phi args
-    printf("(");
+    s_writef(s, "(");
     if (cfg_is_region(target)) {
         int phi_i = -1;
         FOR_USERS(u, n) {
@@ -321,23 +324,23 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
                 if (first) {
                     first = false;
                 } else {
-                    printf(", ");
+                    s_writef(s, ", ");
                 }
 
                 TB_ASSERT(phi_i >= 0);
-                print_ref_to_node(ctx, USERN(u)->inputs[phi_i], false);
+                print_ref_to_node(ctx, USERN(u)->inputs[phi_i], s, false);
             }
         }
     }
-    printf(")");
+    s_writef(s, ")");
 }
 
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) { return 1; }
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) { return 1; }
 
-static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
-    print_ref_to_node(ctx, bb->start, true);
-    printf("\n");
+static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStream* s) {
+    print_ref_to_node(ctx, bb->start, s, true);
+    s_newline(s);
 
     TB_Function* f = ctx->f;
     // tb_greedy_scheduler(f, &ctx->cfg, ws, bb);
@@ -356,17 +359,17 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
         }
 
         switch (n->type) {
-            case TB_DEBUGBREAK:  printf("  debugbreak"); break;
-            case TB_UNREACHABLE: printf("  unreachable"); break;
+            case TB_DEBUGBREAK:  s_writef(s, "  debugbreak"); break;
+            case TB_UNREACHABLE: s_writef(s, "  unreachable"); break;
 
             case TB_NEVER_BRANCH: {
                 TB_Node* taken = USERN(proj_with_index(n, 0));
                 TB_Node* never = USERN(proj_with_index(n, 1));
 
-                printf("  goto ");
-                print_branch_edge(ctx, taken, false);
-                printf(" // never branch ");
-                print_branch_edge(ctx, never, false);
+                s_writef(s, "  goto ");
+                print_branch_edge(ctx, taken, s, false);
+                s_writef(s, " // never branch ");
+                print_branch_edge(ctx, never, s, false);
                 break;
             }
 
@@ -388,54 +391,55 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                 if (br->succ_count == 2) {
                     int bits = tb_data_type_bit_size(f->super.module, n->inputs[1]->dt.type);
 
-                    printf("  if ");
-                    print_ref_to_node(ctx, n->inputs[1], false);
+                    s_writef(s, "  if ");
+                    print_ref_to_node(ctx, n->inputs[1], s, false);
                     int64_t key = TB_NODE_GET_EXTRA_T(succ[1], TB_NodeBranchProj)->key;
                     if (key == 0) {
-                        printf(" then ");
+                        s_writef(s, " then ");
                     } else {
-                        printf(" != %"PRId64" then ", key);
+                        s_writef(s, " != %"PRId64" then ", key);
                     }
-                    print_branch_edge(ctx, succ[0], false);
-                    printf(" else ");
-                    print_branch_edge(ctx, succ[1], false);
+                    print_branch_edge(ctx, succ[0], s, false);
+                    s_writef(s, " else ");
+                    print_branch_edge(ctx, succ[1], s, false);
                 } else {
-                    printf("  br ");
-                    print_ref_to_node(ctx, n->inputs[1], false);
-                    printf("%s=> {\n", n->input_count > 1 ? " " : "");
+                    s_writef(s, "  br ");
+                    print_ref_to_node(ctx, n->inputs[1], s, false);
+                    s_writef(s, "%s=> {", n->input_count > 1 ? " " : "");
+                    s_newline(s);
 
                     FOR_N(i, 0, br->succ_count) {
                         int64_t key = TB_NODE_GET_EXTRA_T(succ[i], TB_NodeBranchProj)->key;
 
-                        if (i != 0) printf("    %"PRId64": ", key);
-                        else printf("    default: ");
+                        if (i != 0) s_writef(s, "    %"PRId64": ", key);
+                        else s_writef(s, "    default: ");
 
-                        print_branch_edge(ctx, succ[i], false);
-                        printf("\n");
+                        print_branch_edge(ctx, succ[i], s, false);
+                        s_newline(s);
                     }
-                    printf("  }");
+                    s_writef(s, "  }");
                 }
                 tb_arena_restore(&f->tmp_arena, sp);
                 break;
             }
 
             case TB_TRAP: {
-                printf("  trap");
+                s_writef(s, "  trap");
                 break;
             }
 
             case TB_RETURN: {
-                printf("  return ");
+                s_writef(s, "  return ");
                 FOR_N(i, 1, n->input_count) {
-                    if (i != 1) printf(", ");
-                    print_ref_to_node(ctx, n->inputs[i], false);
+                    if (i != 1) s_writef(s, ", ");
+                    print_ref_to_node(ctx, n->inputs[i], s, false);
                 }
                 break;
             }
 
             default: {
                 if (cfg_is_branch(n)) {
-                    printf("  %s ", tb_node_get_name(n->type));
+                    s_writef(s, "  %s ", tb_node_get_name(n->type));
                 } else if (n->dt.type == TB_TAG_TUPLE) {
                     // print with multiple returns
                     TB_Node* projs[32] = { 0 };
@@ -446,30 +450,30 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                         }
                     }
 
-                    printf("  ");
+                    s_writef(s, "  ");
 
                     size_t first = projs[0] && projs[0]->dt.type == TB_TAG_CONTROL ? 1 : 0;
                     FOR_N(i, first, 32) {
                         if (projs[i] == NULL) break;
-                        if (i > first) printf(", ");
-                        TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(projs[i]->gvn)));
-                        printf("%%%u", projs[i]->gvn);
-                        TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
+                        if (i > first) s_writef(s, ", ");
+                        s_color(s, cool_ansi_color(projs[i]->gvn));
+                        s_writef(s, "%%%u", projs[i]->gvn);
+                        s_color(s, 0);
                     }
-                    printf(" = %s.(", tb_node_get_name(n->type));
+                    s_writef(s, " = %s.(", tb_node_get_name(n->type));
                     FOR_N(i, first, 32) {
                         if (projs[i] == NULL) break;
-                        if (i > first) printf(", ");
-                        print_type2(projs[i]->dt);
+                        if (i > first) s_writef(s, ", ");
+                        print_type(s, projs[i]->dt);
                     }
-                    printf(")");
+                    s_writef(s, ")");
                 } else {
                     // print as normal instruction
-                    printf("  ");
-                    TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-                    printf("%%%u", n->gvn);
-                    TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
-                    printf(" = %s.", tb_node_get_name(n->type));
+                    s_writef(s, "  ");
+                    s_color(s, cool_ansi_color(n->gvn));
+                    s_writef(s, "%%%u", n->gvn);
+                    s_color(s, 0);
+                    s_writef(s, " = %s.", tb_node_get_name(n->type));
 
                     TB_DataType dt = n->dt;
                     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
@@ -477,14 +481,14 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     } else if (n->type == TB_STORE) {
                         dt = n->inputs[3]->dt;
                     }
-                    print_type2(dt);
+                    print_type(s, dt);
                 }
-                printf(" ");
+                s_writef(s, " ");
 
                 size_t first = n->type == TB_PROJ ? 0 : 1;
                 FOR_N(i, first, n->input_count) {
-                    if (i != first) printf(", ");
-                    print_ref_to_node(ctx, n->inputs[i], false);
+                    if (i != first) s_writef(s, ", ");
+                    print_ref_to_node(ctx, n->inputs[i], s, false);
                 }
 
                 // print extra data
@@ -502,7 +506,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     break;
 
                     case TB_PROJ: {
-                        printf(", %d", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
+                        s_writef(s, ", %d", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
                         break;
                     }
 
@@ -523,8 +527,8 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     case TB_SMOD:
                     {
                         TB_NodeBinopInt* b = TB_NODE_GET_EXTRA(n);
-                        if (b->ab & TB_ARITHMATIC_NSW) printf(" !nsw");
-                        if (b->ab & TB_ARITHMATIC_NUW) printf(" !nuw");
+                        if (b->ab & TB_ARITHMATIC_NSW) s_writef(s, " !nsw");
+                        if (b->ab & TB_ARITHMATIC_NUW) s_writef(s, " !nuw");
                         break;
                     }
 
@@ -534,7 +538,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     case TB_MEMCPY:
                     case TB_DEAD_STORE: {
                         TB_NodeMemAccess* mem = TB_NODE_GET_EXTRA(n);
-                        printf(" !align(%d)", mem->align);
+                        s_writef(s, " !align(%d)", mem->align);
                         break;
                     }
 
@@ -552,9 +556,9 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                         };
 
                         TB_NodeAtomic* atomic = TB_NODE_GET_EXTRA(n);
-                        printf(" !order(%s)", order_names[atomic->order]);
+                        s_writef(s, " !order(%s)", order_names[atomic->order]);
                         if (n->type == TB_ATOMIC_CAS) {
-                            printf(" !fail_order(%s)", order_names[atomic->order2]);
+                            s_writef(s, " !fail_order(%s)", order_names[atomic->order2]);
                         }
                         break;
                     }
@@ -569,15 +573,15 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
 
                     case TB_DEBUG_LOCATION: {
                         TB_NodeDbgLoc* loc = TB_NODE_GET_EXTRA(n);
-                        printf(" // %s:%d", loc->file->path, loc->line);
+                        s_writef(s, " // %s:%d", loc->file->path, loc->line);
                         break;
                     }
 
                     case TB_LOCAL: {
                         TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-                        printf("!size(%u) !align(%u)", l->size, l->align);
+                        s_writef(s, "!size(%u) !align(%u)", l->size, l->align);
                         if (l->type) {
-                            printf(" !var(%s)", l->name);
+                            s_writef(s, " !var(%s)", l->name);
                         }
                         break;
                     }
@@ -585,9 +589,9 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     case TB_MACH_SYMBOL: {
                         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
                         if (sym->name[0]) {
-                            printf("%s", sym->name);
+                            s_writef(s, "%s", sym->name);
                         } else {
-                            printf("sym%p", sym);
+                            s_writef(s, "sym%p", sym);
                         }
                         break;
                     }
@@ -597,12 +601,12 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
 
                     case TB_VSHUFFLE: {
                         TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
-                        printf(", [");
+                        s_writef(s, ", [");
                         FOR_N(i, 0, shuf->width) {
-                            if (i) { printf(", "); }
-                            printf("%d", shuf->indices[i]);
+                            if (i) { s_writef(s, ", "); }
+                            s_writef(s, "%d", shuf->indices[i]);
                         }
-                        printf("]");
+                        s_writef(s, "]");
                         break;
                     }
 
@@ -613,7 +617,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                         } else {
                             TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
 
-                            printf(", ");
+                            s_writef(s, ", ");
                             tb_codegen_families[family].print_extra(n);
                         }
 
@@ -633,17 +637,19 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                                 }
                             }
 
-                            printf(" => {\n");
+                            s_writef(s, " => {");
+                            s_newline(s);
+
                             FOR_N(i, 0, limit) {
                                 int64_t key = TB_NODE_GET_EXTRA_T(succ[i], TB_NodeBranchProj)->key;
 
-                                if (i != 0) printf("    %"PRId64": ", key);
-                                else printf("    default: ");
+                                if (i != 0) s_writef(s, "    %"PRId64": ", key);
+                                else s_writef(s, "    default: ");
 
-                                print_branch_edge(ctx, succ[i], false);
-                                printf("\n");
+                                print_branch_edge(ctx, succ[i], s, false);
+                                s_newline(s);
                             }
-                            printf("  }");
+                            s_writef(s, "  }");
                             tb_arena_restore(&f->tmp_arena, sp);
                         }
                         break;
@@ -654,23 +660,23 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
         }
 
         if (n->dt.type == TB_TAG_TUPLE) {
-            TB_OPTDEBUG(ANSI)(printf(" // tuple \x1b[%dm", cool_ansi_color(n->gvn)));
-            printf("%%%u", n->gvn);
-            TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
+            s_color(s, 32);
+            s_writef(s, " // tuple %%%u", n->gvn);
+            s_color(s, 0);
         }
 
-        printf("\n");
+        s_newline(s);
     }
     dyn_array_clear(ws->items);
 
     if (!cfg_is_terminator(bb->end)) {
-        printf("  goto ");
-        print_branch_edge(ctx, bb->end, true);
-        printf("\n");
+        s_writef(s, "  goto ");
+        print_branch_edge(ctx, bb->end, s, true);
+        s_newline(s);
     }
 }
 
-void tb_print(TB_Function* f) {
+void tb_print_to_stream(TB_Function* f, OutStream* s) {
     if (f->super.tag != TB_SYMBOL_FUNCTION) {
         return;
     }
@@ -708,11 +714,11 @@ void tb_print(TB_Function* f) {
             continue;
         }
 
-        print_bb(&ctx, &ws, bb);
+        print_bb(&ctx, &ws, bb, s);
     }
 
     if (end_bb != NULL) {
-        print_bb(&ctx, &ws, end_bb);
+        print_bb(&ctx, &ws, end_bb, s);
     }
 
     tb_clear_anti_deps(f, &ws);
@@ -724,3 +730,8 @@ void tb_print(TB_Function* f) {
     f->scheduled_n = old_scheduled_n;
     f->scheduled = old_scheduled;
 }
+
+void tb_print(TB_Function* f) {
+    tb_print_to_stream(f, &OUT_STREAM_DEFAULT);
+}
+

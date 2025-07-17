@@ -267,14 +267,13 @@ static void slp_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
     }
 }
 
-bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* loop) {
+bool generate_pack(TB_Function* f, PairSet* pairs, TB_Worklist* ws, LoopOpt* ctx, TB_LoopTree* loop) {
     TB_Node* top = loop ? loop->header : f->root_node;
     ArenaArray(MemRef) refs = aarray_create(&f->tmp_arena, MemRef, 8);
 
     // compute schedule for "trace"
     CUIK_TIMED_BLOCK("trace") {
         // DFS walk
-        TB_Worklist* ws = f->worklist;
         worklist_clear(ws);
         worklist_push(ws, top);
         pairs->depth[top->gvn] = 0;
@@ -472,7 +471,10 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
 
         TB_Node* n = tb_alloc_node(f, TB_VBROADCAST, op->v_dt, 2, 0);
         set_input(f, n, leader, 1);
-        return tb_opt_gvn_node(f, n);
+
+        TB_Node* k = tb_opt_gvn_node(f, n);
+        mark_node(f, k);
+        return k;
     }
 
     // as long as all the ops come from the same leader, it's all good
@@ -516,7 +518,9 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
     printf("\n");
     #endif
 
-    return tb_opt_gvn_node(f, n);
+    TB_Node* k = tb_opt_gvn_node(f, n);
+    mark_node(f, k);
+    return k;
 }
 
 bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
@@ -710,6 +714,8 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
             __debugbreak();
         }
 
+        mark_node(f, op->v_op);
+
         #if TB_OPTDEBUG_SLP
         FOR_N(j, 0, op->width) {
             tb_print_dumb_node(NULL, op->ops[j]);
@@ -736,7 +742,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     return true;
 }
 
-bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_LoopTree* loop) {
+bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_Worklist* ws, TB_LoopTree* loop) {
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     PairSet pairs = { 0 };
@@ -753,7 +759,7 @@ bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_LoopTree* loop) {
     }
 
     bool progress = false;
-    if (generate_pack(f, &pairs, ctx, loop)) {
+    if (generate_pack(f, &pairs, ws, ctx, loop)) {
         cuikperf_region_start("SLP xform", NULL);
         progress = compile_packs(f, &pairs, loop);
         cuikperf_region_end();

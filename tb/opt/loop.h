@@ -39,7 +39,7 @@ typedef struct {
     int* stk;
 } LoopSCC;
 
-bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_LoopTree* loop);
+bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_Worklist* ws, TB_LoopTree* loop);
 
 static void loop_add_kid(TB_LoopTree* kid, TB_LoopTree* mom) {
     kid->parent = mom;
@@ -1568,13 +1568,13 @@ bool tb_opt_loops(TB_Function* f) {
                 continue;
             }
 
-            if (slp_transform(f, &ctx, loop)) {
+            if (slp_transform(f, &ctx, &tmp_ws, loop)) {
                 TB_OPTDEBUG(PASSES)(printf("      * Vectorized Loop%zu!\n", i));
                 progress = true;
             }
         }
 
-        if (slp_transform(f, &ctx, NULL)) {
+        if (slp_transform(f, &ctx, &tmp_ws, NULL)) {
             TB_OPTDEBUG(PASSES)(printf("      * Vectorized Body!\n"));
             progress = true;
         }

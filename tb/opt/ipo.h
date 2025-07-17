@@ -29,7 +29,7 @@ struct IPOSolver {
     size_t ws_cnt;
     TB_Function** ws;
 
-    SizeClass* size_classes;
+    int* size_metric;
     int* ref_count;
 
     CallGraphEdge** call_graph;
@@ -67,6 +67,8 @@ static int op_weights[256] = {
     [TB_FADD ... TB_FMAX]     = 1,
     // comparisons
     [TB_CMP_EQ ... TB_CMP_NE] = 2,
+    // function calls? idk what this should count as
+    [TB_CALL]                 = 3,
 };
 
 static int bin_count;
@@ -101,8 +103,24 @@ static void init_bins(void) {
     }
 }
 
-static SizeClass classify_size(TB_Function* f, TB_Worklist* ws) {
-    cuikperf_region_start("classify_size", NULL);
+static SizeClass classify_size(int metric) {
+    if (metric >= 1000) {
+        return SIZE_LARGE;
+    } else if (metric >= 100) {
+        return SIZE_MEDIUM;
+    } else if (metric >= 10) {
+        return SIZE_SMALL_MED;
+    } else {
+        return SIZE_SMALL;
+    }
+}
+
+static const char* classify_size_str(int metric) {
+    return size_strs[classify_size(metric)];
+}
+
+static int compute_size(TB_Function* f, TB_Worklist* ws) {
+    cuikperf_region_start("compute_size", NULL);
 
     #ifndef TB_NO_THREADS
     call_once(&bin_init, init_bins);
@@ -137,19 +155,10 @@ static SizeClass classify_size(TB_Function* f, TB_Worklist* ws) {
         weighted_sum += hist[i] * bin_weights[i];
     }
 
-    SizeClass size_class = SIZE_SMALL;
-    if (weighted_sum >= 1000) {
-        size_class = SIZE_LARGE;
-    } else if (weighted_sum >= 100) {
-        size_class = SIZE_MEDIUM;
-    } else if (weighted_sum >= 10) {
-        size_class = SIZE_SMALL_MED;
-    }
-
-    TB_OPTDEBUG(INLINE3)(printf("classify_size(%s) = %d (%s)\n", f->super.name, weighted_sum, size_strs[size_class]));
+    TB_OPTDEBUG(INLINE3)(printf("compute_size(%s) = %d\n", f->super.name, weighted_sum));
 
     cuikperf_region_end();
-    return size_class;
+    return weighted_sum;
 }
 
 static TB_Function* static_call_site(TB_Node* n) {
@@ -246,11 +255,10 @@ static void func_opt_task(TPool* tp, void** arg) {
         ipo_worklist = tb_worklist_alloc();
     }
 
-    if (1 || strcmp(f->super.name, "eval") == 0) {
-        log_debug("OPT: %s: function local optimizer", f->super.name);
-        tb_opt(f, ipo_worklist, false);
-        // __debugbreak();
-    }
+    // if (1 || strcmp(f->super.name, "eval") == 0) {
+    log_debug("OPT: %s: function local optimizer", f->super.name);
+    tb_opt(f, ipo_worklist, false);
+    // }
 
     tracker[0] += 1;
     if (tracker[0] == tracker[1]) { // might be done?
@@ -265,6 +273,10 @@ static void func_opt_task(TPool* tp, void** arg) {
 bool tb_module_ipo(TB_Module* m, TPool* pool) {
     cuikperf_region_start("Optimizer", NULL);
     mtx_init(&aaa, mtx_plain);
+
+    #if TB_OPTDEBUG_SERVER
+    startup_server(m);
+    #endif
 
     CUIK_TIMED_BLOCK("resize barrier") {
         symbolhs_resize_barrier(&m->symbols);
@@ -304,7 +316,7 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
     IPOSolver ipo = { 0 };
     ipo.ws_cap = scc.fn_count;
     ipo.ws = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
-    ipo.size_classes = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(SizeClass));
+    ipo.size_metric = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(int));
     ipo.ref_count = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(int));
     ipo.call_graph = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(CallGraphEdge*));
     m->ipo = &ipo;
