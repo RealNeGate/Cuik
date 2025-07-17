@@ -267,23 +267,13 @@ static void slp_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
     }
 }
 
-bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* loop) {
+bool generate_pack(TB_Function* f, PairSet* pairs, TB_Worklist* ws, LoopOpt* ctx, TB_LoopTree* loop) {
     TB_Node* top = loop ? loop->header : f->root_node;
     ArenaArray(MemRef) refs = aarray_create(&f->tmp_arena, MemRef, 8);
-
-    pairs->l_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
-    pairs->r_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
-    pairs->depth = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
-    FOR_N(i, 0, f->node_count) {
-        pairs->l_map[i] = NULL;
-        pairs->r_map[i] = NULL;
-        pairs->depth[i] = -1;
-    }
 
     // compute schedule for "trace"
     CUIK_TIMED_BLOCK("trace") {
         // DFS walk
-        TB_Worklist* ws = f->worklist;
         worklist_clear(ws);
         worklist_push(ws, top);
         pairs->depth[top->gvn] = 0;
@@ -348,81 +338,83 @@ bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* lo
     }
     TB_OPTDEBUG(SLP)(printf("\n"));
 
-    // scan for groups with the same base & element size
-    int start = 0;
-    while (start < aarray_length(refs)) {
-        int end = start + 1;
-        while (refs[end].base   == refs[start].base
-            && ref_same_indices(&refs[end], &refs[start])
-            && refs[end].size   == refs[start].size) {
-            end++;
-        }
-
-        if (start + 1 != end) { // no group :(
-            TB_Node* base = refs[start].base;
-            int32_t size  = refs[start].size;
-            TB_DataType elem_dt = refs[start].mem->type == TB_STORE ? refs[start].mem->inputs[3]->dt : refs[start].mem->dt;
-
-            // find adjacent stores
-            FOR_N(i, start, end) {
-                MemRef* a = &refs[i];
-                FOR_N(j, start+1, end) {
-                    MemRef* b = &refs[j];
-
-                    // there's a weird overlapping memory op
-                    if (a->offset + size < b->offset) { break; }
-                    if (a->offset + size == b->offset && can_pack(f, pairs, a->mem, b->mem, top)) {
-                        slp_add_pair(f, pairs, a->mem, b->mem);
-                    }
-                }
+    CUIK_TIMED_BLOCK("SLP scan") {
+        // scan for groups with the same base & element size
+        int start = 0;
+        while (start < aarray_length(refs)) {
+            int end = start + 1;
+            while (refs[end].base   == refs[start].base
+                && ref_same_indices(&refs[end], &refs[start])
+                && refs[end].size   == refs[start].size) {
+                end++;
             }
 
-            // extend packs based on use-def
-            bool progress;
-            do {
-                progress = false;
+            if (start + 1 != end) { // no group :(
+                TB_Node* base = refs[start].base;
+                int32_t size  = refs[start].size;
+                TB_DataType elem_dt = refs[start].mem->type == TB_STORE ? refs[start].mem->inputs[3]->dt : refs[start].mem->dt;
 
-                CUIK_TIMED_BLOCK("SLP extend") {
-                    #if TB_OPTDEBUG_SLP
-                    /*printf("=== PAIRS ===\n");
-                    for (Pair* p = pairs->first; p; p = p->next) {
-                        printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
-                        tb_print_dumb_node(NULL, p->lhs);
-                        printf("\n  ");
-                        tb_print_dumb_node(NULL, p->rhs);
-                        printf("\n\n");
-                    }
-                    printf("\n\n\n");*/
-                    #endif
+                // find adjacent stores
+                FOR_N(i, start, end) {
+                    MemRef* a = &refs[i];
+                    FOR_N(j, start+1, end) {
+                        MemRef* b = &refs[j];
 
-                    // check if all input edges do the same op
-                    for (Pair* p = pairs->first; p; p = p->next) {
-                        TB_Node* lhs = p->lhs;
-                        TB_Node* rhs = p->rhs;
-                        TB_ASSERT(lhs->type == rhs->type);
-
-                        // loads always terminate the SIMD chains, they only have an address input and those are scalar
-                        if (lhs->type == TB_LOAD) {
-                            continue;
+                        // there's a weird overlapping memory op
+                        if (a->offset + size < b->offset) { break; }
+                        if (a->offset + size == b->offset && can_pack(f, pairs, a->mem, b->mem, top)) {
+                            slp_add_pair(f, pairs, a->mem, b->mem);
                         }
+                    }
+                }
 
-                        // can we pack the normal input ops (doesn't count the memory or address for a store)
-                        FOR_N(j, lhs->type == TB_STORE ? 3 : 1, lhs->input_count) {
-                            TB_Node* a = lhs->inputs[j];
-                            TB_Node* b = rhs->inputs[j];
-                            if (can_pack(f, pairs, a, b, top)) {
-                                slp_add_pair(f, pairs, a, b);
-                                progress = true;
-                            } else {
-                                // printf("failed to pack... %%%u -- %%%u\n", a->gvn, b->gvn);
+                // extend packs based on use-def
+                bool progress;
+                do {
+                    progress = false;
+
+                    CUIK_TIMED_BLOCK("SLP extend") {
+                        #if TB_OPTDEBUG_SLP
+                        /*printf("=== PAIRS ===\n");
+                        for (Pair* p = pairs->first; p; p = p->next) {
+                            printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
+                            tb_print_dumb_node(NULL, p->lhs);
+                            printf("\n  ");
+                            tb_print_dumb_node(NULL, p->rhs);
+                            printf("\n\n");
+                        }
+                        printf("\n\n\n");*/
+                        #endif
+
+                        // check if all input edges do the same op
+                        for (Pair* p = pairs->first; p; p = p->next) {
+                            TB_Node* lhs = p->lhs;
+                            TB_Node* rhs = p->rhs;
+                            TB_ASSERT(lhs->type == rhs->type);
+
+                            // loads always terminate the SIMD chains, they only have an address input and those are scalar
+                            if (lhs->type == TB_LOAD) {
+                                continue;
+                            }
+
+                            // can we pack the normal input ops (doesn't count the memory or address for a store)
+                            FOR_N(j, lhs->type == TB_STORE ? 3 : 1, lhs->input_count) {
+                                TB_Node* a = lhs->inputs[j];
+                                TB_Node* b = rhs->inputs[j];
+                                if (can_pack(f, pairs, a, b, top)) {
+                                    slp_add_pair(f, pairs, a, b);
+                                    progress = true;
+                                } else {
+                                    // printf("failed to pack... %%%u -- %%%u\n", a->gvn, b->gvn);
+                                }
                             }
                         }
                     }
-                }
-            } while (progress);
-        }
+                } while (progress);
+            }
 
-        start = end;
+            start = end;
+        }
     }
 
     if (pairs->count == 0) {
@@ -450,9 +442,7 @@ static bool viable_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, Vecto
             if (src != leader) { return false; }
         }
 
-        TB_Node* n = tb_alloc_node(f, TB_VBROADCAST, v_dt, 2, 0);
-        set_input(f, n, leader, 1);
-        return n;
+        return true;
     }
 
     // all have to share the same vector source... for now
@@ -481,7 +471,10 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
 
         TB_Node* n = tb_alloc_node(f, TB_VBROADCAST, op->v_dt, 2, 0);
         set_input(f, n, leader, 1);
-        return tb_opt_gvn_node(f, n);
+
+        TB_Node* k = tb_opt_gvn_node(f, n);
+        mark_node(f, k);
+        return k;
     }
 
     // as long as all the ops come from the same leader, it's all good
@@ -525,7 +518,9 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
     printf("\n");
     #endif
 
-    return tb_opt_gvn_node(f, n);
+    TB_Node* k = tb_opt_gvn_node(f, n);
+    mark_node(f, k);
+    return k;
 }
 
 bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
@@ -719,6 +714,8 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
             __debugbreak();
         }
 
+        mark_node(f, op->v_op);
+
         #if TB_OPTDEBUG_SLP
         FOR_N(j, 0, op->width) {
             tb_print_dumb_node(NULL, op->ops[j]);
@@ -745,12 +742,30 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     return true;
 }
 
-bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_LoopTree* loop) {
+bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_Worklist* ws, TB_LoopTree* loop) {
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+
     PairSet pairs = { 0 };
-    if (generate_pack(f, &pairs, ctx, loop) && compile_packs(f, &pairs, loop)) {
-        return true;
+    pairs.l_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
+    pairs.r_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
+    pairs.depth = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
+
+    CUIK_TIMED_BLOCK("init") {
+        FOR_N(i, 0, f->node_count) {
+            pairs.l_map[i] = NULL;
+            pairs.r_map[i] = NULL;
+            pairs.depth[i] = -1;
+        }
     }
 
-    return false;
+    bool progress = false;
+    if (generate_pack(f, &pairs, ws, ctx, loop)) {
+        cuikperf_region_start("SLP xform", NULL);
+        progress = compile_packs(f, &pairs, loop);
+        cuikperf_region_end();
+    }
+
+    tb_arena_restore(&f->tmp_arena, sp);
+    return progress;
 }
 

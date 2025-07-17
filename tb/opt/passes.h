@@ -1,5 +1,6 @@
 #pragma once
 #include "../tb_internal.h"
+#include "streams.h"
 #include <arena_array.h>
 #include <limits.h>
 
@@ -62,6 +63,7 @@ struct Lattice {
         LATTICE_FLT32,    LATTICE_FLT64,    // bottom types for floats
         LATTICE_NAN32,    LATTICE_NAN64,
         LATTICE_XNAN32,   LATTICE_XNAN64,
+        LATTICE_FLTINT32, LATTICE_FLTINT64, // floats which perfectly represent integers
         LATTICE_FLTCON32, LATTICE_FLTCON64, // _f32 and _f64
 
         // pointers:
@@ -363,6 +365,9 @@ static bool succ_iter_next(SuccIter* restrict it) {
     return false;
 }
 
+bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b);
+TB_Node* gcf_congruent_leader(TB_Function* f, TB_Node* n);
+
 // lovely properties
 bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);
@@ -417,6 +422,8 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);
 int tb_opt_peeps(TB_Function* f);
 int tb_opt_locals(TB_Function* f);
+
+void push_ipsccp_job(TB_Module* m, TB_Function* f);
 
 // Integrated IR debugger
 void tb_integrated_dbg(TB_Function* f, TB_Node* n);

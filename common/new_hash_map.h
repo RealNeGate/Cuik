@@ -57,6 +57,9 @@ NL_Table nl_table_arena_alloc(TB_Arena* arena, size_t cap);
 void nl_table_clear(NL_Table* tbl);
 void nl_table_free(NL_Table tbl);
 
+void* nl_table_put2(NL_Table* restrict tbl, void* k, void* v, NL_HashFunc hash, NL_CompareFunc cmp);
+void* nl_table_get2(NL_Table* restrict tbl, void* k, NL_HashFunc hash, NL_CompareFunc cmp);
+
 void* nl_table_put(NL_Table* restrict tbl, void* k, void* v);
 void* nl_table_get(NL_Table* restrict tbl, void* k);
 void** nl_table_getp(NL_Table* restrict tbl, void* k);
@@ -300,6 +303,65 @@ void nl_table_free(NL_Table tbl) {
     } else {
         tb_arena_pop(tbl.allocator, tbl.data, (1ull << tbl.exp) * sizeof(NL_TableEntry));
     }
+}
+
+void* nl_table_put2(NL_Table* restrict tbl, void* k, void* v, NL_HashFunc hash, NL_CompareFunc cmp) {
+    uint32_t post_load_factor = ((1ull << tbl->exp) * 3) / 4;
+    if (tbl->count >= post_load_factor) {
+        // rehash
+        assert(tbl->allocator == NULL && "arena hashsets can't be resized!");
+        NL_Table new_tbl = nl_table_alloc(nl_table_capacity(tbl));
+        nl_table_for(p, tbl) {
+            nl_table_put2(&new_tbl, p->k, p->v, hash, cmp);
+        }
+        nl_table_free(*tbl);
+        *tbl = new_tbl;
+    }
+
+    uint32_t h = hash(k);
+    size_t mask = (1 << tbl->exp) - 1;
+    size_t first = h & mask, i = first;
+
+    do {
+        if (tbl->data[i].k == NULL) {
+            // insert
+            tbl->count++;
+            tbl->data[i].k = k;
+            tbl->data[i].v = v;
+            return NULL;
+        } else if (tbl->data[i].k == NL_HASHSET_TOMB) {
+            // recycle tombstone
+            tbl->data[i].k = k;
+            tbl->data[i].v = v;
+            return NULL;
+        } else if (cmp(tbl->data[i].k, k)) {
+            void* old = tbl->data[i].v;
+            tbl->data[i].v = v;
+            return old;
+        }
+
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    abort();
+}
+
+void* nl_table_get2(NL_Table* restrict tbl, void* k, NL_HashFunc hash, NL_CompareFunc cmp) {
+    uint32_t h = hash(k);
+    size_t mask = (1 << tbl->exp) - 1;
+    size_t first = h & mask, i = first;
+
+    do {
+        if (tbl->data[i].k == NULL) {
+            return NULL;
+        } else if (cmp(tbl->data[i].k, k)) {
+            return tbl->data[i].v;
+        }
+
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    return NULL;
 }
 
 void* nl_table_put(NL_Table* restrict tbl, void* k, void* v) {

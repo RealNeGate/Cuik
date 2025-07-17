@@ -89,3 +89,4 @@ tests/gold/cuik.txt
 tests/gold/clang.txt
 meta/a64dfa.c
 meta/Instructions.json
+tb/tb_config.h

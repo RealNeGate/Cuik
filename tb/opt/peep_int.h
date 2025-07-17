@@ -50,6 +50,26 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
             set_input(f, n, con, 2);
             return n;
         }
+
+        // (a + con1) - (b + con2) => (a - b) + (con1 - con2)
+        if (a->type == TB_ADD && is_iconst(f, a->inputs[2]) &&
+            b->type == TB_ADD && is_iconst(f, b->inputs[2])) {
+            TB_Node* con1 = a->inputs[2];
+            TB_Node* con2 = b->inputs[2];
+
+            // x = a - b
+            a->type = TB_SUB;
+            // set_input(f, a, a->inputs[1], 1);
+            set_input(f, a, b->inputs[1], 2);
+
+            // y = con1 - con2
+            b->type = TB_SUB;
+            set_input(f, b, con1, 1);
+            set_input(f, b, con2, 2);
+
+            n->type = TB_ADD;
+            return n;
+        }
     } else {
         // commutativity opts (we want a canonical form).
         int ap = node_pos(a);
@@ -135,13 +155,11 @@ static uint64_t mulhs(uint64_t u, uint64_t v, int bits) {
     }
 
     TB_ASSERT((bits & (bits - 1)) == 0);
-    int half = bits >> 1;
-    return (u * v) >> half;
+    return (u * v) >> bits;
 }
 
 static bool mul_overflow(uint64_t u, uint64_t v, int bits, int64_t* out) {
     *out = u * v;
-
     uint64_t high = mulhs(u, v, bits);
     return (*out < 0 ? high + 1 : high) != 0;
 }
@@ -166,7 +184,31 @@ static bool will_mul_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattic
     return overflow;
 }
 
-static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, TB_Node* n, Lattice* a, Lattice* b) {
+static bool will_add_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattice* b) {
+    int bits = tb_data_type_bit_size(NULL, dt.type);
+
+    int64_t mask = tb__mask(bits);
+    int64_t imin = lattice_int_min(bits);
+    int64_t imax = lattice_int_max(bits);
+    int64_t amin = a->_int.min, amax = a->_int.max;
+    int64_t bmin = b->_int.min, bmax = b->_int.max;
+
+    int64_t min = sadd(amin, bmin, mask);
+    int64_t max = sadd(amax, bmax, mask);
+    if (amin != amax || bmin != bmax) {
+        // Ahh sweet, Hacker's delight horrors beyond my comprehension
+        uint64_t u = amin & bmin & ~min;
+        uint64_t v = ~(amax | bmax) & max;
+        // just checking the sign bits
+        if ((((u | v) >> (bits - 1)) & 1) != 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b, bool congruent) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
     int64_t imin = lattice_int_min(bits);
@@ -259,7 +301,15 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         uint64_t zeros = ~possible_sum_zeros & known;
         uint64_t ones  =  possible_sum_ones  & known;
 
-        return lattice_gimme_int2(f, min, max, zeros, ones, 64);
+        // during the optimistic solver, this will be evaluated before the type-based splitting
+        // and since congruences can never exist from nodes which produce different types we should
+        // prune based on that fact to avoid an ambiguity.
+        Lattice* t = lattice_gimme_int2(f, min, max, zeros, ones, 64);
+        if (congruent && type == TB_SUB) {
+            return lattice_int_const(f, 0);
+        } else {
+            return t;
+        }
     } else {
         return lattice_gimme_int(f, min, max, bits);
     }
@@ -272,7 +322,8 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    return value_arith_raw(f, n->type, n->dt, n, a, b);
+    bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
+    return value_arith_raw(f, n->type, n->dt, a, b, c);
 }
 
 ////////////////////////////////
@@ -378,25 +429,30 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
 
         switch (n->type) {
             case TB_SHL: {
-                // we at least shifted this many bits therefore we
-                // at least have this many zeros at the bottom
-                zeros |= (1ull << bmin) - 1ull;
-
                 if (bmin == bmax) {
                     uint64_t new_min = (min << bmin) & mask;
                     uint64_t new_max = (max << bmin) & mask;
 
                     // we know exactly where the bits went
-                    ones <<= bmin;
+                    zeros <<= bmin;
+                    ones  <<= bmin;
+
+                    zeros |= (1ull << bmin) - 1ull;
 
                     // overflow check
                     if ((new_min >> bmin) == min &&
                         (new_max >> bmin) == max) {
                         return lattice_gimme_int2(f, new_min, new_max, zeros, ones, bits);
                     }
+                } else {
+                    // we at least shifted this many bits therefore we
+                    // at least have this many zeros at the bottom
+                    zeros |= (1ull << bmin) - 1ull;
                 }
 
-                return lattice_gimme_int2(f, lattice_int_min(bits), lattice_int_max(bits), zeros, ones, bits);
+                min = lattice_int_min(bits);
+                max = lattice_int_max(bits);
+                return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
             }
 
             case TB_SHR: {
@@ -509,6 +565,10 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
+    if (n->type == TB_XOR && gcf_is_congruent(f, n->inputs[1], n->inputs[2])) {
+        return lattice_int_const(f, 0);
+    }
+
     int bits = tb_data_type_bit_size(NULL, n->dt.type);
     int64_t min = lattice_int_min(bits);
     int64_t max = lattice_int_max(bits);
@@ -538,14 +598,19 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
     }
 
     uint64_t mask = tb__mask(bits);
+    if (((ones ^ zeros) & mask) == mask) {
+        return lattice_int_const(f, ones);
+    }
+
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones & mask } });
 }
 
 static TB_Node* identity_bits(TB_Function* f, TB_Node* n) {
     TB_ASSERT(n->type == TB_AND || n->type == TB_OR || n->type == TB_XOR);
 
-    // all these ops are idempotent
-    if (n->inputs[1] == n->inputs[2]) {
+    // a | a = a
+    // a & a = a
+    if (n->type != TB_XOR && gcf_is_congruent(f, n->inputs[1], n->inputs[2])) {
         return n->inputs[1];
     }
 
@@ -587,13 +652,6 @@ typedef struct {
     bool add;
 } IntRecip;
 
-static TB_Node* make_int_binop(TB_Function* f, int op, TB_DataType dt, TB_Node* a, TB_Node* b) {
-    TB_Node* n = tb_alloc_node(f, op, dt, 3, sizeof(TB_NodeBinopInt));
-    set_input(f, n, a, 1);
-    set_input(f, n, b, 2);
-    return n;
-}
-
 static IntRecip compute_recip_64(bool is_signed, uint64_t y) {
     IntRecip r;
 
@@ -626,7 +684,7 @@ static void sample_div(uint64_t x, IntRecip r, uint64_t y) {
     got >>= r.sh;
 
     if (expected != got) {
-        printf("BAD!!! %"PRIu64" / %"PRIu64" = %"PRIu64" (we got %"PRIu64")\n", x, y, expected, got);
+        printf("BAD!!! %#"PRIx64" / %#"PRIx64" = %#"PRIx64" (we got %#"PRIx64")\n", x, y, expected, got);
         abort();
     }
 }
@@ -702,7 +760,7 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         return x;
     } else if (y == -1 && is_signed) {
         // just negate it
-        TB_Node* neg = tb_alloc_node(f, TB_SUB, dt, 2, sizeof(TB_NodeBinopInt));
+        TB_Node* neg = tb_alloc_node(f, TB_SUB, dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, neg, make_int_node(f, dt, 0), 1);
         set_input(f, neg, x, 2);
         return neg;
@@ -712,7 +770,7 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         if (y == (UINT64_C(1) << log2)) {
             if (is_signed) {
                 // z := x + (y - 1)
-                TB_Node* add = make_int_binop(f, TB_ADD, dt, x, make_int_node(f, dt, y - 1));
+                TB_Node* add = make_int_binop(f, TB_ADD, x, make_int_node(f, dt, y - 1));
 
                 // x < 0
                 TB_Node* sign = tb_alloc_node(f, TB_CMP_SLT, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
@@ -726,7 +784,7 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
                 set_input(f, select, add,  2);
                 set_input(f, select, x,    3);
 
-                return make_int_binop(f, TB_SAR, dt, select, make_int_node(f, dt, log2));
+                return make_int_binop(f, TB_SAR, select, make_int_node(f, dt, log2));
             } else {
                 TB_Node* shr_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
                 set_input(f, shr_node, x, 1);
@@ -826,7 +884,24 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
 ////////////////////////////////
 static TB_Node* ideal_cmp(TB_Function* f, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
-    if (type == TB_CMP_EQ) {
+
+    // commutativity ops
+    if (type == TB_CMP_EQ || type == TB_CMP_NE) {
+        TB_Node* a = n->inputs[1];
+        TB_Node* b = n->inputs[2];
+
+        // commutativity opts (we want a canonical form).
+        int ap = node_pos(a);
+        int bp = node_pos(b);
+        if (ap < bp || (ap == bp && a->gvn < b->gvn)) {
+            set_input(f, n, b, 1);
+            set_input(f, n, a, 2);
+            return n;
+        }
+    }
+
+    TB_DataType dt = n->inputs[1]->dt;
+    if (type == TB_CMP_EQ && TB_IS_FLOAT_TYPE(dt)) {
         // (a == 0) is !a
         TB_Node* cmp = n->inputs[1];
 
@@ -834,8 +909,8 @@ static TB_Node* ideal_cmp(TB_Function* f, TB_Node* n) {
         if (get_int_const(n->inputs[2], &rhs) && rhs == 0) {
             // !(a < b) is (b <= a)
             switch (cmp->type) {
-                case TB_CMP_EQ: n->type = TB_CMP_NE; break;
-                case TB_CMP_NE: n->type = TB_CMP_EQ; break;
+                case TB_CMP_EQ:  n->type = TB_CMP_NE; break;
+                case TB_CMP_NE:  n->type = TB_CMP_EQ; break;
                 case TB_CMP_SLT: n->type = TB_CMP_SLE; break;
                 case TB_CMP_SLE: n->type = TB_CMP_SLT; break;
                 case TB_CMP_ULT: n->type = TB_CMP_ULE; break;
@@ -877,7 +952,8 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
 
     TB_DataType dt = n->inputs[1]->dt;
     if (TB_IS_INTEGER_TYPE(dt)) {
-        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, NULL, a, b);
+        bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
+        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, a, b, c);
 
         // ok it's really annoying that i have to deal with the "idk bro" case in the middle
         // of each but that's why it looks like this... if you were curious (which you aren't :p)
@@ -914,10 +990,54 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             break;
         }
     } else if (dt.type == TB_TAG_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
+        Lattice* meet = lattice_meet(f, a, b);
+        if (meet->tag == LATTICE_NULL || meet->tag == LATTICE_PTRCON) {
+            if (n->type == TB_CMP_EQ) {
+                return a == b ? &TRUE_IN_THE_SKY : &BOOL_IN_THE_SKY;
+            } else {
+                return a == b ? &FALSE_IN_THE_SKY : &BOOL_IN_THE_SKY;
+            }
+        }
+    }
+
+    bool eq_id = true;
+
+    // float oddities: regardless of the comparison, they'll always be false if a NaN is involved.
+    if (dt.type == TB_TAG_F32) {
+        if (a->tag == LATTICE_FLTCON32 && b->tag == LATTICE_FLTCON32) {
+            if (n->type == TB_CMP_EQ) { return a->_f32 == b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_NE) { return a->_f32 != b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_FLT) { return a->_f32 < b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_FLE) { return a->_f32 <= b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+        }
+
+        if (lattice_at_least(f, a, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
+        if (lattice_at_least(f, b, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
+
+        if (!lattice_at_least(f, a, &XNAN32_IN_THE_SKY) || !lattice_at_least(f, b, &XNAN32_IN_THE_SKY)) {
+            eq_id = false;
+        }
+    } else if (dt.type == TB_TAG_F64) {
+        if (a->tag == LATTICE_FLTCON64 && b->tag == LATTICE_FLTCON64) {
+            if (n->type == TB_CMP_EQ) { return a->_f64 == b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_NE) { return a->_f64 != b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_FLT) { return a->_f64 < b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_FLE) { return a->_f64 <= b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+        }
+
+        if (lattice_at_least(f, a, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
+        if (lattice_at_least(f, b, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
+
+        if (!lattice_at_least(f, a, &XNAN64_IN_THE_SKY) || !lattice_at_least(f, b, &XNAN64_IN_THE_SKY)) {
+            eq_id = false;
+        }
+    }
+
+    if (eq_id && gcf_is_congruent(f, n->inputs[1], n->inputs[2])) {
         if (n->type == TB_CMP_EQ) {
-            return a == b ? &TRUE_IN_THE_SKY : &BOOL_IN_THE_SKY;
-        } else {
-            return a == b ? &FALSE_IN_THE_SKY : &BOOL_IN_THE_SKY;
+            return &TRUE_IN_THE_SKY;
+        } else if (n->type == TB_CMP_NE) {
+            return &FALSE_IN_THE_SKY;
         }
     }
 
@@ -1017,23 +1137,23 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
     }
 
     // so long as it doesn't overflow:
-    //   cast(add(a, b)) => add(cast(a), cast(b))
-    if (ext_type == TB_ZERO_EXT && src->type == TB_ADD && cant_signed_overflow(src)) {
-        TB_Node* aa = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
-        set_input(f, aa, src->inputs[1], 1);
-        mark_node(f, aa);
-        latuni_set(f, aa, value_of(f, aa));
+    //   cast(add(a, con)) => add(cast(a), con)
+    if (src->type == TB_ADD && lattice_is_iconst(value_of(f, src->inputs[2]))) {
+        Lattice* lhs = value_of(f, src->inputs[1]);
+        Lattice* rhs = value_of(f, src->inputs[2]);
+        if (!will_add_overflow(f, src->dt, lhs, rhs)) {
+            TB_Node* aa = tb_alloc_node(f, ext_type, n->dt, 2, 0);
+            set_input(f, aa, src->inputs[1], 1);
+            mark_node(f, aa);
+            latuni_set(f, aa, value_of(f, aa));
 
-        TB_Node* bb = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
-        set_input(f, bb, src->inputs[2], 1);
-        mark_node(f, bb);
-        latuni_set(f, bb, value_of(f, bb));
-
-        TB_Node* binop = tb_alloc_node(f, TB_ADD, n->dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, binop, aa, 1);
-        set_input(f, binop, bb, 2);
-        TB_NODE_SET_EXTRA(binop, TB_NodeBinopInt, .ab = TB_NODE_GET_EXTRA_T(src, TB_NodeBinopInt)->ab);
-        return binop;
+            TB_Node* bb = make_int_node(f, n->dt, rhs->_int.min);
+            TB_Node* binop = tb_alloc_node(f, TB_ADD, n->dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, binop, aa, 1);
+            set_input(f, binop, bb, 2);
+            TB_NODE_SET_EXTRA(binop, TB_NodeBinopInt, .ab = TB_NODE_GET_EXTRA_T(src, TB_NodeBinopInt)->ab);
+            return binop;
+        }
     }
 
     // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))

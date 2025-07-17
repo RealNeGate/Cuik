@@ -21,12 +21,14 @@ typedef enum {
 
 typedef struct {
     TB_Node* addr;
+    TB_DataType dt;
     bool is_mem;
     bool is_alive;
 } Rename;
 
 typedef struct {
     TB_Node* mem;
+    TB_Node* index;
     int64_t offset;
     int64_t size;
 } SimpleMemRef;
@@ -42,6 +44,8 @@ typedef struct {
 } MemorySet;
 
 typedef struct MemoryState {
+    int refs;
+
     int order;
     TB_Node* start;
     struct MemoryState* loop_head;
@@ -86,16 +90,6 @@ static bool good_mem_op(TB_Function* f, TB_Node* n) { // ld, st, memcpy, memset
     }
 }
 
-static TB_Node* next_mem_user(TB_Node* n) {
-    FOR_USERS(u, n) {
-        if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u))) {
-            return USERN(u);
-        }
-    }
-
-    return NULL;
-}
-
 static int find_local_idx(LocalSplitter* restrict ctx, TB_Node* n) {
     if (n->type == TB_PTR_OFFSET) {
         n = n->inputs[1];
@@ -120,11 +114,20 @@ static TB_Node* node_or_poison(TB_Function* f, TB_Node* n, TB_DataType dt) {
 
 static SimpleMemRef find_simple_mem_ref(TB_Function* f, LocalSplitter* ctx, TB_Node* mem, TB_Node** out_base) {
     TB_Node* base = mem->inputs[2];
+    TB_Node* index = NULL;
+
     int64_t offset = 0;
     if (base->type == TB_PTR_OFFSET) {
         TB_Node* curr = base->inputs[2];
         if (curr->type == TB_ICONST) {
             offset = TB_NODE_GET_EXTRA_T(curr, TB_NodeInt)->value;
+            base   = base->inputs[1];
+        } else if (curr->type == TB_ADD && curr->inputs[2]->type == TB_ICONST) {
+            offset = TB_NODE_GET_EXTRA_T(curr->inputs[2], TB_NodeInt)->value;
+            index  = curr->inputs[1];
+            base   = base->inputs[1];
+        } else {
+            index  = base->inputs[2];
             base   = base->inputs[1];
         }
     }
@@ -137,7 +140,7 @@ static SimpleMemRef find_simple_mem_ref(TB_Function* f, LocalSplitter* ctx, TB_N
     }
 
     *out_base = base;
-    return (SimpleMemRef){ mem, offset, size };
+    return (SimpleMemRef){ mem, index, offset, size };
 }
 
 static int find_aliasing_store(LocalSplitter* restrict ctx, MemorySet* set, int64_t offset) {
@@ -165,11 +168,15 @@ static MemorySet* memory_set_find_or_create(TB_Function* f, NL_Table* non_aliasi
 
 static void memory_set_insert(TB_Function* f, NL_Table* non_aliasing, MemorySet* set, int i, SimpleMemRef v) {
     if (set->cnt == set->cap) {
-        set = cuik_realloc(set, sizeof(MemorySet) + 2*set->cap*sizeof(SimpleMemRef));
-        set->cap *= 2;
+        size_t new_cap = set->cap*2;
+        if (new_cap < 4) { new_cap = 4; }
+
+        set = cuik_realloc(set, sizeof(MemorySet) + new_cap*sizeof(SimpleMemRef));
+        set->cap = new_cap;
         nl_table_put(non_aliasing, set->base, set);
     }
 
+    TB_ASSERT((i + 1) + (set->cnt - i) <= set->cap);
     memmove(&set->stores[i + 1], &set->stores[i], (set->cnt - i) * sizeof(SimpleMemRef));
     set->stores[i] = v;
     set->cnt += 1;
@@ -198,9 +205,31 @@ static void print_memory_state(NL_Table* non_aliasing) {
     nl_table_for(e, non_aliasing) {
         MemorySet* set = e->v;
         FOR_N(i, 0, set->cnt) {
-            printf("%%%u+%"PRId64"=%%%u ", set->base->gvn, set->stores[i].offset, set->stores[i].mem->gvn);
+            printf("%%%u", set->base->gvn);
+            if (set->stores[i].index) {
+                printf("+%%%u", set->stores[i].index->gvn);
+            }
+            printf("+%"PRId64"=%%%u ", set->stores[i].offset, set->stores[i].mem->gvn);
         }
     }
+}
+
+static void print_var_state(LocalSplitter* restrict ctx, MemoryState* state) {
+    printf("[");
+    FOR_N(i, 0, 1 + ctx->local_count) {
+        if (i == 0) {
+            printf("ROOT:");
+        } else {
+            printf("%%%u:", ctx->renames[i - 1].addr->gvn);
+        }
+
+        if (state->latest[i]) {
+            printf("%%%u ", state->latest[i]->gvn);
+        } else {
+            printf("___ ");
+        }
+    }
+    printf("]\n");
 }
 
 static void merge_memory(TB_Function* f, NL_Table* non_aliasing, NL_Table* other) {
@@ -325,6 +354,10 @@ static MemoryState* start_of_memory_sese(NL_Table* sese2set, TB_Node* n) {
             return state;
         }
 
+        // can't walk past phis, that means
+        // we missed a "block"
+        TB_ASSERT(n->type != TB_PHI);
+
         int mem_slot = 1;
         if (is_proj(n)) { mem_slot = 0; }
         else if (n->type == TB_MERGEMEM) { mem_slot = 2; }
@@ -366,12 +399,18 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                     continue;
                 }
 
-                TB_Node* new_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_VOID, curr->input_count, 0);
+                TB_Node* new_phi = tb_alloc_node(f, TB_PHI, ctx->renames[i].dt, curr->input_count, 0);
                 set_input(f, new_phi, region, 0);
                 mark_node(f, new_phi);
 
                 phis[i] = latest[1 + i] = new_phi;
                 TB_OPTDEBUG(MEM2REG)(printf("  PHI %%%u\n", new_phi->gvn));
+
+                if (ctx->renames[i].is_mem) {
+                    // they're all part of the same set
+                    state->refs += 1;
+                    nl_table_put(sese2set, new_phi, state);
+                }
             }
 
             state->phis = phis;
@@ -383,12 +422,17 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                 MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
                 FOR_N(i, 0, ctx->local_count) {
                     if (state->phis[i]) {
-                        if (state->phis[i]->dt.type == TB_TAG_VOID && pred->latest[1 + i]) {
-                            state->phis[i]->dt = pred->latest[1 + i]->dt;
+                        if (pred->latest[1 + i] == NULL) {
+                            pred->latest[1 + i] = make_poison(f, state->phis[i]->dt);
                         }
 
                         set_input(f, state->phis[i], pred->latest[1 + i], j);
                     }
+                }
+
+                if (curr->inputs[j] != pred->latest[0]) {
+                    set_input(f, curr, pred->latest[0], j);
+                    mark_node_n_users(f, curr);
                 }
             }
 
@@ -463,6 +507,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
     printf("\nSESE %d   [ ", state->order);
     print_memory_state(non_aliasing);
     printf("]\n");
+    print_var_state(ctx, state);
     #endif
 
     for (;;) {
@@ -505,7 +550,6 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
 
         // TODO(NeGate): classify the effect
         int cat = 0;
-        TB_Node* kill = NULL;
         if (curr->type == TB_STORE) {
             cat = find_local_idx(ctx, curr->inputs[2]);
             if (cat == 0) {
@@ -515,6 +559,8 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
 
                 MemorySet* set = memory_set_find_or_create(f, non_aliasing, base);
                 if (set->cnt == 0) {
+                    TB_OPTDEBUG(MEM2REG)(printf("    INVALIDATE ALL!\n"));
+
                     // first time constructing this set, previous writes to different bases
                     // might alias so they should be cleared.
                     //
@@ -523,53 +569,43 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                     memory_set_clear_except(non_aliasing, set);
                     memory_set_insert(f, non_aliasing, set, 0, ref);
                 } else {
-                    bool clobber = false;
-
                     // check if we clobbered any stores
                     int idx = find_aliasing_store(ctx, set, ref.offset);
-                    if (idx > 0 && set->stores[idx - 1].offset + set->stores[idx - 1].size > ref.offset) {
-                        // lower address store overlaps
-                        clobber = true;
-                    }
-
-                    if (idx < set->cnt && ref.offset + ref.size > set->stores[idx].offset) {
-                        // higher address store overlaps
-                        clobber = true;
-                    }
-
-                    // clobber all stores if there's any partial writes
-                    // TODO(NeGate): allow for some partial clobbering.
-                    if (!clobber && idx >= 0) {
-                        SimpleMemRef* st = &set->stores[idx];
+                    if (
+                        idx >= 0 && idx < set->cnt &&
+                        !state->walked_once &&
+                        set->stores[idx].mem->user_count == 1 &&
+                        ref.offset >= set->stores[idx].offset &&
+                        set->stores[idx].offset + set->stores[idx].size <= ref.offset + ref.size
+                    ) {
+                        TB_Node* st_mem = set->stores[idx].mem;
 
                         // the entire previous write is eaten up by this write
-                        if (idx < set->cnt &&
-                            st->mem->user_count == 1 &&
-                            ref.offset >= st->offset &&
-                            st->offset + st->size <= ref.offset + ref.size
-                        ) {
-                            TB_OPTDEBUG(MEM2REG)(printf("    DEAD-STORE %%%u\n", curr->gvn));
-
-                            // if there's no PHIs in the way, we've got a straight-line store
-                            // which is post-dominated by a later... AND cooler overlapping store.
-                            TB_Node* mem_in = curr->inputs[1];
-                            while (mem_in->type != TB_MERGEMEM && mem_in->type != TB_PHI && mem_in != st->mem) {
-                                mem_in = mem_in->inputs[is_proj(mem_in) ? 0 : 1];
-                            }
-
-                            if (mem_in == st->mem) {
-                                // migrate SESE entry up one
-                                st->mem->type = TB_DEAD_STORE;
-                                worklist_push(ctx->dead_worklist, st->mem);
-                            }
+                        TB_OPTDEBUG(MEM2REG)(printf("    DEAD-STORE %%%u\n", st_mem->gvn));
+                        st_mem->type = TB_DEAD_STORE;
+                        worklist_push(ctx->dead_worklist, st_mem);
+                    } else {
+                        bool clobber = false;
+                        if (idx > 0 && set->stores[idx - 1].offset + set->stores[idx - 1].size > ref.offset) {
+                            // lower address store overlaps
+                            clobber = true;
                         }
 
-                        memory_set_insert(f, non_aliasing, set, idx, ref);
-                    } else {
-                        TB_OPTDEBUG(MEM2REG)(printf("    CLOBBER %%%u\n", curr->gvn));
+                        if (idx < set->cnt && ref.offset + ref.size > set->stores[idx].offset) {
+                            // higher address store overlaps
+                            clobber = true;
+                        }
 
-                        memory_set_clear_except(non_aliasing, set);
-                        memory_set_insert(f, non_aliasing, set, 0, ref);
+                        // clobber all stores if there's any partial writes
+                        // TODO(NeGate): allow for some partial clobbering.
+                        if (!clobber && idx >= 0) {
+                            memory_set_insert(f, non_aliasing, set, idx, ref);
+                        } else {
+                            TB_OPTDEBUG(MEM2REG)(printf("    CLOBBER\n"));
+
+                            memory_set_clear_except(non_aliasing, set);
+                            memory_set_insert(f, non_aliasing, set, 0, ref);
+                        }
                     }
                 }
             }
@@ -590,11 +626,9 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                 } else {
                     // get rid of the store, we don't need it
                     latest[cat] = curr->inputs[3];
-                    latest[0] = curr;
-                    kill = curr->inputs[1];
 
                     #if TB_OPTDEBUG_MEM2REG
-                    printf("      STORE [cat=%d] = %%%u\n", cat, latest[cat]->gvn);
+                    printf("      STORE [cat=%d] = %%%u (KILLED %%%u)\n", cat, latest[cat]->gvn, curr->gvn);
                     #endif
 
                     curr->type = TB_DEAD_STORE;
@@ -607,31 +641,33 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             // unknown memory access, clobber everything
             nl_table_clear(non_aliasing);
 
-            int mem = curr->type == TB_MERGEMEM ? 2 : 1;
-            if (curr != latest[0] && curr->inputs[mem] != latest[0]) {
-                TB_ASSERT(curr->inputs[mem] != curr);
-                set_input(f, curr, latest[0], mem);
-                mark_node_n_users(f, curr);
-            }
+            if (latest) {
+                int mem = curr->type == TB_MERGEMEM ? 2 : 1;
+                if (curr != latest[0] && curr->inputs[mem] != latest[0]) {
+                    TB_ASSERT(curr->inputs[mem] != curr);
+                    set_input(f, curr, latest[0], mem);
+                    mark_node_n_users(f, curr);
+                }
 
-            if (curr->type == TB_MERGEMEM && ctx->insert_merge) {
-                FOR_N(i, 1, f->root_node->input_count) {
-                    TB_Node* end = f->root_node->inputs[i];
-                    if (end->type != TB_RETURN && end->type != TB_TRAP && end->type != TB_UNREACHABLE) {
-                        continue;
-                    }
-
-                    if (end->inputs[1] == curr) {
-                        size_t j = 2;
-                        FOR_N(i, 0, ctx->local_count) if (ctx->renames[i].is_mem) {
-                            TB_ASSERT(latest[1 + i] != NULL && "TODO we should place a poison?");
-                            set_input(f, curr, latest[1 + i], j++);
+                if (curr->type == TB_MERGEMEM && ctx->insert_merge) {
+                    FOR_N(i, 1, f->root_node->input_count) {
+                        TB_Node* end = f->root_node->inputs[i];
+                        if (end->type != TB_RETURN && end->type != TB_TRAP && end->type != TB_UNREACHABLE) {
+                            continue;
                         }
-                        break;
+
+                        if (end->inputs[1] == curr) {
+                            size_t j = 3;
+                            FOR_N(i, 0, ctx->local_count) if (ctx->renames[i].is_mem) {
+                                TB_ASSERT(latest[1 + i] != NULL && "TODO we should place a poison?");
+                                set_input(f, curr, latest[1 + i], j++);
+                            }
+                            break;
+                        }
                     }
                 }
+                latest[0] = curr;
             }
-            latest[0] = curr;
         }
 
         // TODO(NeGate): renaming loads
@@ -639,7 +675,9 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             // skip to mproj
             TB_ASSERT(curr->type != TB_SPLITMEM);
             curr = next_mem_user(curr);
-            latest[0] = curr;
+            if (latest) {
+                latest[0] = curr;
+            }
         }
 
         // fixup any connected loads
@@ -675,28 +713,30 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             }
 
             if (val != NULL) {
-                #if TB_OPTDEBUG_MEM2REG
-                printf("      ELIM %%%u => %%%u\n", use_n->gvn, val->gvn);
-                #endif
+                if (latest) {
+                    #if TB_OPTDEBUG_MEM2REG
+                    printf("      ELIM %%%u => %%%u\n", use_n->gvn, val->gvn);
+                    #endif
 
-                if (use_n->dt.raw != val->dt.raw) {
-                    // it's one of the half constructed phis we've got laying around
-                    if (val->type == TB_PHI && val->dt.type == TB_TAG_VOID) {
-                        val->dt = use_n->dt;
-                    } else {
-                        // insert bitcast
-                        TB_Node* cast = tb_alloc_node(f, TB_BITCAST, use_n->dt, 2, 0);
-                        set_input(f, cast, val, 1);
-                        val = cast;
+                    if (use_n->dt.raw != val->dt.raw) {
+                        // it's one of the half constructed phis we've got laying around
+                        if (val->type == TB_PHI && val->dt.type == TB_TAG_VOID) {
+                            val->dt = use_n->dt;
+                        } else {
+                            // insert bitcast
+                            TB_Node* cast = tb_alloc_node(f, TB_BITCAST, use_n->dt, 2, 0);
+                            set_input(f, cast, val, 1);
+                            val = cast;
+                        }
                     }
-                }
 
-                int old = val->user_count;
-                subsume_node(f, use_n, val);
-                if (val->user_count != old) {
-                    mark_node_n_users(f, val);
+                    int old = val->user_count;
+                    subsume_node(f, use_n, val);
+                    if (val->user_count != old) {
+                        mark_node_n_users(f, val);
+                    }
+                    ctx->progress = true;
                 }
-                ctx->progress = true;
             } else {
                 if (cat > 0) {
                     ctx->renames[cat - 1].is_alive = true;
@@ -722,6 +762,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
     printf("  FINAL [ ");
     print_memory_state(non_aliasing);
     printf("]\n");
+    print_var_state(ctx, state);
     #endif
 
     // Copy out the memory state
@@ -757,14 +798,36 @@ static void postorder_memory(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
     }
 
     MemoryState* state = tb_arena_alloc(&f->tmp_arena, sizeof(MemoryState) + ((1 + local_count) * sizeof(TB_Node*)));
-    *state = (MemoryState){ .order = dyn_array_length(sese_worklist->items), .start = start };
+    *state = (MemoryState){ .refs = 1, .order = dyn_array_length(sese_worklist->items), .start = start };
     state->non_aliasing = nl_table_alloc(4);
     FOR_N(i, 0, 1 + local_count) {
         state->latest[i] = NULL;
     }
     nl_table_put(sese2set, start, state);
 
+    if (start != end) {
+        state->refs += 1;
+        nl_table_put(sese2set, end, state);
+    }
+
+    // printf("SESE %d, %%%u -- %%%u\n", state->order, start->gvn, end->gvn);
     dyn_array_put(sese_worklist->items, start);
+}
+
+static TB_Node* node_uf_find(TB_Node** uf, TB_Node* n) {
+    // find UF leader
+    TB_Node* leader = n;
+    while (uf[leader->gvn]) {
+        leader = uf[leader->gvn];
+    }
+
+    // path compaction
+    while (uf[n->gvn]) {
+        TB_Node* next = uf[n->gvn];
+        uf[n->gvn] = leader, n = next;
+    }
+
+    return leader;
 }
 
 int tb_opt_locals(TB_Function* f) {
@@ -810,6 +873,7 @@ int tb_opt_locals(TB_Function* f) {
     aarray_for(i, locals) {
         TB_Node* addr = locals[i];
         RenameMode mode = RENAME_VALUE;
+        TB_DataType dt = TB_TYPE_VOID;
 
         bool blackhole = false;
         FOR_USERS(mem, addr) {
@@ -818,14 +882,21 @@ int tb_opt_locals(TB_Function* f) {
             } else if (USERI(mem) == 1 && USERN(mem)->type == TB_PTR_OFFSET) {
                 // pointer arith are also fair game, since they'd stay in bounds (given no UB)
                 mode = RENAME_MEMORY;
+                dt = TB_TYPE_MEMORY;
             } else if (USERI(mem) != 2 || !good_mem_op(f, USERN(mem))) {
                 mode = RENAME_NONE;
                 break;
+            } else {
+                if (USERN(mem)->type == TB_LOAD) {
+                    dt = USERN(mem)->dt;
+                } else if (USERN(mem)->type == TB_STORE) {
+                    dt = USERN(mem)->inputs[3]->dt;
+                }
             }
         }
 
         done:
-        if (mode != RENAME_NONE) {
+        if (mode != RENAME_NONE && dt.type != TB_TAG_VOID) {
             // allocate new alias index
             if (mode == RENAME_MEMORY) {
                 TB_NodeLocal* local = TB_NODE_GET_EXTRA(addr);
@@ -839,6 +910,7 @@ int tb_opt_locals(TB_Function* f) {
             ctx.renames[j].is_mem = mode == RENAME_MEMORY;
             ctx.renames[j].is_alive = blackhole;
             ctx.renames[j].addr = addr;
+            ctx.renames[j].dt = dt;
             j += 1;
         }
     }
@@ -906,6 +978,7 @@ int tb_opt_locals(TB_Function* f) {
 
         // tb_print(f);
         // tb_print_dumb(f);
+        // __debugbreak();
 
         TB_Worklist sese_worklist;
         NL_Table sese2set = nl_table_alloc(20);
@@ -981,13 +1054,74 @@ int tb_opt_locals(TB_Function* f) {
         CUIK_TIMED_BLOCK("teardown") {
             nl_table_for(set, &sese2set) {
                 MemoryState* state = set->v;
-                nl_table_for(e, &state->non_aliasing) {
-                    cuik_free(e->v);
+                if (--state->refs == 0) {
+                    nl_table_for(e, &state->non_aliasing) {
+                        cuik_free(e->v);
+                    }
+                    nl_table_free(state->non_aliasing);
                 }
-                nl_table_free(state->non_aliasing);
             }
             nl_table_free(non_aliasing);
             nl_table_free(sese2set);
+        }
+
+        CUIK_TIMED_BLOCK("phi identities") {
+            // from the newly marked phis, build up a disjoint-set for the
+            // equivalence relations, then replace them all at once before
+            // advancing to the peeps
+            TB_Node** uf = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(TB_Node*));
+            FOR_N(i, 0, f->node_count) { uf[i] = NULL; }
+
+            TB_Worklist* ws = f->worklist;
+            int id = 0;
+            for (size_t i = dyn_array_length(ws->items); i--;) {
+                TB_Node* n = ws->items[i];
+                // if we're not the leader, we've already been processed... somehow?
+                if (n->type != TB_PHI || uf[n->gvn]) {
+                    continue;
+                }
+
+                TB_Node* same = NULL;
+                FOR_N(i, 1, n->input_count) {
+                    TB_Node* in = node_uf_find(uf, n->inputs[i]);
+
+                    if (in == n) continue;
+                    if (same && same != in) { same = n; break; }
+                    same = in;
+                }
+
+                if (same != n) {
+                    TB_ASSERT(same);
+                    TB_ASSERT(uf[same->gvn] == NULL);
+                    uf[n->gvn] = same;
+                    subsume_node(f, n, same);
+                    id++;
+                }
+            }
+
+            /* for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+                TB_Node* n = ws->items[i];
+                if (n->type == TB_PHI && uf[n->gvn]) {
+                    TB_Node* same = node_uf_find(uf, n);
+                    TB_ASSERT(same == uf[n->gvn]);
+
+                    tb_print_dumb_node(NULL, n);
+                    printf(" => ");
+                    tb_print_dumb_node(NULL, same);
+                    printf("\n");
+
+                }
+            } */
+
+            /* TB_Node* n;
+            while (n = worklist_pop(&sese_worklist), n) {
+                if (n->type == TB_PHI || n->type == TB_DEAD_STORE) {
+                    subsume_node(f, n, n->inputs[1]);
+                } else {
+                    tb_kill_node(f, n);
+                }
+            }
+            __debugbreak();*/
         }
 
         CUIK_TIMED_BLOCK("kill nodes") {
@@ -1017,6 +1151,10 @@ int tb_opt_locals(TB_Function* f) {
                 }
             }
         }
+
+        // tb_print_dumb(f);
+        // tb_print(f);
+        // __debugbreak();
 
         worklist_free(&sese_worklist);
     }

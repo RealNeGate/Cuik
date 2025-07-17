@@ -14,7 +14,7 @@ struct InternalFile {
 
 extern InternalFile* cuik__ifiles_root;
 
-InternalFile* find_internal_file(const char* name) {
+static InternalFile* find_internal_file(const char* name) {
     InternalFile* f = cuik__ifiles_root;
     for (; f != NULL; f = f->next) {
         if (strcmp(name, f->name) == 0) return f;

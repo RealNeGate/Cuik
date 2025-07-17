@@ -33,7 +33,7 @@ struct Cuik_BuildStep {
     Cuik_BuildStep** deps;
 
     // returns exit status, anything but 0 is failure.
-    void(*invoke)(TPool* pool, BuildStepInfo* s);
+    void(*invoke)(TPool* pool, void** arg);
 
     // once the step is completed, it'll decrement from the anti dep's
     // remaining
@@ -109,7 +109,8 @@ static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
     return l;
 }
 
-static void sys_invoke(TPool* tp, BuildStepInfo* info) {
+static void sys_invoke(TPool* tp, void** arg) {
+    BuildStepInfo* info = arg[0];
     Cuik_BuildStep* s = info->step;
 
     // TODO(NeGate): this is going to splay the diagnostics
@@ -143,6 +144,10 @@ static void local_opt_func(TB_Function* f, void* arg) {
         ir_worklist = tb_worklist_alloc();
     }
 
+    if (((TB_Symbol*) f)->tag == TB_SYMBOL_DEAD) {
+        return;
+    }
+
     Cuik_DriverArgs* args = arg;
     assert(args->optimize);
 
@@ -168,10 +173,18 @@ static void apply_func(TB_Function* f, void* arg) {
         ir_worklist = tb_worklist_alloc();
     }
 
+    if (((TB_Symbol*) f)->tag == TB_SYMBOL_DEAD) {
+        return;
+    }
+
     Cuik_DriverArgs* args = arg;
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
+    if (strcmp(name, "read_") != 0) {
+        // return;
+    }
+
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
         #if TB_ENABLE_LOG
         TB_Arena *a1 = tb_function_get_arena(f, 0);
@@ -179,8 +192,8 @@ static void apply_func(TB_Function* f, void* arg) {
         #endif
 
         if (args->emit_ir) {
-            tb_print_dumb(f);
-            tb_print(f);
+            // tb_print_dumb(f);
+            // tb_print(f);
 
             // char* str = tb_print_c(f, ir_worklist, arenas->tmp);
             // printf("%s", str);
@@ -203,7 +216,8 @@ static void apply_func(TB_Function* f, void* arg) {
 }
 #endif
 
-static void cc_invoke(TPool* tp, BuildStepInfo* restrict info) {
+static void cc_invoke(TPool* tp, void** arg) {
+    BuildStepInfo* info = arg[0];
     Cuik_BuildStep* s = info->step;
     Cuik_DriverArgs* args = s->cc.args;
     if (args->verbose) {
@@ -344,7 +358,8 @@ static void cc_invoke(TPool* tp, BuildStepInfo* restrict info) {
     done_no_cpp: step_done(s);
 }
 
-static void ld_invoke(TPool* tp, BuildStepInfo* info) {
+static void ld_invoke(TPool* tp, void** arg) {
+    BuildStepInfo* info = arg[0];
     Cuik_BuildStep* s = info->step;
     Cuik_DriverArgs* args = s->ld.args;
     if (args->verbose) {
@@ -361,14 +376,11 @@ static void ld_invoke(TPool* tp, BuildStepInfo* info) {
 
     CUIK_TIMED_BLOCK("Backend") {
         if (args->optimize) {
-            int t = 0;
-            do {
-                CUIK_TIMED_BLOCK("Local opts") {
-                    log_debug("Optimizing in functions... t=%d", ++t);
-                    cuiksched_per_function(tp, s->ld.cu, mod, args, local_opt_func);
-                    log_debug("Interprocedural opts...");
-                }
-            } while (false);//tb_module_ipo(mod));
+            tb_module_ipo(mod, tp);
+            /* if (tp) {
+            } else {
+                cuiksched_per_function(tp, s->ld.cu, mod, args, local_opt_func);
+            } */
         }
 
         if (args->emit_ir) {
@@ -612,7 +624,7 @@ static void step_submit(Cuik_BuildStep* s, TPool* tp, mtx_t* mutex, bool has_sib
     }
 
     // leaking!!!
-    BuildStepInfo* info = malloc(sizeof(BuildStepInfo));
+    BuildStepInfo* info = cuik_malloc(sizeof(BuildStepInfo));
     info->step = s;
     info->mutex = mutex;
     CUIK_TIMED_BLOCK("task invoke") {
@@ -621,7 +633,7 @@ static void step_submit(Cuik_BuildStep* s, TPool* tp, mtx_t* mutex, bool has_sib
             tpool_add_task(tp, (tpool_task_proc*) s->invoke, info);
         } else {
             // we're an only child, there's no reason to multithread
-            s->invoke(NULL, info);
+            s->invoke(tp, (void**) &info);
         }
     }
 }
@@ -875,7 +887,7 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
         size_t batch_size = good_batch_size(args->threads, stmt_count);
         size_t task_capacity = (stmt_count + batch_size - 1) / batch_size;
 
-        Futex done = task_capacity;
+        Futex done = 0;
         size_t task_count = 0;
         CUIK_FOR_EACH_TU(tu, cu) {
             size_t top_level_count = cuik_num_of_top_level_stmts(tu);
@@ -896,6 +908,7 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
                     .count = end - i,
                     .done = &done
                 };
+                task_count++;
                 tpool_add_task(tp, irgen_job, task);
             }
         }

@@ -68,8 +68,8 @@ node (ucomi)
 
 // compares
 #define CMP_OP(op_name, cc) \
-pat (op_name cmp_dt=$dt ___ $lhs $rhs) where "TB_IS_INT_OR_PTR($dt)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=cc) \
-pat (op_name cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && fits_into_int32($dt, $rhs)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)" extra_dt=$dt) cond=cc)
+pat (op_name cmp_dt=$dt ___ $lhs $rhs) where "TB_IS_BOOL_INT_PTR($dt)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=cc) \
+pat (op_name cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_BOOL_INT_PTR($dt) && fits_into_int32($dt, $rhs)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)" extra_dt=$dt) cond=cc)
 
 CMP_OP(TB_CMP_SLE, LE)
 CMP_OP(TB_CMP_SLT, L)
@@ -87,11 +87,15 @@ pat (TB_CMP_EQ cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PT
 pat (TB_CMP_NE cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && TB_NODE_GET_EXTRA_T($rhs, TB_NodeInt)->value == 0" => (x86_COND dt=TB_TYPE_I8 (x86_test dt=TB_TYPE_I64 ___ ___ $lhs $lhs extra_dt=$dt) cond=NE)
 
 node (jcc)
+node (jmp_MULTI)
 
 #define BRANCH(op_name) \
-pat (op_name dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond) \
-pat (op_name dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE) \
-pat (op_name dt=$dt $ctrl (TB_AND ___ $x $y)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $y extra_dt="n->inputs[1]->dt") cond=NE)
+/* standard two-way branches */ \
+pat (op_name dt=$dt $ctrl (x86_COND $cmp cond=$cond)) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond) \
+pat (op_name dt=$dt $ctrl $x) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE) \
+pat (op_name dt=$dt $ctrl (TB_AND ___ $x $y)) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $y extra_dt="n->inputs[1]->dt") cond=NE) \
+/* multi-way branches */ \
+pat (op_name dt=$dt $ctrl $x) where "!cfg_if_branch(n)" => "isel_multi_way_branch(ctx, f, n)"
 
 BRANCH(TB_BRANCH)
 BRANCH(TB_AFFINE_LATCH)
@@ -216,6 +220,9 @@ pat (TB_FNEG dt=$dt ___ $in)
 pat (TB_BITCAST dt=$dt ___ $in)
 => (TB_MACH_COPY dt=$dt ___ $in def="ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]" use="ctx->normie_mask[TB_IS_FLOAT_TYPE($in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]")
 
+pat (TB_TRUNCATE dt=$dt ___ $in)
+=> (TB_MACH_COPY dt=$dt ___ $in def="ctx->normie_mask[REG_CLASS_GPR]" use="ctx->normie_mask[REG_CLASS_GPR]")
+
 // 32 -> 64
 pat (TB_SIGN_EXT dt=$dt ___ $src)
 where "$dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32"
@@ -225,6 +232,11 @@ where "$dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32"
 pat (TB_ZERO_EXT dt=$dt ___ $src)
 where "$dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32"
 => (x86_mov dt=TB_TYPE_I64 ___ ___ $src)
+
+// 1/8 -> 32/64
+pat (TB_SIGN_EXT dt=$dt ___ $src)
+where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
+=> (x86_movsx8 dt=$dt ___ ___ $src)
 
 // 1/8 -> 32/64
 pat (TB_ZERO_EXT dt=$dt ___ $src)

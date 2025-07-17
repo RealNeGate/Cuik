@@ -162,6 +162,29 @@ ExportList tb_module_layout_sections(TB_Module* m) {
         }
     }
 
+    // prune any dead sections
+    size_t j = 0;
+    dyn_array_for(i, m->sections) {
+        if (dyn_array_length(m->sections[i].funcs) != 0 || dyn_array_length(m->sections[i].globals) != 0) {
+            if (i != j) {
+                // remap the section handles
+                TB_ModuleSection* sec = &m->sections[i];
+                dyn_array_for(i, sec->funcs) {
+                    sec->funcs[i]->parent->section = j;
+                    sec->funcs[i]->section = j;
+                }
+
+                dyn_array_for(i, sec->globals) {
+                    sec->globals[i]->parent = j;
+                }
+
+                m->sections[j] = m->sections[i];
+            }
+            j += 1;
+        }
+    }
+    dyn_array_set_length(m->sections, j);
+
     return (ExportList){ dyn_array_length(externals), externals };
 }
 

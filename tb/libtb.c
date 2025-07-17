@@ -36,6 +36,9 @@ void* tb_jit_stack_create(void);
 #include "objects/macho.c"
 #include "objects/wasm_obj.c"
 
+// Sandbird (HTTP server library)
+#include "sandbird/sandbird.c"
+
 int uf_find(int* uf, int uf_len, int a) {
     if (a >= uf_len) {
         return a;

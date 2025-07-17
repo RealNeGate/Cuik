@@ -52,8 +52,10 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
     *g = (TB_GraphBuilder){ .f = f, .arena = &f->tmp_arena };
     g->peep = ws ? tb_opt_peep_node : tb_opt_gvn_node;
 
+    bool has_aggregate_return = dbg && dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
+
     // both RPC and memory are mutable vars
-    int def_count = 3 + (dbg ? 0 : f->param_count);
+    int def_count = 3 + (dbg ? has_aggregate_return : f->param_count);
     TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, def_count, sizeof(TB_NodeSymbolTable));
     set_input(f, syms, f->params[0], 0);
     set_input(f, syms, f->params[0], 1);
@@ -73,7 +75,10 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
         }
 
         // reassemble values
-        bool has_aggregate_return = dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
+        if (has_aggregate_return) {
+            set_input(f, syms, f->params[3], 3);
+        }
+
         FOR_N(i, 0, param_count) {
             TB_DebugType* type = param_list[i]->field.type;
             const char* name = param_list[i]->field.name;
@@ -282,6 +287,14 @@ TB_Node* tb_builder_select(TB_GraphBuilder* g, TB_Node* cond, TB_Node* a, TB_Nod
     set_input(f, n, cond, 1);
     set_input(f, n, a, 2);
     set_input(f, n, b, 3);
+    return g->peep(f, n);
+}
+
+TB_Node* tb_builder_va_start(TB_GraphBuilder* g, TB_Node* src) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_VA_START, TB_TYPE_PTR, 2, 0);
+    set_input(f, n, f->root_node, 0);
+    set_input(f, n, src, 1);
     return g->peep(f, n);
 }
 
@@ -868,8 +881,7 @@ void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file, int li
 
 TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int nargs, TB_Node** args) {
     TB_Function* f = g->f;
-
-    size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
+    size_t proj_count = 2 + proto->return_count;
 
     TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + nargs, sizeof(TB_NodeCall));
     set_input(f, n, target, 2);

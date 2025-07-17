@@ -189,6 +189,13 @@ static bool lattice_top_or_bot(Lattice* l) {
     return l->tag <= LATTICE_TOP;
 }
 
+static bool lattice_is_top_or_constant(Lattice* l) {
+    return l->tag == LATTICE_TOP
+        || (l->tag == LATTICE_INT && l->_int.min == l->_int.max)
+        || (l->tag == LATTICE_FLTCON32 || l->tag == LATTICE_FLTCON64)
+        || (l->tag == LATTICE_NULL     || l->tag == LATTICE_PTRCON);
+}
+
 Lattice* lattice_truthy(Lattice* l) {
     switch (l->tag) {
         case LATTICE_INT:
@@ -203,8 +210,8 @@ Lattice* lattice_truthy(Lattice* l) {
         case LATTICE_NULL:  return &FALSE_IN_THE_SKY;
         case LATTICE_XNULL: return &TRUE_IN_THE_SKY;
 
-        default:
-        return &BOT_IN_THE_SKY;
+        case LATTICE_TOP: return &TOP_IN_THE_SKY;
+        default: return &BOT_IN_THE_SKY;
     }
 }
 
@@ -226,6 +233,21 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
         case TB_TAG_CONTROL: return &LIVE_IN_THE_SKY;
         default:             return &BOT_IN_THE_SKY;
     }
+}
+
+static Lattice* lattice_branch_none(TB_Function* f, int succ_count) {
+    TB_Arena* arena = get_permanent_arena(f->super.module);
+
+    size_t size = sizeof(Lattice) + succ_count*sizeof(Lattice*);
+    Lattice* l = tb_arena_alloc(arena, size);
+    *l = (Lattice){ LATTICE_TUPLE, ._elem_count = succ_count };
+    FOR_N(i, 0, succ_count) {
+        l->elems[i] = &DEAD_IN_THE_SKY;
+    }
+
+    Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
+    if (k != l) { tb_arena_free(arena, l, size); }
+    return k;
 }
 
 static Lattice* lattice_branch_goto(TB_Function* f, int succ_count, int taken) {
@@ -279,6 +301,7 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
 
 static bool lattice_signed(LatticeInt* l) { return l->min > l->max; }
 static bool lattice_is_iconst(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
+static bool lattice_is_izero(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max && l->_int.min == 0; }
 
 static LatticeInt lattice_into_unsigned(LatticeInt i, int bits) {
     if (i.min > i.max) {
@@ -393,6 +416,14 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
     }
 }
 
+static bool lattice_is_float32_nan(Lattice* l) {
+    return l->tag == LATTICE_FLTCON32 ? isnan(l->_f32) : l == &NAN32_IN_THE_SKY;
+}
+
+static bool lattice_is_float64_nan(Lattice* l) {
+    return l->tag == LATTICE_FLTCON64 ? isnan(l->_f64) : l == &NAN64_IN_THE_SKY;
+}
+
 // greatest lower bound between a and b, note that we expect interned lattices here
 static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
     // a ^ a = a
@@ -436,15 +467,19 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
         //
         // * Fc meeting with things has to worry about mismatching constants and which
         //   bucket the constant fits into (nans or not).
-        case LATTICE_FLT32: case LATTICE_NAN32: case LATTICE_XNAN32: return &FLT32_IN_THE_SKY;
-        case LATTICE_FLT64: case LATTICE_NAN64: case LATTICE_XNAN64: return &FLT64_IN_THE_SKY;
-        case LATTICE_FLTCON32: if (b->tag == a->tag) {
-            bool anan = isnan(a->_f32), bnan = isnan(b->_f32);
+        case LATTICE_FLT32: return &FLT32_IN_THE_SKY;
+        case LATTICE_FLT64: return &FLT64_IN_THE_SKY;
+
+        case LATTICE_NAN32: case LATTICE_XNAN32:
+        case LATTICE_FLTCON32: if (b->tag <= LATTICE_FLTCON32) {
+            bool anan = lattice_is_float32_nan(a), bnan = lattice_is_float32_nan(b);
             return anan == bnan ? (anan ? &NAN32_IN_THE_SKY : &XNAN32_IN_THE_SKY) : &FLT32_IN_THE_SKY;
         } else {
             return &BOT_IN_THE_SKY;
         }
-        case LATTICE_FLTCON64: if (b->tag == a->tag) {
+
+        case LATTICE_NAN64: case LATTICE_XNAN64:
+        case LATTICE_FLTCON64: if (b->tag <= LATTICE_FLTCON64) {
             bool anan = isnan(a->_f64), bnan = isnan(b->_f64);
             return anan == bnan ? (anan ? &NAN64_IN_THE_SKY : &XNAN64_IN_THE_SKY) : &FLT64_IN_THE_SKY;
         } else {
@@ -490,10 +525,39 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
     }
 }
 
+static Lattice* lattice_remove_widen(TB_Function* f, Lattice* a) {
+    if (a->tag == LATTICE_INT && a->_int.widen != 0) {
+        LatticeInt aa = a->_int;
+        aa.widen = 0;
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = aa });
+    }
+
+    return a;
+}
+
+// lattice elements are equivalent disregarding the widening
+static bool lattice_spec_eq(TB_Function* f, Lattice* a, Lattice* b) {
+    if (a == b) {
+        return true;
+    } else if (a->tag == LATTICE_INT && b->tag == LATTICE_INT) {
+        LatticeInt aa = a->_int;
+        LatticeInt bb = a->_int;
+        aa.widen = 0, bb.widen = 0;
+        return memcmp(&aa, &bb, sizeof(aa)) == 0;
+    } else {
+        return false;
+    }
+}
+
 // least upper bound between a and b
 static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b) {
     a = lattice_dual(f, a);
     b = lattice_dual(f, b);
     return lattice_dual(f, lattice_meet(f, a, b));
+}
+
+// a >= b if a /\ b = b
+static bool lattice_at_least(TB_Function* f, Lattice* a, Lattice* b) {
+    return lattice_meet(f, a, b) == b;
 }
 

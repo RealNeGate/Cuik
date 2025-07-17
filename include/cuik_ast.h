@@ -39,7 +39,7 @@ typedef struct Cuik_Type Cuik_Type;
 typedef uint64_t Cuik_ConstInt;
 
 typedef struct {
-    enum { CUIK_CONST_NONE, CUIK_CONST_INT, CUIK_CONST_FLOAT, CUIK_CONST_ADDR } tag;
+    enum { CUIK_CONST_NONE, CUIK_CONST_INT, CUIK_CONST_FLOAT, CUIK_CONST_ADDR, CUIK_CONST_STR } tag;
     union {
         uint64_t i;
         double f;
@@ -49,6 +49,8 @@ typedef struct {
             Stmt* base;
             int32_t offset;
         } s;
+
+        Atom str;
     };
 } Cuik_ConstVal;
 

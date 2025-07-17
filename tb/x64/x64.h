@@ -201,6 +201,7 @@ static const char* COND_NAMES[] = {
 #define Vabs(x)    &(Val){ VAL_ABS, .abs = (x) }
 #define Vlbl(x)    &(Val){ VAL_LABEL,  .label = (x) }
 #define Vbase(b,d) &(Val){ VAL_MEM, .reg = (b), .index = GPR_NONE, .imm = (d) }
+#define Vmem(b,i,s,d) &(Val){ VAL_MEM, .reg = (b), .index = (i), .scale = (s), .imm = (d) }
 #define Vsym(b,d)  &(Val){ VAL_GLOBAL, .imm = (d), .symbol = (b) }
 
 // shorthand macros

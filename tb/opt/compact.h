@@ -49,6 +49,7 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
                 f->types = new_types;
             }
 
+            nl_hashset_clear(&f->gvn_nodes);
             FOR_N(i, 0, dyn_array_length(ws->items)) {
                 TB_Node* n = ws->items[i];
                 TB_Node* k = fwd[n->gvn];
@@ -71,6 +72,11 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
                     TB_ASSERT(moved_k != NULL);
 
                     tb_node_add_extra(f, k, moved_k);
+                }
+
+                // rediscover the GVN table
+                if (can_gvn(k)) {
+                    nl_hashset_put2(&f->gvn_nodes, k, gvn_hash, gvn_compare);
                 }
 
                 TB_OPTDEBUG(COMPACT)(printf("%s: %p (%u) -> %p (%u)\n", n, n->gvn, k, k->gvn));
@@ -100,8 +106,6 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
                     }
                 }
             }
-
-            nl_hashset_clear(&f->gvn_nodes);
         }
         worklist_clear(ws);
     }

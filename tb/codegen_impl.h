@@ -338,7 +338,7 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
             wants_operand |= node_grammar_get(state << 16 | (257+1)) > 0;
 
             if (mach_is_operand[in->type] && in != n && wants_operand) {
-                bool pushed_already = !worklist_test_n_set(walker_ws, in);
+                bool pushed_already = worklist_test_n_set(walker_ws, in);
                 tb__gvn_remove(f, in);
 
                 TB_OPTDEBUG(ISEL2)(printf("\n>>>\n"));
@@ -358,8 +358,12 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
                     in = new_in;
                     in_type = in ? in->type : TB_NULL;
                 } else if (!pushed_already) {
+                    in = tb_opt_gvn_node(f, in);
+
                     // node failed but hasn't been processed, treat it as a node of its own
-                    // worklist_test_n_set(walker_ws, in);
+                    dyn_array_put(walker_ws->items, in);
+                } else {
+                    in = tb_opt_gvn_node(f, in);
                 }
 
                 #if TB_OPTDEBUG_ISEL2
@@ -598,13 +602,13 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     }
                 }
 
-                tb__gvn_remove(f, n);
-
                 // replace with machine op
                 TB_OPTDEBUG(ISEL3)(printf("\n\n"));
                 if (n->type == TB_PHI) {
                     worklist_test_n_set(&walker_ws, n);
                 } else {
+                    tb__gvn_remove(f, n);
+
                     bool progress;
                     do {
                         TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws, 0);
@@ -622,6 +626,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                             n = k;
                         }
                     } while (progress);
+
+                    n = tb_opt_gvn_node(f, n);
                 }
                 TB_OPTDEBUG(ISEL3)(printf("\n"));
 
@@ -657,7 +663,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     CUIK_TIMED_BLOCK("global sched") {
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
-        #if !TB_OPTDEBUG_ISEL
+        #if !TB_OPTDEBUG_ISEL && !TB_OPTDEBUG_ISEL2 && !TB_OPTDEBUG_ISEL3
         tb_renumber_nodes(f, ws);
         #endif
 

@@ -9,6 +9,7 @@
 #include "tb.h"
 #include "tb_formats.h"
 #include <stdalign.h>
+#include <futex.h>
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <immintrin.h>
@@ -18,36 +19,7 @@
 #define thread_local _Thread_local
 #endif
 
-////////////////////////////////
-// Random toggles
-////////////////////////////////
-#define TB_OPTDEBUG_STATS     0
-#define TB_OPTDEBUG_PASSES    1
-#define TB_OPTDEBUG_PEEP      0
-#define TB_OPTDEBUG_SCCP      0
-#define TB_OPTDEBUG_LOOP      0
-#define TB_OPTDEBUG_SROA      0
-#define TB_OPTDEBUG_GCM       0
-#define TB_OPTDEBUG_SLP       0
-#define TB_OPTDEBUG_GVN       0
-#define TB_OPTDEBUG_INTERP    0
-#define TB_OPTDEBUG_MEM2REG   0
-#define TB_OPTDEBUG_ISEL      0
-#define TB_OPTDEBUG_ISEL2     0
-#define TB_OPTDEBUG_ISEL3     0
-#define TB_OPTDEBUG_EMIT      0
-#define TB_OPTDEBUG_DATAFLOW  0
-#define TB_OPTDEBUG_PLACEMENT 0
-#define TB_OPTDEBUG_INLINE    0
-#define TB_OPTDEBUG_REGALLOC  1
-#define TB_OPTDEBUG_REGALLOC2 0
-#define TB_OPTDEBUG_REGALLOC3 1
-#define TB_OPTDEBUG_REGALLOC4 0
-#define TB_OPTDEBUG_COMPACT   0
-#define TB_OPTDEBUG_SCHED1    0
-#define TB_OPTDEBUG_SCHED2    0
-// for toggling ANSI colors
-#define TB_OPTDEBUG_ANSI      1
+#include "tb_config.h"
 
 #define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
 
@@ -376,6 +348,10 @@ typedef struct {
     uint64_t end_const;
 } TB_InductionVar;
 
+typedef struct CProp CProp;
+typedef struct CProp_Node CProp_Node;
+typedef struct CProp_Partition CProp_Partition;
+
 struct TB_Function {
     TB_Symbol super;
     TB_ModuleSectionHandle section;
@@ -418,9 +394,8 @@ struct TB_Function {
         size_t type_cap;
         Lattice** types;
 
-        // some xforms like removing branches can
-        // invalidate the loop tree.
-        bool invalidated_loops;
+        // GCF partitions
+        CProp_Node** gcf_nodes;
 
         // we throw the results of scheduling here:
         //   [value number] -> TB_BasicBlock*
@@ -431,6 +406,21 @@ struct TB_Function {
         size_t doms_n;
         TB_Node** doms;
 
+        // IPSCCP stuff
+        _Atomic(Lattice*) ipsccp_args;
+        _Atomic(Lattice*) ipsccp_ret;
+        CProp* cprop;
+
+        atomic_bool ipsccp_escape;
+        atomic_int ipsccp_status;
+
+        // IPO lock
+        Futex ipo_lock;
+
+        #if TB_OPTDEBUG_SERVER
+        int dbg_server_t;
+        #endif
+
         // nice stats
         struct {
             #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_ISEL
@@ -440,7 +430,10 @@ struct TB_Function {
             #if TB_OPTDEBUG_STATS
             int initial;
             int gvn_hit, gvn_tries;
-            int *peeps, *identities, *rewrites, *constants, *opto_constants, *killed;
+            int *peeps, *identities, *rewrites, *constants, *opto_constants, *killed, *cprop_t;
+
+            // perf counter for solver
+            uint64_t solver_n, solver_big_o, solver_time;
             #endif
         } stats;
     };
@@ -509,6 +502,7 @@ typedef struct {
     TB_External** data;
 } ExportList;
 
+typedef struct IPOSolver IPOSolver;
 struct TB_Module {
     bool is_jit;
     bool visited; // used by the linker
@@ -543,6 +537,11 @@ struct TB_Module {
     // interning lattice
     NBHS lattice_elements;
 
+    IPOSolver* ipo;
+    TPool* ipsccp_pool;
+    Futex ipsccp_tracker[2];
+    _Atomic bool ipsccp_progress;
+    _Atomic bool during_ipsccp;
     _Atomic uint32_t uses_chkstk;
     _Atomic uint32_t compiled_function_count;
 
@@ -578,6 +577,8 @@ enum {
     NODE_SAFEPOINT  = 128,
     // cannot be scheduled late
     NODE_PINNED     = 256,
+    // "necessary" CFG node (in the context of the optimistic solver)
+    NODE_EFFECT     = 512,
 };
 
 struct ICodeGen {
@@ -614,6 +615,13 @@ typedef struct {
     // thus function_sym_start tells you what the starting point is in the symbol table
     TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_Arena* arena);
 } IDebugFormat;
+
+typedef struct OutStream {
+    void (*color)(struct OutStream* s, int ansi_code);
+    void (*write)(struct OutStream* s, size_t n, const char* data);
+    int (*writef)(struct OutStream* s, const char* fmt, va_list ap);
+    bool quoted;
+} OutStream;
 
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
 
@@ -731,7 +739,7 @@ void tb_node_clear_extras(TB_Function* f, TB_Node* n);
 
 TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra);
 
-TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
+TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, TB_Linkage linkage, size_t size);
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos, TB_ObjectRelocType type);
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data);
