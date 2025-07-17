@@ -180,6 +180,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     if (n->type == TB_MACH_FRAME_PTR) {
                         TB_ASSERT(n->gvn < f->scheduled_n);
                         f->scheduled[n->gvn] = bb0;
+                        aarray_push(bb0->items, n);
                         aarray_push(pins, n);
                         // aarray_push(bb0->items, n);
                     } else if (is_proj(n) && !tb_node_is_pinned(n->inputs[0])) {

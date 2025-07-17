@@ -11,8 +11,8 @@ static int baz(int i) {
 }
 
 int foo(void) {
-    int i = 0;
-    while (pred()) {
+    int i = 0, j = 0;
+    while (j++ < 100) {
         i = bar(i);
     }
     return baz(i);

@@ -184,7 +184,7 @@ static int print_type(OutStream* s, TB_DataType dt) {
         return s_writef(s, plain);
     } else if (TB_IS_VECTOR_TYPE(dt)) {
         const char* elem_plain = plain_type_name((TB_DataType){ .type = dt.elem_or_addrspace });
-        return s_writef(s, "v%d[%s]", 1u << ((dt.type - TB_TAG_V64) + 6));
+        return s_writef(s, "v%d[%s]", 1u << ((dt.type - TB_TAG_V64) + 6), elem_plain);
     } else if (dt.type == TB_TAG_PTR && dt.elem_or_addrspace != 0) {
         return s_writef(s, "ptr%d", dt.elem_or_addrspace);
     } else {

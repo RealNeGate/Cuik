@@ -1,6 +1,8 @@
 #include <tb_x64.h>
+#include <tb_a64.h>
 
 size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs);
+size_t tb_a64_print_inst(TB_Disasm* disasm, TB_A64_Inst* inst, bool has_relocs);
 
 bool tb_disasm_outf(TB_Disasm* disasm, const char* fmt, ...) {
     size_t cap = disasm->out_len - disasm->out_curr;
@@ -28,6 +30,21 @@ ptrdiff_t tb_disasm_print(TB_Arch arch, TB_Disasm* disasm, bool has_relocs) {
             }
 
             size_t s = tb_x86_print_inst(disasm, &inst, has_relocs);
+            TB_ASSERT(s != 0);
+
+            disasm->in_curr += inst.length;
+            return inst.length;
+        }
+        #endif
+
+        #ifdef TB_HAS_AARCH64
+        case TB_ARCH_AARCH64: {
+            TB_A64_Inst inst;
+            if (!tb_a64_disasm(&inst, disasm->in_len - disasm->in_curr, &disasm->in[disasm->in_curr])) {
+                return -1;
+            }
+
+            size_t s = tb_a64_print_inst(disasm, &inst, has_relocs);
             TB_ASSERT(s != 0);
 
             disasm->in_curr += inst.length;

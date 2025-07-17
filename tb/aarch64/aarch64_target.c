@@ -1,7 +1,8 @@
 #ifdef TB_HAS_AARCH64
 #include "../emitter.h"
 #include "../tb_internal.h"
-#include "aarch64_emitter.h"
+#include "a64_emitter.h"
+#include "a64_disasm.c"
 
 enum {
     // register classes
@@ -30,14 +31,14 @@ static CallingConv CC_A64PCS = {
     .fp_class  = REG_CLASS_GPR, .fp_reg  = FP, // frame pointer
     .rpc_class = REG_CLASS_GPR, .rpc_reg = LR, // return PC
     .flexible_param_alloc = true,
-    
+
     .reg_saves[REG_CLASS_GPR] = (char[32]){
         // volatile/clobbered (caller saved) 'C'
         [ 0 ... 18] = 'C', [LR] = 'C',
         // non-volatile (callee saved) 'c'
         [19 ... 29] = 'c',
     },
-    
+
     // TODO calling convention needs float pairs (low and high 64bit)
     // or something that's caller and callee saved at the same time
     .reg_saves[REG_CLASS_FPR] = (char[32]){
@@ -175,6 +176,17 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
     // printf("CONSTRAINT %%%u, %s\n", n->gvn, tb_node_get_name(n->type));
     switch (n->type) {
         ////////////////////////////////
+        // UNNECESSARY
+        ////////////////////////////////
+        case TB_REGION:
+        case TB_NATURAL_LOOP:
+        case TB_AFFINE_LOOP:
+        if (ins) {
+            FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
+        }
+        return &TB_REG_EMPTY;
+
+        ////////////////////////////////
         // CONSTANTS
         ////////////////////////////////
         case TB_ICONST: {
@@ -228,6 +240,21 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         ////////////////////////////////
         // CONTROL
         ////////////////////////////////
+        case TB_PHI: {
+            if (n->dt.type == TB_TAG_MEMORY) {
+                if (ins) {
+                    FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
+                }
+                return &TB_REG_EMPTY;
+            }
+
+            RegMask* rm = TB_IS_VECTOR_TYPE(n->dt) || TB_IS_FLOAT_TYPE(n->dt) ? ctx->normie_mask[REG_CLASS_FPR] : ctx->normie_mask[REG_CLASS_GPR];
+            if (ins) {
+                FOR_N(i, 1, n->input_count) { ins[i] = rm; }
+            }
+            return rm;
+        }
+
         case TB_RETURN: {
             if (ins) {
                 CallingConv* cc = ctx->calling_conv;
@@ -292,7 +319,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 int nprn = 0; // next scalable predicate number
                 int nsaa = 0; //?? next stack number (? how does the link and frame pointer look)
                 //?? stage B - pre-padding and extension of arguments
-                    //!! TODO: composite types
+                //!! TODO: composite types
                 // stage C - assignment of args to registers and stack
                 FOR_N(i, 4, n->input_count) {
                     int type = n->inputs[i]->dt.type;
@@ -331,7 +358,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     // C.13
                     ngrn = 8;
                     // C.14 round nsaa to nearest multiple of max(8, input's alignment)
-                        // but stack regs are word-sized
+                    // but stack regs are word-sized
                     // C.15 composite
                     // C.16 if size < 8 then size = 8
                     // C.17
@@ -533,8 +560,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         default:
-            tb_todo();
-            return &TB_REG_EMPTY;
+        tb_todo();
+        return &TB_REG_EMPTY;
     }
 }
 
@@ -925,16 +952,16 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 bool wide = true;
                 dpreg_log_shift(e, wide, ORR, vdst->assigned, vsrc->assigned, ZR, 0, 0);
             } else
-            if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_FPR) {
+                if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_FPR) {
                 FPtype type = src->dt.type == TB_TAG_F64 ? Double : Single;
                 simd_dp_floatdp1(e, type, FMOV, vdst->assigned, vsrc->assigned);
             } else
-            if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_GPR) {
+                if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_GPR) {
                 bool   wide = src->dt.type == TB_TAG_I64;
                 FPtype type = dst->dt.type == TB_TAG_F64 ? Double : Single;
                 simd_dp_float2int(e, wide, type, FMOV_I2F, vdst->assigned, vsrc->assigned, false);
             } else
-            if (vdst->class == REG_CLASS_GPR && vsrc->class == REG_CLASS_FPR) {
+                if (vdst->class == REG_CLASS_GPR && vsrc->class == REG_CLASS_FPR) {
                 bool   wide = src->dt.type == TB_TAG_I64;
                 FPtype type = dst->dt.type == TB_TAG_F64 ? Double : Single;
                 simd_dp_float2int(e, wide, type, FMOV_F2I, vdst->assigned, vsrc->assigned, false);
