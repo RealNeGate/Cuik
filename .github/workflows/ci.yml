@@ -11,7 +11,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: leafo/gh-actions-lua@v11
         with:
-          luaVersion: "luajit-2.1.0-beta3"
+          luaVersion: "luajit-2.1"
 
       - name: Download Submodules
         run: git submodule update --init --recursive
