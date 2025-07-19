@@ -891,7 +891,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                     }
                     use_n->input_count--;
                     mark_node(f, use_n);
-                } else if (is_proj(use_n)) {
+                } else if (is_proj(use_n) || use_n->type == TB_SYMBOL_TABLE) {
                     TB_Node* replacement = use_n->dt.type == TB_TAG_CONTROL
                         ? dead
                         : make_poison(f, use_n->dt);

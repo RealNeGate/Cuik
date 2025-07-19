@@ -581,13 +581,13 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             printf("VVV\n");*/
 
             cprop_split_by_what(f, cprop, y, cprop_what_type, 0);
-            dyn_array_for(i, &cprop->da_array[0]) {
+            dyn_array_for(i, cprop->da_array[0]) {
                 CProp_Partition* p = cprop->da_array[0][i];
                 // we don't split constants or TOP partitions
                 if (lattice_is_top_or_constant(p->type)) { continue; }
 
                 cprop_split_by_what(f, cprop, p, cprop_what_opcode, 1);
-                dyn_array_for(j, &cprop->da_array[1]) {
+                dyn_array_for(j, cprop->da_array[1]) {
                     CProp_Partition* q = cprop->da_array[1][j];
 
                     // cache the old partitions, this is necessary for the next layer of splitting

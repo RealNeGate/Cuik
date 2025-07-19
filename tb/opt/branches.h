@@ -59,12 +59,81 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         return n->input_count == 1 ? n->inputs[0] : dead_node(f);
     }
 
+    // joining region stacks doesn't apply to region's subtypes
     if (n->type == TB_REGION && n->input_count > 1) {
-        // joining region stacks doesn't apply to region's subtypes
         size_t i = 0;
         while (i < n->input_count) {
-            if (n->inputs[i]->type == TB_REGION) {
+            TB_Node* pred = n->inputs[i];
+            if (pred->type == TB_REGION) {
+                bool pure = true;
+                FOR_USERS(u, pred) {
+                    TB_Node* un = USERN(u);
+                    if (un != n) {
+                        // if the phi is exclusively used by our region's phis we can combine them
+                        if (un->type == TB_PHI && un->user_count == 1) {
+                            TB_Node* next = USERN(&un->users[0]);
+                            if (next->type == TB_PHI && next->inputs[0] == n && USERI(&un->users[0]) == 1 + i) {
+                                continue;
+                            }
+                        }
+
+                        pure = false;
+                        break;
+                    }
+                }
+
                 // pure regions can be collapsed into direct edges
+                if (pure) {
+                    // printf("Collapsing %%%u of %%%u...\n", pred->gvn, n->gvn);
+
+                    int expected_phi_in_count = n->input_count + pred->input_count;
+                    FOR_N(j, 0, pred->input_count) {
+                        TB_Node* pred_pred = pred->inputs[j];
+                        // printf("  PRED %%%u\n", pred_pred->gvn);
+
+                        // we replace on the final iteration because it'll avoid mutating the pred_phi
+                        // while we're trying to read it in this loop.
+                        bool replace = j == pred->input_count - 1;
+                        if (replace) {
+                            set_input(f, n, pred_pred, i);
+                        } else {
+                            add_input_late(f, n, pred_pred);
+                        }
+
+                        // for each phi, we append the respective edge
+                        FOR_USERS(u, n) {
+                            TB_Node* phi = USERN(u);
+                            if (phi->type == TB_PHI) {
+                                TB_ASSERT(phi->inputs[0] == n);
+
+                                TB_Node* pred_phi = phi->inputs[1 + i];
+                                if (pred_phi->type == TB_PHI && pred_phi->inputs[0] == pred) {
+                                    pred_phi = pred_phi->inputs[1 + j];
+                                }
+
+                                if (replace) {
+                                    set_input(f, phi, pred_phi, 1 + i);
+                                } else {
+                                    add_input_late(f, phi, pred_phi);
+                                }
+                            }
+                        }
+                    }
+                    TB_ASSERT(n->input_count == expected_phi_in_count - 1);
+
+                    while (pred->user_count > 0) {
+                        TB_Node* use_n = USERN(&pred->users[pred->user_count - 1]);
+                        int use_i      = USERI(&pred->users[pred->user_count - 1]);
+
+                        TB_ASSERT(use_n->type == TB_PHI);
+                        tb_kill_node(f, use_n);
+                    }
+                    tb_kill_node(f, pred);
+                    changes = true;
+                    continue;
+                }
+
+                #if 0
                 if (n->inputs[i]->user_count == 1 && n->inputs[i]->input_count > 0) {
                     assert(USERN(n->inputs[i]->users) == n);
                     changes = true;
@@ -118,6 +187,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                     }
                     continue;
                 }
+                #endif
             }
             i += 1;
         }
