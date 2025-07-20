@@ -199,6 +199,9 @@ struct Cuik_Type {
 
         struct {
             Cuik_Type* of;
+
+            // needs to get transmitted past clones
+            bool noret : 1;
         } clone;
 
         // Pointers

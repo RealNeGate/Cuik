@@ -417,8 +417,15 @@ struct TB_Function {
         // IPO lock
         Futex ipo_lock;
 
+        // Inlining info
+        bool no_inline;
+
         #if TB_OPTDEBUG_SERVER
         int dbg_server_t;
+        #endif
+
+        #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
+        bool enable_log;
         #endif
 
         // nice stats

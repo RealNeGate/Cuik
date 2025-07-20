@@ -167,6 +167,8 @@ static void func_sccp_rewrite_task(TPool* tp, void** arg) {
         worklist_clear(ws);
     }
 
+    TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "IPSCCP"));
+
     // we've rewritten the graph now, let's get the size metrics
     // for inlining.
     IPOSolver* ipo = m->ipo;

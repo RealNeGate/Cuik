@@ -23,6 +23,9 @@
 #define NBHS_IMPL
 #include <nbhs.h>
 
+#define NBHM_IMPL
+#include <nbhm.h>
+
 #define NL_BUFFER_IMPL
 #include <buffer.h>
 

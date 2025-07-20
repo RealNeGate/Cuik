@@ -80,8 +80,10 @@ static size_t nbhs_compute_cap(size_t y) {
     return cap - (sizeof(NBHS_Table) / sizeof(void*));
 }
 
+#ifndef NEGATE__DIV128_IMPL
+#define NEGATE__DIV128_IMPL
 // (X + Y) / Z = int(X/Z) + int(Y/Z) + (mod(X,Z) + mod(Y,Z)/Z
-static uint64_t tb_div128(uint64_t numhi, uint64_t numlo, uint64_t den, uint64_t* out_rem) {
+static uint64_t negate__div128(uint64_t numhi, uint64_t numlo, uint64_t den, uint64_t* out_rem) {
     // https://github.com/ridiculousfish/libdivide/blob/master/libdivide.h (libdivide_128_div_64_to_64)
     //
     // We work in base 2**32.
@@ -141,6 +143,7 @@ static uint64_t tb_div128(uint64_t numhi, uint64_t numlo, uint64_t den, uint64_t
     if (out_rem) *out_rem = (rem * b + num0 - q0 * den) >> shift;
     return ((uint64_t)q1 << 32) | q0;
 }
+#endif /* NEGATE__DIV128_IMPL */
 
 static void nbhs_compute_size(NBHS_Table* table, size_t cap) {
     // reciprocals to compute modulo
@@ -153,7 +156,7 @@ static void nbhs_compute_size(NBHS_Table* table, size_t cap) {
     #endif
 
     table->sh += 63 - 64;
-    table->a = tb_div128(1ull << table->sh, cap - 1, cap, NULL);
+    table->a = negate__div128(1ull << table->sh, cap - 1, cap, NULL);
 
     #if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
     uint64_t d,e;
@@ -195,21 +198,25 @@ static size_t nbhs_capacity(NBHS* hs) { return hs->latest->cap; }
 
 // Templated implementation
 #ifdef NBHS_FN
-static size_t NBHS_FN(hash2index)(NBHS_Table* table, uint64_t h) {
-    // MulHi(h, table->a)
-    #if defined(__GNUC__) || defined(__clang__)
-    uint64_t hi = (uint64_t) (((unsigned __int128)h * table->a) >> 64);
-    #elif defined(_MSC_VER)
-    uint64_t hi;
-    _umul128(a, b, &hi);
-    #else
-    #error "Unsupported target"
-    #endif
 
+static size_t NBHS_FN(hash2index)(NBHS_Table* table, uint64_t u) {
+    uint64_t v = table->a;
+
+    // Multiply high 64: Ripped, straight, from, Hacker's delight... mmm delight
+    uint64_t u0 = u & 0xFFFFFFFF;
+    uint64_t u1 = u >> 32;
+    uint64_t v0 = v & 0xFFFFFFFF;
+    uint64_t v1 = v >> 32;
+    uint64_t w0 = u0*v0;
+    uint64_t t = u1*v0 + (w0 >> 32);
+    uint64_t w1 = (u0*v1) + (t & 0xFFFFFFFF);
+    uint64_t w2 = (u1*v1) + (t >> 32);
+    uint64_t hi = w2 + (w1 >> 32);
+    // Modulo from quotient
     uint64_t q  = hi >> table->sh;
-    uint64_t q2 = h - (q * table->cap);
+    uint64_t q2 = u - (q * table->cap);
 
-    assert(q2 == h % table->cap);
+    assert(q2 == u % table->cap);
     return q2;
 }
 

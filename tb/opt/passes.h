@@ -374,8 +374,12 @@ bool cfg_is_natural_loop(TB_Node* n);
 bool cfg_is_terminator(TB_Node* n);
 bool cfg_is_endpoint(TB_Node* n);
 
+// debug server
+void dbg_submit_event(TB_Function* f, const char* desc, ...);
+
 // internal debugging mostly
 void tb_print_dumb_node(Lattice** types, TB_Node* n);
+void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, OutStream* s);
 
 // computes basic blocks but also dominators and loop nests if necessary.
 TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp_arena, bool dominators);

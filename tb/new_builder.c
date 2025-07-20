@@ -145,10 +145,26 @@ void tb_builder_exit(TB_GraphBuilder* g) {
         tb_builder_label_kill(g, g->start_syms);
     }
 
+    // if the return block was never used, throw it away
+    TB_Function* f = g->f;
+    TB_Node* ret = f->root_node->inputs[1];
+    if (ret->type == TB_RETURN && ret->inputs[0]->type == TB_REGION && ret->inputs[0]->input_count == 0) {
+        tb_kill_node(f, ret->inputs[0]);
+
+        int last = f->root_node->input_count - 1;
+        TB_Node* last_n = f->root_node->inputs[last];
+        TB_ASSERT(last != 1); // can't have no termination
+
+        set_input(f, f->root_node, NULL, last);
+        set_input(f, f->root_node, last_n, 1);
+        f->root_node->input_count--;
+
+        tb_kill_node(f, ret);
+    }
+
     // needs to be empty for the optimizer not to act up
     tb_arena_clear(g->arena);
 
-    TB_Function* f = g->f;
     if (f->worklist) {
         worklist_clear(f->worklist);
         tb_opt(f, f->worklist, false);

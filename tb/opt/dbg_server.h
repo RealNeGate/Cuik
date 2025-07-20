@@ -43,7 +43,7 @@ static void write_bytes(sb_Stream* stream, const void* data, size_t len) {
     sb_write(stream, data, len);
 }
 
-static void dbg_submit_event(TB_Function* f, const char* desc, ...) {
+void dbg_submit_event(TB_Function* f, const char* desc, ...) {
     #if TB_OPTDEBUG_SERVER
     if (dbg_server == NULL) {
         return;

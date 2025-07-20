@@ -72,14 +72,18 @@ typedef struct {
 } NodeCursor;
 
 // Helpers
-static void dump_sched(Ctx* restrict ctx) {
+static void dump_sched(Ctx* restrict ctx, OutStream* s) {
+    if (s == NULL) {
+        s = &OUT_STREAM_DEFAULT;
+    }
+
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-        printf("BB %zu:\n", i);
+        s_writef(s, "BB %zu:\n", i);
         aarray_for(j, bb->items) {
-            printf("  ");
-            tb_print_dumb_node(NULL, bb->items[j]);
-            printf("\n");
+            s_writef(s, "  ");
+            tb_print_dumb_node_raw(NULL, bb->items[j], s);
+            s_writef(s, "\n");
         }
     }
 }
@@ -96,6 +100,38 @@ static void dump_pretty_sched(Ctx* restrict ctx) {
     }
     printf("\n");
 }
+
+/*static void dbg_submit_sched_event(Ctx* restrict ctx, const char* desc, ...) {
+    #if TB_OPTDEBUG_SERVER
+    if (dbg_server == NULL) {
+        return;
+    }
+
+    // if we're acting as a debug server, submit the latest copy of the
+    // IR to the list of events. The viewer will organize the timeline
+    // on it's end
+    int t = f->dbg_server_t++;
+
+    BufferOutStream s = bos_make();
+    s.header.quoted = true;
+    s_writef(&s.header, "{ \"type\":\"OPT\", \"name\":\"%s\", \"time\":%d, \"desc\":\"", f->super.name, t);
+
+    va_list ap;
+    va_start(ap, desc);
+    s.header.writef(&s.header, desc, ap);
+    va_end(ap);
+
+    s_writef(&s.header, "\", \"content\":\"");
+    tb_print_to_stream(f, &s.header);
+    s_writef(&s.header, "\" }");
+
+    // printf("%.*s\n", (int) s.cnt, s.data);
+
+    write_bytes(dbg_client, s.data, s.cnt);
+    sb_poll_server(dbg_server, 0);
+    cuik_free(s.data);
+    #endif
+}*/
 
 static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b) {
     #if TB_OPTDEBUG_EMIT
@@ -411,7 +447,14 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
     } while (head > 1);
 
     // we've found a match, jump to the relevant C match
-    return mach_dfa_accept(ctx, f, n, state);
+    size_t old_node_count = f->node_count;
+    TB_Node* k = mach_dfa_accept(ctx, f, n, state);
+
+    if (f->node_count >= old_node_count) {
+        // we can GVN machine nodes :)
+        k = tb_opt_gvn_node(f, k);
+    }
+    return k;
 }
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
@@ -540,6 +583,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         }
     }
 
+    tb_print(f);
+
     CUIK_TIMED_BLOCK("isel") {
         log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f);
 
@@ -615,9 +660,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         progress = k != NULL;
 
                         if (k && k != n) {
-                            // we can GVN machine nodes :)
-                            k = tb_opt_gvn_node(f, k);
-
                             TB_OPTDEBUG(ISEL3)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
                             subsume_node(f, n, k);
 
@@ -626,8 +668,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                             n = k;
                         }
                     } while (progress);
-
-                    n = tb_opt_gvn_node(f, n);
                 }
                 TB_OPTDEBUG(ISEL3)(printf("\n"));
 
@@ -657,6 +697,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
         tb_arena_restore(&f->tmp_arena, pins_sp);
         log_phase_end(f, og_size, "isel");
+
+        TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "ISel"));
     }
 
     TB_CFG cfg;

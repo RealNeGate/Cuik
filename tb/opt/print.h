@@ -596,6 +596,14 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
                         break;
                     }
 
+                    case TB_MACH_TEMP: {
+                        /* TB_NodeMachTemp* tmp = TB_NODE_GET_EXTRA(n);
+                        s_writef(s, "def=");
+                        tb__print_regmask(tmp->def);
+                        s_writef(s, " ");*/
+                        break;
+                    }
+
                     case TB_MACH_COPY:
                     break;
 

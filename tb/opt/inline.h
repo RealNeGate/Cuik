@@ -296,7 +296,6 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
         }
         cuikperf_region_end();
 
-        SCCNode* node = nl_table_get(&scc->nodes, f);
         int size = ipo->size_metric[f->uid];
         TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s (%d, %s)\n", f->super.name, size, classify_size_str(size)));
 
@@ -310,7 +309,17 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
             cuikperf_region_start("inline?", target->super.name);
             TB_OPTDEBUG(INLINE)(printf("  -> %s?", target->super.name));
 
-            bool should = should_full_inline_by_size(m, ipo, size, target);
+            bool should = false;
+            if (!target->no_inline) {
+                // cannot inline functions which directly recurse for code size reasons
+                should = should_full_inline_by_size(m, ipo, size, target);
+                if (!should) {
+                    TB_OPTDEBUG(INLINE)(printf("  NO, the upper bound on inlining was small enough!\n"));
+                }
+            } else {
+                TB_OPTDEBUG(INLINE)(printf("  NO, inlining was banned!\n"));
+            }
+
             if (should) {
                 inline_into(scc->arena, f, ws, call, target);
                 i -= 1;
@@ -332,8 +341,6 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
                     TB_OPTDEBUG(INLINE)(printf("  -> grown to %d, %s\n", new_size, classify_size_str(new_size)));
                 }
                 ipo->size_metric[f->uid] = size = new_size;
-            } else {
-                TB_OPTDEBUG(INLINE)(printf("  NO, the upper bound on inlining was small enough!\n"));
             }
             cuikperf_region_end();
         }

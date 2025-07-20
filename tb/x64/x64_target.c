@@ -482,6 +482,22 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         print_pretty_edge(ctx, n);
         printf(" = ");
         tb__print_regmask(TB_NODE_GET_EXTRA_T(n, TB_NodeMachTemp)->def);
+    } else if (n->type == TB_BRANCH_PROJ) {
+        TB_Node* succ = cfg_next_control(n);
+        int index = n->type == TB_MACH_JUMP ? 0 : TB_NODE_GET_EXTRA_T(succ, TB_NodeProj)->index;
+        ptrdiff_t search = nl_map_get(ctx->cfg.node_to_block, succ);
+        if (search >= 0) {
+            TB_BasicBlock* succ_bb = ctx->cfg.node_to_block[search].v;
+
+            int b = succ_bb - ctx->cfg.blocks;
+            if (ctx->cfg.blocks[b].fwd > 0) {
+                while (b != ctx->cfg.blocks[b].fwd) {
+                    b = ctx->cfg.blocks[b].fwd;
+                }
+            }
+
+            printf("  jmp BB%d", b);
+        }
     } else if (n->type == TB_MACH_JUMP || n->type == x86_jcc) {
         int succ[2] = { -1, -1 };
         FOR_SUCC(s, n) {
@@ -500,9 +516,9 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             printf("  j%s ", COND_NAMES[op->cond]);
             print_pretty_edge(ctx, n->inputs[1]);
-            printf(" .bb%d else .bb%d", succ[0], succ[1]);
+            printf(" BB%d else BB%d", succ[0], succ[1]);
         } else {
-            printf("  jmp .bb%d", succ[0]);
+            printf("  jmp BB%d", succ[0]);
         }
     } else if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
@@ -1629,7 +1645,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
             Set hit = set_create_in_arena(&f->tmp_arena, range);
 
-            printf("\n");
+            // printf("\n");
             int def_succ = -1;
             FOR_USERS(u, n) {
                 if (USERN(u)->type == TB_BRANCH_PROJ) {
@@ -1648,8 +1664,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                         JumpTablePatch patch = { .pos = &buffer[idx], succ_bb->fwd };
                         dyn_array_put(ctx->jump_table_patches, patch);
                         set_put(&hit, idx);
-                        printf("KEY %zu\n", p->key);
 
+                        // printf("KEY %zu\n", p->key);
                         tb_global_add_symbol_reloc(f->super.module, table, idx * sizeof(uint64_t), &f->super);
                     }
                 }
@@ -1660,7 +1676,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                     if (!set_get(&hit, i)) {
                         JumpTablePatch p = { .pos = &buffer[i], def_succ };
                         dyn_array_put(ctx->jump_table_patches, p);
-                        printf("KEY %zu\n", i + min);
+                        // printf("KEY %zu\n", i + min);
 
                         tb_global_add_symbol_reloc(f->super.module, table, i * sizeof(uint64_t), &f->super);
                     }

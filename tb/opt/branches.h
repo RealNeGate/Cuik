@@ -613,13 +613,15 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
             if ((cmp_type == TB_CMP_NE || cmp_type == TB_CMP_EQ) && cmp_node->inputs[2]->type == TB_ICONST) {
                 uint64_t imm = TB_NODE_GET_EXTRA_T(cmp_node->inputs[2], TB_NodeInt)->value;
                 set_input(f, n, cmp_node->inputs[1], 1);
-                if_br->key = imm;
 
                 // flip successors
                 if (cmp_type == TB_CMP_EQ) {
                     FOR_USERS(u, n) {
-                        TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
+                        TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(USERN(u));
                         p->index = !p->index;
+                        if (p->index == 1) {
+                            p->key = imm;
+                        }
                     }
                 }
 
@@ -762,7 +764,18 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
         return lattice_branch_none(f, br->succ_count);
     }
 
-    if (key->tag == LATTICE_INT && key->_int.min == key->_int.max) {
+    if (key->tag == LATTICE_NULL) {
+        ptrdiff_t taken = 0;
+        FOR_USERS(u, n) {
+            TB_NodeBranchProj* path = TB_NODE_GET_EXTRA(USERN(u));
+            if (path->index > 0 && path->key == 0) {
+                taken = path->index;
+                break;
+            }
+        }
+
+        return lattice_branch_goto(f, br->succ_count, taken);
+    } else if (key->tag == LATTICE_INT && key->_int.min == key->_int.max) {
         int64_t key_const = key->_int.min;
         ptrdiff_t taken = 0;
 

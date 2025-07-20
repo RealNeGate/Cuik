@@ -38,6 +38,7 @@ struct IPOSolver {
 typedef struct {
     bool on_stack;
     int index, low_link, depth;
+    int group;
 } SCCNode;
 
 typedef struct {
@@ -48,6 +49,7 @@ typedef struct {
     size_t stk_cnt;
     TB_Function** stk;
 
+    size_t group_count;
     int index;
 } SCC;
 
@@ -185,6 +187,24 @@ static bool is_function_root(TB_Function* f) {
     return f->super.linkage == TB_LINKAGE_PUBLIC;
 }
 
+static void update_callgraph_edges(IPOSolver* ipo, TB_Function* f) {
+    // search existing callgraph edges for any which have been removed
+    for (CallGraphEdge* e = ipo->call_graph[f->uid]; e; e = e->next) {
+        int refs = 0;
+        TB_Function* caller = e->caller;
+
+        TB_Node* callgraph = caller->root_node->inputs[0];
+        TB_ASSERT(callgraph->type == TB_CALLGRAPH);
+        FOR_N(i, 1, callgraph->input_count) {
+            TB_Node* call = callgraph->inputs[i];
+            TB_Function* target = static_call_site(call);
+            if (target == caller) {
+                refs += 1;
+            }
+        }
+    }
+}
+
 static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_Worklist* ws, int depth) {
     SCCNode* n = tb_arena_alloc(scc->arena, sizeof(SCCNode));
     n->index = scc->index;
@@ -196,11 +216,19 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
     scc->stk[scc->stk_cnt++] = f;
 
     // consider the successors
+    bool is_cycle = false;
     TB_Node* callgraph = f->root_node->inputs[0];
     TB_ASSERT(callgraph->type == TB_CALLGRAPH);
     FOR_N(i, 1, callgraph->input_count) {
         TB_Node* call = callgraph->inputs[i];
         TB_Function* target = static_call_site(call);
+
+        // easy case of a cycle, the other case is an SCC
+        // composed of more than one node.
+        if (target == f) {
+            is_cycle = true;
+        }
+
         if (target != NULL) {
             SCCNode* succ = nl_table_get(&scc->nodes, target);
             if (succ == NULL) {
@@ -225,20 +253,33 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
 
     // we're the root, construct an SCC
     if (n->low_link == n->index) {
-        // printf("SCC (depth=%d):\n", depth);
+        int head = scc->stk_cnt;
+        while (scc->stk[--head] != f) {}
+
+        if (is_cycle || scc->stk_cnt - head > 1) {
+            printf("Call cycle (depth=%d, %zu):\n", depth, scc->stk_cnt - head);
+
+            is_cycle = true;
+            f->no_inline = true;
+        }
 
         TB_Function* kid_f;
         do {
             TB_ASSERT(scc->stk_cnt > 0);
             kid_f = scc->stk[--scc->stk_cnt];
 
-            // printf("  %s\n", kid_f->super.name);
+            if (is_cycle) {
+                printf("  %s\n", kid_f->super.name);
+            }
 
             SCCNode* kid_n = nl_table_get(&scc->nodes, kid_f);
             kid_n->depth = depth;
             kid_n->on_stack = false;
+            kid_n->group = scc->group_count;
             ipo->ws[ipo->ws_cnt++] = kid_f;
         } while (kid_f != f);
+
+        scc->group_count++;
     }
 
     return n;
@@ -255,7 +296,7 @@ static void func_opt_task(TPool* tp, void** arg) {
         ipo_worklist = tb_worklist_alloc();
     }
 
-    // if (1 || strcmp(f->super.name, "eval") == 0) {
+    // if (strcmp(f->super.name, "fe_pushgc") == 0) {
     log_debug("OPT: %s: function local optimizer", f->super.name);
     tb_opt(f, ipo_worklist, false);
     // }
@@ -350,9 +391,9 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
             TB_Function* f = ipo.ws[i];
             TB_ASSERT(f->super.tag == TB_SYMBOL_FUNCTION);
 
-            #if TB_OPTDEBUG_INLINE2
+            #if TB_OPTDEBUG_INLINE4
             const char* color = "white";
-            switch (ipo.size_classes[f->uid]) {
+            switch (classify_size(ipo.size_metric[f->uid])) {
                 case SIZE_SMALL: color = "green"; break;
                 case SIZE_SMALL_MED: color = "yellow"; break;
                 case SIZE_MEDIUM: color = "orange"; break;
@@ -387,7 +428,7 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
                         edge->refs   = 1;
                         ipo.call_graph[target->uid] = edge;
 
-                        #if TB_OPTDEBUG_INLINE2
+                        #if TB_OPTDEBUG_INLINE4
                         printf("%s -> %s\n", f->super.name, target->super.name);
                         #endif
                     }

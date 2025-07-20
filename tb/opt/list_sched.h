@@ -117,9 +117,6 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
         uint64_t op_unit_mask = sched->ready[i].unit_mask;
         int lat = sched->ready[i].latency;
 
-        // this should never really need to be considered here
-        if (n == end) { continue; }
-
         // actually fits on the available machine
         if ((unit_mask & op_unit_mask) == 0) { continue; }
 
@@ -435,14 +432,15 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
 
                 int port = tb_ffs64(unit_mask) - 1;
                 TB_Node* n = sched.ready[idx].n;
-                in_use_mask |= 1ull << port;
-                stall = false;
 
                 aarray_remove(sched.ready, idx);
                 TB_ASSERT(!is_proj(n));
 
                 if (n != end) {
                     int end_cycle = cycle + get_lat(f, n, NULL);
+                    in_use_mask |= 1ull << port;
+                    stall = false;
+
                     aarray_push(active, (InFlight){ n, end_cycle, port });
 
                     // idk, it's ugly and a bookkeeping op
@@ -464,8 +462,8 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
                         }
                     }
 
-                    TB_OPTDEBUG(SCHED1)(printf("  Port%d: Dispatch ", port), tb_print_dumb_node(NULL, n), printf(" (ready on t=%d)\n", end_cycle));
                     stall = false;
+                    TB_OPTDEBUG(SCHED1)(printf("  Port%d: Dispatch ", port), tb_print_dumb_node(NULL, n), printf(" (ready on t=%d)\n", end_cycle));
                 }
             }
         }

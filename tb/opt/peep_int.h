@@ -657,7 +657,7 @@ static IntRecip compute_recip_64(bool is_signed, uint64_t y) {
 
     uint64_t rem;
     r.sh = (63 - tb_clz64(y));
-    r.a = tb_div128(1ull << (r.sh - is_signed), 0, y, &rem);
+    r.a = negate__div128(1ull << (r.sh - is_signed), 0, y, &rem);
     r.add = false;
 
     if ((y - rem) >= (1ull << r.sh)) {

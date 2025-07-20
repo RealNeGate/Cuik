@@ -186,7 +186,7 @@ static void push_cprop_users(TB_Function* f, CProp* cprop, TB_Node* n) {
     // push affected users
     FOR_USERS(u, n) {
         TB_Node* un = USERN(u);
-        if (is_proj(un) || un->type == TB_CALLGRAPH) {
+        if (un->type == TB_CALLGRAPH) {
             continue;
         }
 
@@ -448,13 +448,15 @@ static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* r
 // performs SCCP, splits partitions such that all nodes in the same
 // partition share a type.
 static void cprop_propagate(TB_Function* f, CProp* cprop) {
+    bool log = strcmp(f->super.name, "object") == 0;
+
     while (aarray_length(cprop->cprop_ws.stack) > 0) {
         int p_idx = sparse_set_pop(&cprop->cprop_ws);
         CProp_Partition* p = cprop->partitions[p_idx];
 
-        #if TB_OPTDEBUG_SCCP
-        printf("PARTITION%d: PROPAGATE\n", p_idx);
-        #endif
+        if (log) {
+            TB_OPTDEBUG(SCCP)(printf("PARTITION%d: PROPAGATE\n", p_idx));
+        }
 
         Lattice* old_p_type = p->type;
         CProp_Node* old_opcode = p->members;
@@ -474,7 +476,9 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             node->in_cprop = false;
 
             TB_Node* n = node->n;
-            DO_IF(TB_OPTDEBUG_SCCP)(printf("     t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+            if (log) {
+                TB_OPTDEBUG(SCCP)(printf("     t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+            }
 
             // Follower => Leader transition
             if (node->leader) {
@@ -489,7 +493,9 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                     p->follower_count -= 1;
                     node->leader = NULL;
                 } else {
-                    DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[33m"), tb_print_dumb_node(NULL, leader), printf("\x1b[0m"));
+                    if (log) {
+                        TB_OPTDEBUG(SCCP)(printf(" => \x1b[33m"), tb_print_dumb_node(NULL, leader), printf("\x1b[0m"));
+                    }
                 }
             }
 
@@ -499,7 +505,10 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             Lattice* new_type = value_of(f, n);
             // TB_OPTDEBUG(STATS)(n->type < TB_NODE_TYPE_MAX ? (f->stats.cprop_t[n->type] += (cuik_time_in_nanos() - start), 0) : 0);
 
-            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m\n"));
+            if (log) {
+                TB_OPTDEBUG(SCCP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m\n"));
+            }
+
             if (old_type != new_type) {
                 #ifndef NDEBUG
                 // validate int
@@ -519,7 +528,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 sparse_set_put(&cprop->fallen, n->gvn);
                 progress = true;
 
-                if (n->dt.type == TB_TAG_TUPLE) {
+                /*if (n->dt.type == TB_TAG_TUPLE) {
                     TB_ASSERT(new_type->tag == LATTICE_TUPLE);
                     FOR_USERS(u, n) {
                         if (is_proj(USERN(u))) {
@@ -532,7 +541,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                             }
                         }
                     }
-                }
+                }*/
                 push_cprop_users(f, cprop, n);
             }
         }
@@ -557,7 +566,10 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
         // Leader => Follower transition
         if (progress && lattice_is_top_or_constant(old_p_type)) {
             sparse_set_put(&cprop->split_ws, y->id);
-            TB_OPTDEBUG(SCCP)(printf("LEADER => FOLLOWERS\n"));
+
+            if (log) {
+                TB_OPTDEBUG(SCCP)(printf("LEADER => FOLLOWERS\n"));
+            }
 
             for (CProp_Node* node = y->members; node; node = node->next) {
                 TB_Node* n = node->n;
@@ -565,7 +577,9 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 if (node->leader == NULL && (old_type == &TOP_IN_THE_SKY || !lattice_is_top_or_constant(old_type))) {
                     TB_Node* leader = identity(f, n);
                     if (leader && n != leader) {
-                        TB_OPTDEBUG(SCCP)(printf("     t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (IDENTITY)\n"));
+                        if (log) {
+                            TB_OPTDEBUG(SCCP)(printf("     t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (IDENTITY)\n"));
+                        }
 
                         y->follower_count += 1;
                         node->leader = cprop->nodes[leader->gvn];
@@ -615,6 +629,8 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 }
             }
             // printf("\n\n");
+        } else {
+            sparse_set_put(&cprop->split_ws, y->id);
         }
         cuikperf_region_end();
     }
@@ -718,7 +734,7 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
             if (z->member_count - z->follower_count != z->touched_count) {
                 TB_ASSERT(z->touched_count > 0);
 
-                #if TB_OPTDEBUG_SCCP
+                #if 0 // TB_OPTDEBUG_SCCP
                 printf("  Touched: ");
                 for (CProp_Node* node = z->touched; node; node = node->next_touched) {
                     printf("%%%u ", node->n->gvn);
@@ -747,7 +763,6 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
 
 CProp tb_opt_cprop_init(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
-
     TB_OPTDEBUG(SCCP)(tb_print(f));
 
     // disjoint-set for the eqclasses
@@ -949,6 +964,8 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
     CProp_Node** nodes = f->gcf_nodes;
     TB_ASSERT(nodes);
 
+    bool log = strcmp(f->super.name, "object") == 0;
+
     int rewrites = 0;
     size_t node_barrier = f->node_count;
     for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
@@ -957,7 +974,9 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
             continue;
         }
 
-        TB_OPTDEBUG(SCCP)(printf("COMBO t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+        if (log) {
+            TB_OPTDEBUG(SCCP)(printf("COMBO t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+        }
 
         // subsume into leader of partition
         CProp_Node* node = nodes[n->gvn];
@@ -967,7 +986,9 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
 
         TB_Node* leader = node->n;
         if (leader != n) {
-            TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (FOLLOW)\n"));
+            if (log) {
+                TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (FOLLOW)\n"));
+            }
 
             rewrites++;
             subsume_node(f, n, leader);
@@ -988,7 +1009,9 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
         TB_Node* k = try_as_const(f, n, latuni_get(f, n));
         if (k != NULL) {
             TB_OPTDEBUG(STATS)(inc_nums(f->stats.opto_constants, n->type));
-            TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, k), printf(" (CONST)\n"));
+            if (log) {
+                TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, k), printf(" (CONST)\n"));
+            }
 
             node->n = k;
             rewrites++;
@@ -1001,7 +1024,9 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
             continue;
         }
 
-        TB_OPTDEBUG(SCCP)(printf("\n"));
+        if (log) {
+            TB_OPTDEBUG(SCCP)(printf("\n"));
+        }
     }
 
     tb_arena_clear(&f->tmp_arena);
