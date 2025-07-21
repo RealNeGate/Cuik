@@ -450,22 +450,22 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             // any inputs to next_val cannot be rewritten to redirectly refer to
             // next val because it would cause a cycle with no phi in the middle.
             worklist_clear(ws);
-            worklist_push(ws, next_val);
+            if (ctx->ctrl[next_val->gvn] == header) {
+                worklist_push(ws, next_val);
+            }
 
             for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
                 TB_Node* n = ws->items[i];
-                if (ctx->ctrl[n->gvn] == header) {
-                    #if TB_OPTDEBUG_LOOP
-                    printf("   AFTER(");
-                    tb_print_dumb_node(NULL, n);
-                    printf(")\n");
-                    #endif
+                #if TB_OPTDEBUG_LOOP
+                printf("   AFTER(");
+                tb_print_dumb_node(NULL, n);
+                printf(")\n");
+                #endif
 
-                    FOR_USERS(u, n) {
-                        TB_Node* un = USERN(u);
-                        if (ctx->ctrl[un->gvn] == header && un != old_phi) {
-                            worklist_push(ws, un);
-                        }
+                FOR_USERS(u, n) {
+                    TB_Node* un = USERN(u);
+                    if (ctx->ctrl[un->gvn] == header && un != old_phi) {
+                        worklist_push(ws, un);
                     }
                 }
             }
@@ -918,6 +918,12 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
             }
         }
 
+        printf("HHH:\n");
+        print_lattice(value_of(f, var->node));
+        printf("\n");
+        print_lattice(var->step);
+        printf("\n");
+
         if (reduce != NULL) {
             TB_ASSERT(lattice_is_iconst(var->step));
 
@@ -958,6 +964,27 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
                 continue;
             }
 
+            // TODO(NeGate): we can safely extend values which don't overflow
+            if (reduce->type == TB_ZERO_EXT || reduce->type == TB_SIGN_EXT) {
+                // make a simple trip counter and replace this IV
+                // with a better fit.
+                if (cmp && !replace_latch_iv) {
+                    replace_latch_iv = generate_loop_trip_count(f, latch_var);
+                }
+
+                LSRVar new_var = *var;
+                new_var.init = make_int_unary(f, reduce->type, var->init);
+                new_var.step = var->step;
+                new_var.node = reduce;
+                new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
+                new_var.good = true;
+
+                var->uses -= new_var.uses;
+                aarray_push(vars, new_var);
+
+                rewrite = true;
+                continue;
+            }
         }
     }
 

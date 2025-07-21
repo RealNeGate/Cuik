@@ -409,7 +409,6 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                 if (tokens_match(s, sizeof("noreturn")-1, "noreturn")) {
                     tokens_next(s);
                     expect_char(s, ')');
-                    __debugbreak();
                 } else {
                     int depth = 1;
                     while (depth) {

@@ -42,6 +42,7 @@ TB_Node* dead_node(TB_Function* f);
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_Node* rhs);
+TB_Node* make_int_unary(TB_Function* f, TB_NodeTypeEnum type, TB_Node* src);
 
 // for random debugging stuff
 static mtx_t aaa;
@@ -686,6 +687,15 @@ TB_Node* dead_node(TB_Function* f) {
     set_input(f, n, f->root_node, 0);
     latuni_set(f, n, &DEAD_IN_THE_SKY);
     return tb__gvn(f, n, 0);
+}
+
+TB_Node* make_int_unary(TB_Function* f, TB_NodeTypeEnum type, TB_Node* src) {
+    TB_Node* n = tb_alloc_node(f, type, src->dt, 2, 0);
+    set_input(f, n, src, 1);
+    n = tb__gvn(f, n, 0);
+
+    mark_node(f, n);
+    return n;
 }
 
 TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_Node* rhs) {
