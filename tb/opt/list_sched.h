@@ -7,7 +7,6 @@ typedef struct {
 
 typedef struct {
     TB_Node* n;
-    int latency;
 } ReadyNode;
 
 static int count_waiting_deps(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
@@ -34,7 +33,7 @@ typedef struct {
     Set ready_set;
     ArenaArray(ReadyNode) ready;
 
-    int* depth;
+    int* latency;
 } ListSched;
 
 // assuming the inputs are on their final leg, what
@@ -61,9 +60,7 @@ static void ready_up(ListSched* sched, TB_Node* n) {
     }
 
     CUIK_TIMED_BLOCK("add ready") {
-        int latency = sched->get_lat(sched->f, n, NULL);
-
-        TB_OPTDEBUG(SCHED1)(printf("        READY    "), tb_print_dumb_node(NULL, n), printf(" (lat=%d)\n", latency));
+        TB_OPTDEBUG(SCHED1)(printf("        READY    "), tb_print_dumb_node(NULL, n), printf(" (lat=%d)\n", sched->latency[n->gvn]));
         set_put(&sched->ready_set, n->gvn);
 
         // projections are readied but not in the ready list
@@ -71,7 +68,7 @@ static void ready_up(ListSched* sched, TB_Node* n) {
             if (is_proj(USERN(u))) { set_put(&sched->ready_set, USERN(u)->gvn); }
         }
 
-        ReadyNode r = { n, latency };
+        ReadyNode r = { n };
         aarray_push(sched->ready, r);
     }
 }
@@ -96,10 +93,9 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
 
     int best_i = -1;
     int best_score = 0;
-    int best_depth = 0;
     FOR_REV_N(i, 0, aarray_length(sched->ready)) {
         TB_Node* n = sched->ready[i].n;
-        int lat = sched->ready[i].latency;
+        int lat = sched->latency[n->gvn];
 
         // high latency ops should be scheduled first
         int score = lat*100;
@@ -108,17 +104,10 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
         TB_ASSERT(dyn_array_length(ws->items) > 0);
         TB_Node* prev_op = ws->items[dyn_array_length(ws->items) - 1];
         if (prev_op->user_count == 1 && USERN(&prev_op->users[0]) == n) {
-            score += 200;
-        }
-
-        int deepest_use = 0;
-        FOR_USERS(u, n) {
-            if (f->scheduled[USERN(u)->gvn] == bb) {
-                int use_depth = sched->depth[USERN(u)->gvn];
-                deepest_use = TB_MAX(deepest_use, use_depth);
+            if (!(is_proj(prev_op) && prev_op->inputs[0] == f->root_node) && prev_op->type != TB_MACH_SYMBOL) {
+                score += 200;
             }
         }
-        // deepest_use -= sched->depth[n->gvn];
 
         // score things which decrease pressure higher
         int dt = pressure_delta(sched, n);
@@ -140,9 +129,6 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
                 if (score < 1) { score = 1; }
             }
         }
-
-        // we wanna handle shallower uses first
-        score += deepest_use * 10;
 
         // ideally the IV stepping gets postponed
         if (n->type != TB_PHI && n->dt.type != TB_TAG_MEMORY && n->dt.type != TB_TAG_CONTROL && n->dt.type != TB_TAG_TUPLE) {
@@ -166,13 +152,12 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
         #if TB_OPTDEBUG_SCHED1
         printf("  ");
         tb_print_dumb_node(NULL, n);
-        printf("  score=%d, deepest_use=%d\n", score, deepest_use);
+        printf("  score=%d, latency=%d\n", score, lat);
         #endif
 
-        if ((score == best_score && deepest_use > best_depth) || score > best_score) {
+        if (score > best_score) {
             best_i = i;
             best_score = score;
-            best_depth = deepest_use;
         }
     }
 
@@ -193,7 +178,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
     };
     sched.ready_set = set_create_in_arena(&f->tmp_arena, f->node_count);
     sched.ready     = aarray_create(&f->tmp_arena, ReadyNode, 32);
-    sched.depth     = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
+    sched.latency   = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
 
     CUIK_TIMED_BLOCK("trace") {
         TB_Node* top = bb->start;
@@ -223,6 +208,10 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             }
         }
 
+        #ifndef NDEBUG
+        int* depth = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
+        #endif
+
         while (dyn_array_length(ws->items)) retry: {
             int i = dyn_array_length(ws->items) - 1;
             TB_Node* n = ws->items[i];
@@ -243,66 +232,108 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
 
             TB_ASSERT(cnt < aarray_length(bb->items));
             ordered[cnt++] = n;
-            sched.depth[n->gvn] = -1;
+
+            #ifndef NDEBUG
+            depth[n->gvn] = -1;
+            #endif
 
             dyn_array_pop(ws->items);
         }
 
+        // Cycle detection
+        #ifndef NDEBUG
+        {
+            bool cycle = false;
+            FOR_REV_N(i, 0, cnt) {
+                TB_Node* n = ordered[i];
+                int max_depth = 0;
+
+                if (n->type != TB_PHI && !cfg_is_region(n)) {
+                    FOR_N(i, 0, n->input_cap) {
+                        TB_Node* in = n->inputs[i];
+                        if (in && in->type != TB_MACH_TEMP && f->scheduled[in->gvn] == bb) {
+                            int d = depth[in->gvn];
+                            #ifndef NDEBUG
+                            if (d < 0) {
+                                printf("CYCLE DETECTED BETWEEN %%%u and %%%u!!!\n", n->gvn, in->gvn);
+                                cycle = true;
+                            }
+                            #endif
+                            max_depth = TB_MAX(max_depth, d);
+                        }
+                    }
+                }
+
+                depth[n->gvn] = max_depth + 1;
+            }
+
+            if (cycle) {
+                printf("digraph G {\n");
+                FOR_REV_N(i, 0, cnt) {
+                    TB_Node* n = ordered[i];
+                    printf("N%d [label=\"%%%u: %s\"]\n", n->gvn, n->gvn, tb_node_get_name(n->type));
+
+                    int max_depth = 0;
+                    if (n->type != TB_PHI && n != top) {
+                        FOR_N(i, 0, n->input_cap) {
+                            TB_Node* in = n->inputs[i];
+                            if (in && f->scheduled[in->gvn] == bb) {
+                                printf("N%d -> N%d\n", in->gvn, n->gvn);
+                            }
+                        }
+                    }
+                }
+                printf("}\n");
+                __debugbreak();
+            }
+        }
+        #endif
+
+        FOR_N(i, 0, cnt) {
+            TB_Node* n = ordered[i];
+            sched.latency[n->gvn] = 0;
+        }
+
+        TB_OPTDEBUG(SCHED4)(printf("digraph G {\n"));
+
         // compute depths
         // TB_ASSERT(cnt == aarray_length(bb->items));
         bool cycle = false;
-        FOR_REV_N(i, 0, cnt) {
+        FOR_N(i, 0, cnt) {
             TB_Node* n = ordered[i];
+            int use_latency = sched.latency[n->gvn];
 
-            int max_depth = 0;
+            TB_OPTDEBUG(SCHED4)(printf("N%d [label=\"%%%u: %s\"]\n", n->gvn, n->gvn, tb_node_get_name(n->type)));
+
             if (n->type != TB_PHI && !cfg_is_region(n)) {
                 FOR_N(i, 0, n->input_cap) {
                     TB_Node* in = n->inputs[i];
-                    if (in && in->type != TB_MACH_TEMP && f->scheduled[in->gvn] == bb) {
-                        int d = sched.depth[in->gvn];
-                        #ifndef NDEBUG
-                        if (d < 0) {
-                            printf("CYCLE DETECTED BETWEEN %%%u and %%%u!!!\n", n->gvn, in->gvn);
-                            cycle = true;
-                        }
-                        #endif
+                    if (in) {
+                        if (is_proj(in)) { in = in->inputs[0]; }
+                        if (in->type != TB_MACH_TEMP && f->scheduled[in->gvn] == bb) {
+                            int edge_latency = sched.get_lat(sched.f, in, i);
+                            int curr_latency = edge_latency + use_latency;
+                            if (curr_latency > sched.latency[in->gvn]) {
+                                sched.latency[in->gvn] = curr_latency;
+                            }
 
-                        max_depth = TB_MAX(max_depth, d);
+                            TB_OPTDEBUG(SCHED4)(printf("N%d -> N%d [label=\"%d\"]\n", in->gvn, n->gvn, edge_latency));
+                        }
                     }
                 }
             }
-
-            sched.depth[n->gvn] = max_depth + 1;
-
-            #if TB_OPTDEBUG_SCHED3
-            tb_print_dumb_node(NULL, n);
-            printf(" depth=%d\n", max_depth + 1);
-            #endif
         }
+        TB_OPTDEBUG(SCHED4)(printf("}\n"));
+
+        #if TB_OPTDEBUG_SCHED3
+        FOR_REV_N(i, 0, cnt) {
+            TB_Node* n = ordered[i];
+            tb_print_dumb_node(NULL, n);
+            printf(" latency=%d\n", sched.latency[n->gvn]);
+        }
+        #endif
 
         worklist_clear(ws);
-
-        if (cycle) {
-            printf("digraph G {\n");
-            FOR_REV_N(i, 0, cnt) {
-                TB_Node* n = ordered[i];
-                printf("N%d [label=\"%%%u: %s\"]\n", n->gvn, n->gvn, tb_node_get_name(n->type));
-
-                int max_depth = 0;
-                if (n->type != TB_PHI && n != top) {
-                    FOR_N(i, 0, n->input_cap) {
-                        TB_Node* in = n->inputs[i];
-                        if (in && f->scheduled[in->gvn] == bb) {
-                            printf("N%d -> N%d\n", in->gvn, n->gvn);
-                        }
-                    }
-                }
-            }
-            printf("}\n");
-
-            // tb_print_dumb(f);
-            __debugbreak();
-        }
     }
 
     TB_OPTDEBUG(SCHED1)(printf("         Dispatch "), tb_print_dumb_node(NULL, bb->start), printf("\n"));
@@ -320,6 +351,13 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
 
         FOR_USERS(u, f->root_node) {
             if (is_proj(USERN(u))) {
+                TB_ASSERT(USERI(u) == 0);
+                worklist_push(ws, USERN(u));
+            }
+        }
+
+        FOR_USERS(u, f->root_node) {
+            if (USERN(u)->type == TB_MACH_SYMBOL) {
                 TB_ASSERT(USERI(u) == 0);
                 worklist_push(ws, USERN(u));
             }

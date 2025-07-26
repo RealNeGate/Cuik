@@ -335,7 +335,7 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, OutStream* s, bool fa
     s_writef(s, ")");
 }
 
-static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) { return 1; }
+static int node_latency(TB_Function* f, TB_Node* n, int i) { return 1; }
 static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStream* s) {
     print_ref_to_node(ctx, bb->start, s, true);
     s_newline(s);

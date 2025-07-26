@@ -2519,7 +2519,8 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
     return 0b11101111;
 }
 
-static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
+static int node_latency(TB_Function* f, TB_Node* n, int i) {
+    #if 0
     if (n->type == x86_idiv || n->type == x86_div) {
         return 30;
     } else if (n->type == x86_imul || n->type == TB_UMULPAIR || n->type == TB_SMULPAIR) {
@@ -2528,6 +2529,8 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
         return 1;
     } else if (n->type == x86_test || n->type == x86_cmp) {
         return 1;
+    } else if (n->type == x86_call) {
+        return 100;
     }
 
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
@@ -2546,6 +2549,15 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
     }
 
     return lat;
+    #endif
+
+    // fixed latency, regardless of who's asking it's gonna
+    // take a while.
+    if (n->type == x86_call) {
+        return 100;
+    }
+
+    return 1;
 }
 
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {

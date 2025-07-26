@@ -44,7 +44,7 @@ static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b);
 // Scheduling bits:
 //   simple latency until the results of a node are useful (list scheduler will
 //   generally prioritize dispatching higher latency ops first).
-static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end);
+static int node_latency(TB_Function* f, TB_Node* n, int i);
 //   on VLIWs it's important that we keep track of which functional units a specific
 //   node can even run on, use the bits to represent that (at most you can make 64
 //   functional units in the current design but i don't think i need more than 10 rn)

@@ -26,20 +26,19 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
         }
     }
 
-    int lat = get_lat(f, n, NULL);
-    if (lat >= 1) {
-        TB_BasicBlock* best = late;
-        for (;;) {
-            if (late->freq < best->freq) {
-                best = late;
-            }
-            if (late == early) { break; }
-            late = late->dom;
+    // int lat = get_lat(f, n, NULL);
+    // if (lat >= 1) {
+    TB_BasicBlock* best = late;
+    for (;;) {
+        if (late->freq < best->freq) {
+            best = late;
         }
-        return best;
+        if (late == early) { break; }
+        late = late->dom;
     }
-
-    return late;
+    return best;
+    // }
+    // return late;
 }
 
 // schedule nodes such that they appear the least common

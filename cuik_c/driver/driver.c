@@ -181,7 +181,7 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
-    if (strcmp(name, "dfa_range") != 0) {
+    if (strcmp(name, "dfa_dump") != 0) {
         return;
     }
 
