@@ -337,8 +337,10 @@ static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uin
     if (umin != umax) {
         // wherever the highest differing bit is we just clear everything below that
         int msb_diff = 64 - __builtin_clzll(umin ^ umax);
-        zeros |= ~min & ~(UINT64_MAX >> (64 - msb_diff));
-        ones  |=  min & ~(UINT64_MAX >> (64 - msb_diff));
+        uint64_t diff = ~(UINT64_MAX >> (64 - msb_diff));
+
+        zeros |= ~umin & diff;
+        ones  |=  umin & diff;
     } else {
         zeros |= ~min;
         ones  |=  min;

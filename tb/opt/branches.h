@@ -1,7 +1,6 @@
 
-static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
-    TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-
+// we do this as part of peepholes and also the optimistic solver's rewrite phase
+static TB_Node* prune_region(TB_Function* f, TB_Node* n) {
     // if there's a dead loop, we need to expunge the body such that
     // it doesn't leave a messy trace
     if (cfg_is_natural_loop(n) && is_dead_ctrl(f, n->inputs[0]) && n->input_count == 2) {
@@ -59,12 +58,24 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         return n->input_count == 1 ? n->inputs[0] : dead_node(f);
     }
 
+    return changes ? n : NULL;
+}
+
+static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+
+    TB_Node* k = prune_region(f, n);
+    if (k) {
+        return k;
+    }
+
+    bool changes = false;
     // joining region stacks doesn't apply to region's subtypes
     if (n->type == TB_REGION && n->input_count > 1) {
         size_t i = 0;
         while (i < n->input_count) {
             TB_Node* pred = n->inputs[i];
-            if (pred->type == TB_REGION) {
+            if (pred->type == TB_REGION && !is_dead_ctrl(f, pred)) {
                 bool pure = true;
                 FOR_USERS(u, pred) {
                     TB_Node* un = USERN(u);
@@ -298,6 +309,35 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
         log_warn("%s: ir: generated poison due to PHI with no edges", f->super.name);
         return make_poison(f, n->dt);
     }
+
+    #if 0
+    // equivalent nodes on all previous paths? just sink the op
+    TB_NodeTypeEnum first_type = n->inputs[1]->type;
+    if (first_type >= TB_AND && first_type <= TB_CMP_FLE) {
+        TB_Node* rhs = n->inputs[1]->inputs[2];
+        FOR_N(i, 2, n->input_count) {
+            if (n->inputs[i]->inputs[2] != rhs) {
+                rhs = NULL;
+                break;
+            }
+        }
+
+        if (rhs) {
+            FOR_N(i, 1, n->input_count) {
+                set_input(f, n, n->inputs[i]->inputs[1], i);
+            }
+
+            size_t extra = extra_bytes(n);
+            TB_Node* new_n = tb_alloc_node(f, first_type, n->dt, 3, extra);
+            set_input(f, new_n, n,   1);
+            set_input(f, new_n, rhs, 2);
+            if (extra) {
+                memcpy(new_n->extra, n->inputs[1]->extra, extra);
+            }
+            return new_n;
+        }
+    }
+    #endif
 
     // if branch, both paths are empty => select(cond, t, f)
     //
@@ -650,8 +690,8 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     TB_Function* callee = NULL;
 
     // control just flows through
-    l->elems[0] = latuni_get(f, n->inputs[0]);
-    if (l->elems[0] == &TOP_IN_THE_SKY || l->elems[0] == &DEAD_IN_THE_SKY) {
+    Lattice* in_ctrl = l->elems[0] = latuni_get(f, n->inputs[0]);
+    if (in_ctrl != &LIVE_IN_THE_SKY) {
         FOR_N(i, 1, c->proj_count) {
             l->elems[i] = &TOP_IN_THE_SKY;
         }
@@ -667,7 +707,8 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
             rets = callee->ipsccp_ret;
 
             if (rets) {
-                TB_ASSERT(rets->_elem_count >= c->proj_count);
+                TB_ASSERT(rets->tag == LATTICE_TUPLE);
+                TB_ASSERT(rets->_elem_count + 1 >= c->proj_count);
                 FOR_N(i, 0, c->proj_count) {
                     // skip the RPC
                     l->elems[i] = rets->elems[i + (i >= 2 ? 1 : 0)];
@@ -677,7 +718,9 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
 
         if (rets == NULL) {
             if (f->super.module->during_ipsccp && callee != NULL) {
-                // not ready yet
+                // optimistic assumption of a function return is that
+                // it never happens.
+                l->elems[0] = &DEAD_IN_THE_SKY;
                 FOR_N(i, 1, c->proj_count) {
                     l->elems[i] = &TOP_IN_THE_SKY;
                 }
@@ -700,7 +743,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     if (k != l) { tb_arena_free(arena, l, size); }
 
     // update the callee's "reachable" arguments
-    if (callee && k->elems[0] == &LIVE_IN_THE_SKY && f->super.module->during_ipsccp) {
+    if (callee && in_ctrl == &LIVE_IN_THE_SKY && f->super.module->during_ipsccp) {
         size_t elem_count = 3 + callee->prototype->param_count;
         size_t size = sizeof(Lattice) + elem_count*sizeof(Lattice*);
         Lattice* args = tb_arena_alloc(arena, size);

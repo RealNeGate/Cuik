@@ -92,7 +92,7 @@ node (jmp_MULTI)
 #define BRANCH(op_name) \
 /* standard two-way branches */ \
 pat (op_name dt=$dt $ctrl (x86_COND $cmp cond=$cond)) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond) \
-pat (op_name dt=$dt $ctrl $x) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE) \
+pat (op_name dt=$dt $ctrl $x) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=E) \
 pat (op_name dt=$dt $ctrl (TB_AND ___ $x $y)) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $y extra_dt="n->inputs[1]->dt") cond=NE) \
 /* multi-way branches */ \
 pat (op_name dt=$dt $ctrl $x) where "!cfg_if_branch(n)" => "isel_multi_way_branch(ctx, f, n)"
@@ -123,6 +123,22 @@ pat (TB_CALL $ctrl $mem (x86_MEMORY ($sym: TB_MACH_SYMBOL ...)) $REST) => (x86_c
 pat (TB_CALL $ctrl $mem $target $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem $target $REST mode=MODE_LD proto="TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto")
 
 pat (TB_VA_START ...) => "isel_va_start(ctx, f, n)"
+
+// *******************************
+// BMI2
+// *******************************
+node (shlx)
+node (shrx)
+node (sarx)
+
+#define BMI2_OP(op_name, mnemonic) \
+node (mnemonic) \
+pat (op_name dt=$dt ___ $lhs $rhs) where "ctx->features.x64 & TB_FEATURE_X64_BMI2" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
+pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs) where "ctx->features.x64 & TB_FEATURE_X64_BMI2" => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD) \
+
+BMI2_OP(TB_SHL, shlx)
+BMI2_OP(TB_SHR, shrx)
+BMI2_OP(TB_SAR, sarx)
 
 // *******************************
 // integer ops
@@ -165,6 +181,10 @@ NORMIE_OP8(TB_SHR, shr)
 NORMIE_OP8(TB_SAR, sar)
 NORMIE_OP8(TB_ROL, rol)
 NORMIE_OP8(TB_ROR, ror)
+
+pat (x86_shlx ...) => "isel_peep_shift(ctx, f, n)"
+pat (x86_shrx ...) => "isel_peep_shift(ctx, f, n)"
+pat (x86_sarx ...) => "isel_peep_shift(ctx, f, n)"
 
 node (div)
 node (idiv)
@@ -243,3 +263,10 @@ pat (TB_ZERO_EXT dt=$dt ___ $src)
 where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
 => (x86_movzx8 dt=$dt ___ ___ $src)
 
+pat (TB_ZERO_EXT dt=$dt ___ ($src: TB_LOAD $ctrl $mem $addr))
+where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
+=> (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD)
+
+pat (TB_ZERO_EXT dt=$dt ___ ($src: TB_LOAD $ctrl $mem ($addr: x86_MEMORY ...)))
+where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
+=> (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD)

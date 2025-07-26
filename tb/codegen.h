@@ -163,6 +163,7 @@ typedef struct {
 
 struct Ctx {
     TB_CGEmitter emit;
+    TB_FeatureSet features;
 
     TB_Module* module;
     TB_Function* f;

@@ -294,6 +294,7 @@ static uint32_t* mach_grammar;
 static bool mach_is_operand[512];
 static bool mach_is_subpat[512];
 static TB_Node* mach_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state);
+static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n);
 
 static void node_grammar_alloc(size_t cap) {
     cap = (cap * 4) / 3;
@@ -348,9 +349,16 @@ static uint32_t node_grammar_get(uint32_t k) {
     return 0;
 }
 
+static void indent(int depth) {
+    FOR_N(i, 0, depth) {
+        printf("  ");
+    }
+}
+
+// root is at depth=1
 static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws, int depth) {
     TB_ASSERT(n->type != TB_PHI);
-    if (depth == 0 && mach_is_subpat[n->type]) {
+    if (depth == 1 && mach_is_subpat[n->type]) {
         return NULL;
     }
 
@@ -358,7 +366,7 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
     int head = 1, state = 0;
     stk[0] = (NodeCursor){ 0 };
 
-    TB_OPTDEBUG(ISEL2)(printf("Matching %%%u (%d uses)...\n", n->gvn, n->user_count));
+    TB_OPTDEBUG(ISEL2)(indent(depth), printf("Matching %%%u (%d uses)...\n", n->gvn, n->user_count));
 
     TB_Node* curr = NULL;
     int index = 0;
@@ -367,54 +375,78 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
         TB_Node* in = curr ? (index < curr->input_count ? curr->inputs[index] : NULL) : n;
         TB_NodeTypeEnum in_type = in ? in->type : TB_NULL;
         if (in) {
-            TB_OPTDEBUG(ISEL2)(printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
+            TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
 
             // either matches against COND or MEMORY
-            bool wants_operand = node_grammar_get(state << 16 | (256+1)) > 0;
-            wants_operand |= node_grammar_get(state << 16 | (257+1)) > 0;
+            int wants_operand = 0;
+            if (node_grammar_get(state << 16 | (256+1)) > 0) {
+                wants_operand = 1; // MEMORY
+            } else if (node_grammar_get(state << 16 | (257+1)) > 0) {
+                wants_operand = 2; // COND
+            }
 
-            if (mach_is_operand[in->type] && in != n && wants_operand) {
-                bool pushed_already = worklist_test_n_set(walker_ws, in);
-                tb__gvn_remove(f, in);
+            if (in->type != n->type && wants_operand) {
+                if (mach_is_operand[in->type]) {
+                    bool pushed_already = worklist_test_n_set(walker_ws, in);
 
-                TB_OPTDEBUG(ISEL2)(printf("\n>>>\n"));
-                TB_Node* new_in = node_isel_raw(ctx, f, in, walker_ws, depth + 1);
-                if (new_in && new_in != in) {
-                    // we can GVN machine nodes :)
-                    new_in = tb_opt_gvn_node(f, new_in);
-                    if (!mach_is_subpat[in->type]) {
-                        subsume_node(f, in, new_in);
-                    } else {
-                        set_input(f, curr, new_in,  index);
+                    TB_OPTDEBUG(ISEL2)(printf("\n"));
+                    TB_Node* new_in = node_isel_raw(ctx, f, in, walker_ws, depth + 1);
+                    if (new_in && new_in != in) {
+                        // we can GVN machine nodes :)
+                        if (!mach_is_subpat[in->type]) {
+                            subsume_node(f, in, new_in);
+                        } else {
+                            // tb__gvn_remove(f, curr);
+                            set_input(f, curr, new_in, index);
+                        }
+
+                        // don't walk the replacement
+                        worklist_push(walker_ws, new_in);
+
+                        in = new_in;
+                        in_type = in ? in->type : TB_NULL;
+                    } else if (!pushed_already) {
+                        // node failed but hasn't been processed, treat it as a node of its own
+                        dyn_array_put(walker_ws->items, in);
                     }
 
-                    // don't walk the replacement
-                    worklist_push(walker_ws, new_in);
-
-                    in = new_in;
-                    in_type = in ? in->type : TB_NULL;
-                } else if (!pushed_already) {
-                    in = tb_opt_gvn_node(f, in);
-
-                    // node failed but hasn't been processed, treat it as a node of its own
-                    dyn_array_put(walker_ws->items, in);
+                    #if TB_OPTDEBUG_ISEL2
+                    indent(depth);
+                    printf("    => ");
+                    tb_print_dumb_node(NULL, in);
+                    printf("\n");
+                    #endif
                 } else {
-                    in = tb_opt_gvn_node(f, in);
-                }
+                    uint32_t next = node_grammar_get(state << 16 | (in_type+1));
+                    if (next == 0) { next = node_grammar_get(state<<16); }
 
-                #if TB_OPTDEBUG_ISEL2
-                printf("<<< ");
-                tb_print_dumb_node(NULL, in);
-                printf("\n");
-                #endif
+                    // if there's no non-memory match, we'll take it as a last resort
+                    if (wants_operand == 1 && next == 0) {
+                        TB_Node* new_in = mach_dfa_bare_memory(ctx, f, in);
+                        set_input(f, curr, new_in, index);
+
+                        in = new_in;
+                        in_type = in ? in->type : TB_NULL;
+                        TB_ASSERT(in_type == 256);
+
+                        #if TB_OPTDEBUG_ISEL2
+                        printf("\n    %%%u treated as MEMORY node\n    ", in->gvn);
+                        tb_print_dumb_node(NULL, new_in);
+                        printf("\n");
+                        #endif
+
+                        TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
+                    }
+                }
             }
         } else {
-            TB_OPTDEBUG(ISEL2)(printf("  step(      %-16s, %3d): ", "___", state));
+            TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(      %-16s, %3d): ", "___", state));
         }
         uint32_t next = node_grammar_get(state<<16 | (in_type+1));
         // if there's no specific match, try general
         if (next == 0) { next = node_grammar_get(state<<16); }
         // if there's no match, try to resolve the input then go
+        TB_OPTDEBUG(ISEL2)(indent(depth));
         if (next == 0) {
             TB_OPTDEBUG(ISEL2)(printf("failed!\n"));
             return NULL;
@@ -450,7 +482,7 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
     size_t old_node_count = f->node_count;
     TB_Node* k = mach_dfa_accept(ctx, f, n, state);
 
-    if (f->node_count >= old_node_count) {
+    if (k && k->gvn >= old_node_count) {
         // we can GVN machine nodes :)
         k = tb_opt_gvn_node(f, k);
     }
@@ -520,6 +552,16 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
     log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena) - og_size) / 1024.0f, label);
 }
 
+static bool is_vreg_match(Ctx* ctx, TB_Node* a, TB_Node* b) {
+    VReg* aa = &ctx->vregs[ctx->vreg_map[a->gvn]];
+    VReg* bb = &ctx->vregs[ctx->vreg_map[a->gvn]];
+    if (aa == bb) {
+        return true;
+    }
+
+    return aa->class == bb->class && aa->assigned == bb->assigned;
+}
+
 static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
     #if TB_OPTDEBUG_ISEL
     tb_print_dumb(f);
@@ -561,6 +603,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         .remat       = node_remat,
         .print_pretty= print_pretty,
         .num_classes = REG_CLASS_COUNT,
+        .features = f->features,
         .emit = {
             .output = func_out,
             .arena = code_arena,
@@ -582,8 +625,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             nl_hashset_put2(&ctx.mask_intern, ctx.mayspill_mask[i], rm_hash, rm_compare);
         }
     }
-
-    tb_print(f);
 
     CUIK_TIMED_BLOCK("isel") {
         log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f);
@@ -630,7 +671,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
             while (dyn_array_length(walker_ws.items) > 0) {
                 TB_Node* n = dyn_array_pop(walker_ws.items);
-                TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+                TB_OPTDEBUG(ISEL3)(printf("ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
                 if (!is_proj(n) && n->user_count == 0) {
                     TB_OPTDEBUG(ISEL3)(printf(" => \x1b[31mKILL\x1b[0m\n"));
@@ -648,7 +689,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 }
 
                 // replace with machine op
-                TB_OPTDEBUG(ISEL3)(printf("\n\n"));
+                TB_OPTDEBUG(ISEL3)(printf("\n"));
                 if (n->type == TB_PHI) {
                     worklist_test_n_set(&walker_ws, n);
                 } else {
@@ -656,12 +697,15 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                     bool progress;
                     do {
-                        TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws, 0);
+                        TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws, 1);
                         progress = k != NULL;
 
-                        if (k && k != n) {
-                            TB_OPTDEBUG(ISEL3)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
-                            subsume_node(f, n, k);
+                        if (k) {
+                            TB_OPTDEBUG(ISEL3)(printf("  => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
+
+                            if (k != n) {
+                                subsume_node(f, n, k);
+                            }
 
                             // don't walk the replacement
                             worklist_test_n_set(&walker_ws, k);
@@ -669,7 +713,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         }
                     } while (progress);
                 }
-                TB_OPTDEBUG(ISEL3)(printf("\n"));
+                TB_OPTDEBUG(ISEL2)(printf("\n"));
 
                 node_add_tmps(&ctx, n);
 
@@ -747,10 +791,9 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         FOR_N(i, 0, bb_count) {
             TB_BasicBlock* bb = &cfg.blocks[i];
 
-            // compute local schedule
+            // compute local schedule, this schedule doesn't care about the exact pipeline details
             CUIK_TIMED_BLOCK("local sched") {
-                // tb_greedy_scheduler(f, &cfg, ws, bb);
-                tb_list_scheduler(f, &cfg, ws, bb, node_latency, node_unit_mask, FUNCTIONAL_UNIT_COUNT);
+                tb_list_scheduler(f, &cfg, ws, bb, node_latency);
             }
 
             // a bit of slack for spills
@@ -904,7 +947,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                             continue;
                         } else if (n->type == TB_MACH_COPY) {
                             // if both dst & src match, it's not gonna emit anything
-                            if (ctx.vreg_map[n->gvn] == ctx.vreg_map[n->inputs[1]->gvn]) {
+                            if (is_vreg_match(&ctx, n, n->inputs[1])) {
                                 continue;
                             }
                         }

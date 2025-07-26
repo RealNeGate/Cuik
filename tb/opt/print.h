@@ -336,15 +336,13 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, OutStream* s, bool fa
 }
 
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) { return 1; }
-static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) { return 1; }
-
 static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStream* s) {
     print_ref_to_node(ctx, bb->start, s, true);
     s_newline(s);
 
     TB_Function* f = ctx->f;
     // tb_greedy_scheduler(f, &ctx->cfg, ws, bb);
-    tb_list_scheduler(f, &ctx->cfg, ws, bb, node_latency, node_unit_mask, 1);
+    tb_list_scheduler(f, &ctx->cfg, ws, bb, node_latency);
 
     FOR_N(i, 0, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];

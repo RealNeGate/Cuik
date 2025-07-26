@@ -363,6 +363,32 @@ static void asm_inst1(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* 
     }
 }
 
+enum {
+    VEX_0F   = 1,
+    VEX_0F38 = 2,
+    VEX_0F3A = 3,
+};
+
+enum {
+    VEX_NONE,
+    VEX_66,
+    VEX_F3,
+    VEX_F2,
+};
+
+static void emit_vex(TB_CGEmitter* e, bool is_64bit, uint8_t rx, uint8_t base, uint8_t index, uint8_t v, uint8_t m, uint8_t p) {
+    // idk why but the VEX stuff is all complements
+    v     = ~v & 0b1111;
+    base  = ~(base >> 3) & 1;
+    index = ~(index >> 3) & 1;
+    rx    = ~(rx >> 3) & 1;
+
+    // VEX3
+    EMIT1(e, 0xC4);
+    EMIT1(e, (base << 5) | (index << 6) | (rx << 7) | m);
+    EMIT1(e, (is_64bit ? 128 : 0) | (v << 3) | p);
+}
+
 static void asm_inst2(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* a, const Val* b) {
     if (dt >= TB_X86_PBYTE && dt <= TB_X86_PQWORD) {
         inst2sseint(e, type, a, b, dt);

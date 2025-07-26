@@ -1,20 +1,20 @@
 #include <common.h> // __debugbreak
 #include <tb_a64.h>
 
-#include "../../meta/a64dfa.h"
+// #include "../../meta/a64dfa.h"
 
 bool tb_a64_disasm(TB_A64_Inst* restrict inst, size_t length, const uint8_t* data) {
     uint32_t bits;
     memcpy(&bits, data, 4);
 
-    __debugbreak();
+    /* __debugbreak();
     uint16_t state = walk(bits);
     if (state >= COUNTOF(names) || names[state] == NULL) {
         printf("???");
         __debugbreak();
     }
 
-    names[state](bits);
+    names[state](bits); */
     return false;
 }
 

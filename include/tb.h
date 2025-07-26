@@ -1100,6 +1100,7 @@ TB_API TB_Global* tb_symbol_as_global(TB_Symbol* s);
 ////////////////////////////////
 // Function IR Generation
 ////////////////////////////////
+TB_API TB_DataType tb_data_type_ptr_int(TB_Module* m);
 TB_API void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t* align);
 
 TB_API void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column);
@@ -1112,6 +1113,7 @@ TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* 
 TB_API void tb_function_set_features(TB_Function* f, const TB_FeatureSet* features);
 TB_API void tb_function_destroy(TB_Function* f);
 
+TB_API TB_FeatureSet tb_features_from_profile_str(TB_Module* m, const char* name);
 TB_API TB_Arena* tb_function_get_arena(TB_Function* f, int i);
 
 // if len is -1, it's null terminated

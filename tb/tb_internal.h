@@ -424,13 +424,13 @@ struct TB_Function {
         int dbg_server_t;
         #endif
 
-        #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
+        #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_MEMORY
         bool enable_log;
         #endif
 
         // nice stats
         struct {
-            #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_ISEL
+            #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_ISEL || TB_OPTDEBUG_ISEL3
             int time;
             #endif
 

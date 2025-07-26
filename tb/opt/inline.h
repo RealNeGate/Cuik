@@ -40,7 +40,7 @@ static void ipo_opt_task(TPool* tp, void** arg) {
         ipo_worklist = tb_worklist_alloc();
     }
 
-    tb_opt(f, ipo_worklist, false);
+    tb_opt(f, ipo_worklist, true);
 
     // notify the IPO thread to stop waiting
     f->ipo_lock = IPO_FUNC_READY;
@@ -94,6 +94,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Nod
                 clones[n->gvn] = tb__gvn(f, cloned, extra);
             }
 
+            latuni_set(f, cloned, kid->types[n->gvn]);
             if (n->type == TB_VA_START) {
                 TB_ASSERT(va_start_n == NULL);
                 va_start_n = clones[n->gvn];
@@ -148,29 +149,81 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Nod
 
     TB_Node* kid_root = clones[kid->root_node->gvn];
     TB_ASSERT(kid_root->type == TB_ROOT);
-    TB_ASSERT(kid_root->input_count == 2);
 
-    size_t va_list_size = (call_site->input_count - 3) - kid->prototype->param_count;
-    {
-        // TODO(NeGate): region-ify the exit point
-        TB_Node* ret = kid_root->inputs[1];
-        TB_ASSERT(ret->type == TB_RETURN);
+    TB_Node** rets;
+    size_t ret_cnt = 0;
+    if (kid_root->input_count > 2) {
+        size_t phi_len = 1;
+        TB_Node* any_ret = NULL;
+        FOR_N(i, 1, kid_root->input_count) {
+            TB_Node* end = kid_root->inputs[i];
+            if (end->type == TB_RETURN) {
+                if (!any_ret) {
+                    ret_cnt = end->input_count;
+                    any_ret = end;
+                } else {
+                    TB_ASSERT(ret_cnt == end->input_count);
+                }
 
-        for (size_t i = 0; i < call_site->user_count;) {
-            TB_Node* un = USERN(&call_site->users[i]);
-            if (is_proj(un)) {
-                int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
-                if (index >= 2) { index += 1; }
-
-                subsume_node(f, un, ret->inputs[index]);
+                phi_len += 1;
             } else {
-                i += 1;
+                add_input_late(f, f->root_node, end);
             }
         }
-        tb_kill_node(f, ret);
 
-        subsume_node(f, kid_root, f->root_node);
+        rets = tb_arena_alloc(arena, ret_cnt * sizeof(TB_Node*));
+        if (phi_len == 2) {
+            // any_ret is the only ret
+            memcpy(rets, any_ret->inputs, ret_cnt * sizeof(TB_Node*));
+        } else if (phi_len == 1) {
+            // no paths actually return...
+            __debugbreak();
+        } else {
+            TB_Node* r = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, phi_len - 1, sizeof(TB_NodeRegion));
+            rets[0] = r;
+            FOR_N(i, 1, ret_cnt) {
+                rets[i] = tb_alloc_node(f, TB_PHI, any_ret->inputs[i]->dt, phi_len, 0);
+            }
+
+            int k = 1;
+            FOR_N(i, 1, kid_root->input_count) {
+                TB_Node* end = kid_root->inputs[i];
+                if (end->type == TB_RETURN) {
+                    FOR_N(j, 1, end->input_count) {
+                        TB_ASSERT(rets[k]->dt.raw == end->inputs[j]->dt.raw);
+                        set_input(f, rets[k], end->inputs[j], j);
+                    }
+                    k++;
+                }
+            }
+        }
+    } else if (kid_root->inputs[1]->type == TB_RETURN) {
+        TB_Node* ret = kid_root->inputs[1];
+
+        ret_cnt = ret->input_count;
+        rets = tb_arena_alloc(arena, ret_cnt * sizeof(TB_Node*));
+        memcpy(rets, ret->inputs, ret_cnt * sizeof(TB_Node*));
+
+        tb_kill_node(f, ret);
+    } else {
+        ret_cnt = 0;
+        rets = NULL;
     }
+
+    size_t va_list_size = (call_site->input_count - 3) - kid->prototype->param_count;
+    for (size_t i = 0; i < call_site->user_count;) {
+        TB_Node* un = USERN(&call_site->users[i]);
+        if (is_proj(un)) {
+            int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+            if (index >= 2) { index += 1; }
+
+            TB_ASSERT(index < ret_cnt);
+            subsume_node(f, un, rets[index]);
+        } else {
+            i += 1;
+        }
+    }
+    subsume_node(f, kid_root, f->root_node);
 
     if (kid->prototype->has_varargs && va_start_n) {
         TB_Node* va_list_n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
@@ -212,37 +265,29 @@ static bool should_full_inline_by_size(TB_Module* m, IPOSolver* ipo, int caller_
     int target_size = ipo->size_metric[target->uid];
 
     // if all callsites inlined, how big would that get?
-    int upper_inline_bound = ipo->ref_count[target->uid];
-    if (is_function_root(target)) {
-        // we need at least one uninlined, addressable version of the function
-        upper_inline_bound += 1;
-    }
-    upper_inline_bound *= target_size;
+    int rc = ipo->ref_count[target->uid] + is_function_root(target);
 
     SizeClass lower_class = classify_size(target_size);
-    SizeClass upper_class = classify_size(upper_inline_bound);
-
-    TB_OPTDEBUG(INLINE)(printf("  lower=%d,%s   upper=%d,%s\n", target_size, size_strs[lower_class], upper_inline_bound, size_strs[upper_class]));
+    TB_OPTDEBUG(INLINE)(printf("  lower=%d,%s\n", target_size, size_strs[lower_class]));
 
     // large functions will stop inlining completely
     if (caller_class == SIZE_LARGE || lower_class == SIZE_LARGE) {
         return false;
     }
 
-    // we can always inline "small" functions
-    if (lower_class == SIZE_SMALL) {
+    // one caller? always inline
+    if (rc == 1) {
+        TB_OPTDEBUG(INLINE)(printf("  YES, always inline because there's one caller!\n"));
+        return true;
+    }
+
+    // two callers? always inline small functions
+    if (lower_class == SIZE_SMALL || (lower_class == SIZE_SMALL_MED && rc == 2)) {
         TB_OPTDEBUG(INLINE)(printf("  YES, the target is tiny!\n"));
         return true;
     }
 
-    // sometimes a function is a bit larger but since there's so
-    // little references to it, inlining it might not actually be
-    // so bad.
-    if (upper_class <= SIZE_SMALL_MED) {
-        TB_OPTDEBUG(INLINE)(printf("  YES, the upper bound on inlining was small enough!\n"));
-        return true;
-    }
-
+    // TODO(NeGate): crazy heuristics
     return false;
 }
 

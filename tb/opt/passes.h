@@ -17,6 +17,12 @@ enum {
 #define USERI(u) ((u)->_slot) // index
 #endif
 
+#if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
+#define TB_OPTLOG(name, ...) do { if (f->enable_log) { TB_OPTDEBUG(name)(__VA_ARGS__); } } while (0)
+#else
+#define TB_OPTLOG(name, ...) do {} while (0)
+#endif
+
 #define FOR_USERS(u, n) for (TB_User *u = (n)->users, *_end_ = &u[(n)->user_count]; u != _end_; u++)
 
 ////////////////////////////////
@@ -406,7 +412,7 @@ typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n, TB_Node* end);
 typedef uint64_t (*TB_GetUnitMask)(TB_Function* f, TB_Node* n);
 
 // Local scheduler
-void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count);
+void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb, TB_GetLatency get_lat);
 void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb);
 void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg);
 

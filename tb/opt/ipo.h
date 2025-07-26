@@ -70,7 +70,7 @@ static int op_weights[256] = {
     // comparisons
     [TB_CMP_EQ ... TB_CMP_NE] = 2,
     // function calls? idk what this should count as
-    [TB_CALL]                 = 3,
+    [TB_CALL]                 = 10,
 };
 
 static int bin_count;
@@ -108,7 +108,7 @@ static void init_bins(void) {
 static SizeClass classify_size(int metric) {
     if (metric >= 1000) {
         return SIZE_LARGE;
-    } else if (metric >= 100) {
+    } else if (metric >= 50) {
         return SIZE_MEDIUM;
     } else if (metric >= 10) {
         return SIZE_SMALL_MED;
@@ -296,9 +296,9 @@ static void func_opt_task(TPool* tp, void** arg) {
         ipo_worklist = tb_worklist_alloc();
     }
 
-    // if (strcmp(f->super.name, "fe_pushgc") == 0) {
+    // if (strcmp(f->super.name, "collectgarbage") == 0) {
     log_debug("OPT: %s: function local optimizer", f->super.name);
-    tb_opt(f, ipo_worklist, false);
+    tb_opt(f, ipo_worklist, true);
     // }
 
     tracker[0] += 1;

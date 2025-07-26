@@ -1580,7 +1580,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
     }
 }
 
-TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s) {
+TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s, const TB_FeatureSet* features) {
     // assert(s->flags & STMT_FLAGS_HAS_IR_BACKING);
     if (s->op == STMT_FUNC_DECL) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
@@ -1590,6 +1590,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         cached_filepath = NULL;
 
         TB_Function* func = s->backing.f;
+        tb_function_set_features(func, features);
 
         // we'll be using the debug info to construct our ABI compliant prototype
         TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, type);

@@ -333,10 +333,10 @@ static TB_Node* next_of_memory_sese(TB_Node* curr) {
     return next;
 }
 
-static TB_Node* end_of_memory_sese(TB_Node* curr) {
-    TB_OPTDEBUG(MEM2REG)(printf("SESE:\n"));
+static TB_Node* end_of_memory_sese(TB_Function* f, TB_Node* curr) {
+    TB_OPTLOG(MEMORY, printf("SESE:\n"));
     for (;;) {
-        TB_OPTDEBUG(MEM2REG)(printf("  WALK %%%u\n", curr->gvn));
+        TB_OPTLOG(MEMORY, printf("  WALK %%%u\n", curr->gvn));
 
         // the next memory output, NULL if there's multiple
         TB_Node* next = next_of_memory_sese(curr);
@@ -369,7 +369,7 @@ static MemoryState* start_of_memory_sese(NL_Table* sese2set, TB_Node* n) {
 // Perform renaming until we reach a fork
 static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* restrict ctx, TB_Node* curr, MemoryState* state, NL_Table* non_aliasing, bool* out_progress) {
     TB_Node** latest = state->walked_once ? NULL : state->latest;
-    TB_OPTDEBUG(MEM2REG)(printf("\n\n"));
+    TB_OPTLOG(MEMORY, printf("\n\n"));
 
     // current aliasing set is a meet over all preds
     nl_table_clear(non_aliasing);
@@ -404,7 +404,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                 mark_node(f, new_phi);
 
                 phis[i] = latest[1 + i] = new_phi;
-                TB_OPTDEBUG(MEM2REG)(printf("  PHI %%%u\n", new_phi->gvn));
+                TB_OPTLOG(MEMORY, printf("  PHI %%%u\n", new_phi->gvn));
 
                 if (ctx->renames[i].is_mem) {
                     // they're all part of the same set
@@ -443,7 +443,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                 }
 
                 if (n->dt.type == TB_TAG_VOID && n->user_count == 0) {
-                    TB_OPTDEBUG(MEM2REG)(printf("  KILL %%%u\n", n->gvn));
+                    TB_OPTLOG(MEMORY, printf("  KILL %%%u\n", n->gvn));
 
                     violent_kill(f, state->phis[i]);
                     state->phis[i] = NULL;
@@ -475,7 +475,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                 } else {
                     TB_OPTDEBUG(MEM2REG)(printf("  SEALED %%%u\n", n->gvn));
                 }*/
-                TB_OPTDEBUG(MEM2REG)(printf("  SEALED %%%u\n", n->gvn));
+                TB_OPTLOG(MEMORY, printf("  SEALED %%%u\n", n->gvn));
             }
 
             state->sealed = true;
@@ -503,11 +503,13 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
     }
     state->walked_once = true;
 
-    #if TB_OPTDEBUG_MEM2REG
-    printf("\nSESE %d   [ ", state->order);
-    print_memory_state(non_aliasing);
-    printf("]\n");
-    print_var_state(ctx, state);
+    #if TB_OPTDEBUG_MEMORY
+    if (f->enable_log) {
+        printf("\nSESE %d   [ ", state->order);
+        print_memory_state(non_aliasing);
+        printf("]\n");
+        print_var_state(ctx, state);
+    }
     #endif
 
     for (;;) {
@@ -559,7 +561,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
 
                 MemorySet* set = memory_set_find_or_create(f, non_aliasing, base);
                 if (set->cnt == 0) {
-                    TB_OPTDEBUG(MEM2REG)(printf("    INVALIDATE ALL!\n"));
+                    TB_OPTLOG(MEMORY, printf("    INVALIDATE ALL!\n"));
 
                     // first time constructing this set, previous writes to different bases
                     // might alias so they should be cleared.
@@ -581,7 +583,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                         TB_Node* st_mem = set->stores[idx].mem;
 
                         // the entire previous write is eaten up by this write
-                        TB_OPTDEBUG(MEM2REG)(printf("    DEAD-STORE %%%u\n", st_mem->gvn));
+                        TB_OPTLOG(MEMORY, printf("    DEAD-STORE %%%u\n", st_mem->gvn));
                         st_mem->type = TB_DEAD_STORE;
                         worklist_push(ctx->dead_worklist, st_mem);
                     } else {
@@ -601,7 +603,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                         if (!clobber && idx >= 0) {
                             memory_set_insert(f, non_aliasing, set, idx, ref);
                         } else {
-                            TB_OPTDEBUG(MEM2REG)(printf("    CLOBBER\n"));
+                            TB_OPTLOG(MEMORY, printf("    CLOBBER\n"));
 
                             memory_set_clear_except(non_aliasing, set);
                             memory_set_insert(f, non_aliasing, set, 0, ref);
@@ -783,7 +785,7 @@ static void postorder_memory(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
     }
 
     // walk successors first
-    TB_Node* end = end_of_memory_sese(start);
+    TB_Node* end = end_of_memory_sese(f, start);
     FOR_USERS(u, end) {
         TB_Node* use_n = USERN(u);
         int use_i = USERI(u);
@@ -977,7 +979,7 @@ int tb_opt_locals(TB_Function* f) {
         }
 
         // tb_print(f);
-        // tb_print_dumb(f);
+        TB_OPTLOG(MEMORY, tb_print_dumb(f));
         // __debugbreak();
 
         TB_Worklist sese_worklist;

@@ -663,6 +663,14 @@ else
     out:put("        default: return NULL;\n")
     out:put("    }\n")
     out:put("}\n\n")
+    out:put([[
+static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n) {
+    TB_Node* new_n = tb_alloc_node(f, x86_MEMORY, TB_TYPE_VOID, 1, sizeof(X86MemOp));
+    set_input(f, new_n, n, 0);
+    return new_n;
+}
+
+]])
     out:put("static TB_Node* mach_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) {\n")
     out:put("    switch (state) {\n")
     for k,v in pairs(accept) do

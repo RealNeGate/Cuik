@@ -474,7 +474,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     zeros |= ~(mask >> b->_int.min);
                 }
 
-                return lattice_gimme_int2(f, new_min, new_max, zeros, ones, bits);
+                return lattice_gimme_uint2(f, new_min, new_max, zeros, ones, bits);
             }
 
             case TB_SAR: {
@@ -575,11 +575,21 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
 
     uint64_t zeros, ones;
     switch (n->type) {
-        case TB_AND:
-        // 0 if either is zero, 1 if both are 1
-        zeros = a->_int.known_zeros | b->_int.known_zeros;
-        ones  = a->_int.known_ones  & b->_int.known_ones;
-        break;
+        case TB_AND: {
+            // 0 if either is zero, 1 if both are 1
+            zeros = a->_int.known_zeros | b->_int.known_zeros;
+            ones  = a->_int.known_ones  & b->_int.known_ones;
+
+            // if the range doesn't flip itself around we're safe
+            if (b->_int.min == b->_int.max) {
+                int64_t mmin = a->_int.min & b->_int.min;
+                int64_t mmax = a->_int.max & b->_int.min;
+                if (mmin < mmax) {
+                    min = mmin, max = mmax;
+                }
+            }
+            break;
+        }
 
         case TB_OR:
         // 0 if both are 0, 1 if either is 1
@@ -602,7 +612,7 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         return lattice_int_const(f, ones);
     }
 
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones & mask } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
 static TB_Node* identity_bits(TB_Function* f, TB_Node* n) {
@@ -952,7 +962,7 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
 
     TB_DataType dt = n->inputs[1]->dt;
     if (TB_IS_INTEGER_TYPE(dt)) {
-        bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
+        bool c = false; // gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
         Lattice* cmp = value_arith_raw(f, TB_SUB, dt, a, b, c);
 
         // ok it's really annoying that i have to deal with the "idk bro" case in the middle

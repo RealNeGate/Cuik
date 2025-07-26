@@ -39,6 +39,9 @@ typedef enum {
 
     // REPNE prefix is present
     TB_X86_INSTR_REPNE = (1u << 6u),
+
+    // extra reg is used
+    TB_X86_INSTR_EXTRA = (1u << 7u),
 } TB_X86_InstFlags;
 
 typedef enum {
@@ -78,11 +81,11 @@ typedef enum {
 typedef struct {
     uint16_t opcode;
 
-    // packed 16bits
-    uint16_t scale  : 2;
-    uint16_t flags  : 6;
-    uint16_t dt     : 4;
-    uint16_t dt2    : 4;
+    // packed 32bits
+    uint32_t flags  : 26;
+    uint32_t scale  : 2;
+    uint32_t dt     : 4;
+    uint32_t dt2    : 4;
 
     // each 8bits are a different reg (lowest bits to higher):
     //   base, index, rx, extra

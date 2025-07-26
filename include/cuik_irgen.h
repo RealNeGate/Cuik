@@ -20,5 +20,5 @@
 CUIK_API void cuikcg_allocate_ir(TranslationUnit* tu, TB_Module* m, bool debug);
 
 // returns NULL on failure
-CUIK_API TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s);
+CUIK_API TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s, const TB_FeatureSet* features);
 

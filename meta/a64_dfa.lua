@@ -1,3 +1,4 @@
+buffer  = require "string.buffer"
 bit = require "bit"
 
 local jason = require('jason')
@@ -337,7 +338,9 @@ local function parse_encoding(encodings, name)
 	return pattern, fields
 end
 
-local function walk_A64(list, instructions, parents, encodings)
+decision_tree = {}
+
+local function walk_A64(list, instructions, parents, encodings, n, depth)
 	--[[ i want to track the path through the tree
 		this gives me families of instructions (SVE/SME/etc.)
 		also build a list of each level's encoding ]]
@@ -356,10 +359,21 @@ local function walk_A64(list, instructions, parents, encodings)
 		local pattern, fields = parse_encoding(encodings, item.name)
 		--[[ continue traversing until all bits have been
 			accounted for by all the encodings ]]
+
+        -- local str = ""
+        -- for i=1,depth+1 do
+        -- str = str.."    "
+        -- end
+        -- print(str..pattern, item.name)
+
 		if pattern:find('-') then
+            local kid = {}
+
 			table.insert(parents, item.name)
-			walk_A64(item.children, instructions, parents, encodings)
+			walk_A64(item.children, instructions, parents, encodings, kid, depth + 1)
 			table.remove(parents)
+
+            n[pattern] = kid
 		else
 			--!! also parse constraints & children for decoding
 			table.insert(instructions, {
@@ -370,6 +384,7 @@ local function walk_A64(list, instructions, parents, encodings)
 				original = item,
 			})
 			instructions[item.name] = #instructions
+            n[pattern] = item.name
 		end
 		table.remove(encodings)
 	end
@@ -384,8 +399,58 @@ local data = jason.decode(content)
 timer('decode')
 
 local instructions = {} -- list
-walk_A64(data.instructions, instructions)
+local decision_tree = {}
+walk_A64(data.instructions, instructions, nil, nil, decision_tree, 0)
 timer('walk')
+
+local pat = "-__100____----------------------"
+local dp1 = decision_tree["_--____-------------------------"][pat]
+print(inspect(dp1))
+
+local out = buffer.new(1000)
+function trailing_zeros(k)
+    -- don't check the trailing zeros
+    local shift = 0
+    for i=1,32 do
+        if string.byte(k, 33 - i) ~= string.byte("0") then
+            shift = i - 1
+            break
+        end
+    end
+    return shift
+end
+
+function compile_decision(out, pat, kids)
+    -- bucket the different kinds of queries, we can
+    -- insert switch statements for each
+    local query = {}
+    for k,v in pairs(kids) do
+        local mask = string.gsub(string.gsub(k, "[01]", "1"), "[_]", "0")
+        if not query[mask] then
+            query[mask] = {}
+        end
+
+        local l = query[mask]
+        l[#l + 1] = k
+    end
+
+    for k,v in pairs(query) do
+        print(k, inspect(v))
+        local shift = trailing_zeros(k)
+
+        out:put(string.format("switch ((inst & 0b%s) >> %d) {\n", string.sub(k, 1, -(shift + 1)), shift))
+        for i=1,#v do
+            local match = string.gsub(v[i], "[_]", "0")
+            out:put(string.format("  case 0b%s: // %s\n", string.sub(match, 1, -(shift + 1)), kids[v[i]]))
+        end
+        out:put("}\n")
+    end
+end
+
+compile_decision(out, pat, dp1)
+print(out:tostring())
+
+os.exit(1)
 
 if options.listing then
 	print(jason.encode(instructions))
@@ -765,7 +830,7 @@ for _, group in ipairs(instructions) do
 		cgen(string.format('\tuint32_t %s = GET_BITS(%d, %d, inst);', f.name, f.bit, f.len))
 	end
 	-- separate instructions
-	print(group.name)
+	-- print(group.name)
 	for _, inst in ipairs(group.original.children) do
 		local str = {}
 		table.insert(str, string.format('\t%s', inst.name))
@@ -786,7 +851,7 @@ for _, group in ipairs(instructions) do
 				end
 			end
 		end
-		--print(table.concat(str, ', '))
+		-- print(table.concat(str, ', '))
 	end
 	-- print test
 	local str = {}
@@ -817,7 +882,7 @@ cgen([[
 typedef struct {
     uint32_t lsb;
     uint8_t edges[16];
-} DFAState;
+} DFAEdge;
 ]])
 
 -- delta table
@@ -832,11 +897,11 @@ for a, _ in pairs(dfa.Q) do
 			local b = dfa.delta[a][S]
 			if b then
 				local z = tonumber(S, 2)
-				local dt = (b - a) + 512
+				local dt = (b - a) + 1024
 				assert(dt >= 0)
 
 				local x = bit.band(dt, 3)
-				if a == 4 then print(i, a, b, x) end
+				-- if a == 4 then print(i, a, b, x) end
 				lsb = lsb..string.format(" | (%du << %du)", x, z*2)
 			end
 		end
@@ -845,8 +910,8 @@ for a, _ in pairs(dfa.Q) do
 		for _,S in pairs(dfa.Sigma) do
 			local b = dfa.delta[a][S]
 			if b then
-    			local dt = (b - a) + 512
-    			assert(dt >= 0)
+    			local dt = (b - a) + 1024
+    			-- assert(dt >= 0)
 
     			local x = bit.rshift(dt, 2)
     			local y = bit.band(dt, 3)
@@ -859,7 +924,7 @@ for a, _ in pairs(dfa.Q) do
 	else
 		cgen(string.format("    [%d] = { .edges = { ", a))
 		for _,S in pairs(dfa.Sigma) do
-			local x = bit.rshift(512, 2)
+			local x = bit.rshift(1024, 2)
 			cgen(string.format("        [0b%s] = %d,", S, x))
 		end
 		cgen(string.format("    }},"))

@@ -181,8 +181,8 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
-    if (strcmp(name, "fe_list") != 0) {
-        // return;
+    if (strcmp(name, "dfa_range") != 0) {
+        return;
     }
 
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
@@ -848,7 +848,7 @@ static void irgen_job(TPool* pool, void** arg) {
         const char* name = task.stmts[i]->decl.name;
         TB_Symbol* s;
         CUIK_TIMED_BLOCK_ARGS("irgen", name) {
-            s = cuikcg_top_level(task.tu, mod, task.stmts[i]);
+            s = cuikcg_top_level(task.tu, mod, task.stmts[i], &task.tu->features);
         }
 
         if (s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
@@ -873,6 +873,7 @@ static void irgen_job(TPool* pool, void** arg) {
 static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {
     log_debug("IR generation...");
 
+    TB_FeatureSet features = tb_features_from_profile_str(mod, "x86_64-v3");
     if (tp != NULL) {
         #if CUIK_ALLOW_THREADS
         size_t stmt_count = 0;
@@ -881,6 +882,7 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
                 args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
             }
 
+            tu->features = features;
             stmt_count += cuik_num_of_top_level_stmts(tu);
         }
 
@@ -924,6 +926,7 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
             if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN && args->subsystem == TB_WIN_SUBSYSTEM_UNKNOWN) {
                 args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
             }
+            tu->features = features;
 
             size_t c = cuik_num_of_top_level_stmts(tu);
             IRGenTask task = {

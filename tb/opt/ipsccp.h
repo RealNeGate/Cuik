@@ -100,6 +100,29 @@ static void func_sccp_task(TPool* tp, void** arg) {
         // update the IPSCCP rets, this value has only one writer at any one time
         // so we don't need a CAS
         Lattice* new_type = ipsccp_return_type(f);
+        if (new_type == &TOP_IN_THE_SKY) {
+            // dead function
+            size_t ret_count = 3 + f->prototype->return_count;
+            size_t size = sizeof(Lattice) + ret_count*sizeof(Lattice*);
+
+            TB_Arena* arena = get_permanent_arena(f->super.module);
+            Lattice* l = tb_arena_alloc(arena, size);
+            *l = (Lattice){ LATTICE_TUPLE, ._elem_count = ret_count };
+
+            l->elems[0] = &DEAD_IN_THE_SKY;
+            l->elems[1] = &TOP_IN_THE_SKY;
+            l->elems[2] = &XNULL_IN_THE_SKY; // RPC is at least not NULL
+            FOR_N(i, 3, ret_count) {
+                l->elems[i] = &TOP_IN_THE_SKY;
+            }
+
+            // intern & free
+            Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
+            if (k != l) { tb_arena_free(arena, l, size); }
+
+            new_type = k;
+        }
+
         if (old_type != new_type) {
             #if 0
             mtx_lock(&aaa);
@@ -112,6 +135,7 @@ static void func_sccp_task(TPool* tp, void** arg) {
             #endif
 
             atomic_store_explicit(&f->ipsccp_ret, new_type, memory_order_release);
+
             log_debug("OPT: %s: made progress, pushing users!", f->super.name);
 
             IPOSolver* ipo = m->ipo;
@@ -156,6 +180,10 @@ static void func_sccp_rewrite_task(TPool* tp, void** arg) {
         FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
     }
 
+    if (strcmp(f->super.name, "object") == 0) {
+        tb_print_dumb(f);
+    }
+
     f->worklist = ws;
     tb_opt_cprop_rewrite(f);
     tb_opt_cprop_deinit(f, f->cprop);
@@ -165,6 +193,10 @@ static void func_sccp_rewrite_task(TPool* tp, void** arg) {
     if (worklist_count(ws)) {
         m->ipsccp_progress = true;
         worklist_clear(ws);
+    }
+
+    if (strcmp(f->super.name, "object") == 0) {
+        tb_print_dumb(f);
     }
 
     TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "IPSCCP"));
@@ -261,6 +293,24 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
 
     while (old = m->ipsccp_tracker[0], old != m->ipsccp_tracker[1]) {
         futex_wait(&m->ipsccp_tracker[0], old);
+    }
+
+    nbhs_for(entry, &m->symbols) {
+        TB_Symbol* s = *entry;
+        if (s->tag == TB_SYMBOL_FUNCTION) {
+            TB_Function* f = (TB_Function*) s;
+            Lattice* args = f->ipsccp_args ? f->ipsccp_args : &TOP_IN_THE_SKY;
+            Lattice* ret  = f->ipsccp_ret  ? f->ipsccp_ret  : &TOP_IN_THE_SKY;
+            if (args != &TOP_IN_THE_SKY) {
+                #if 1
+                printf("%s: ", f->super.name);
+                print_lattice(args);
+                printf(" -> ");
+                print_lattice(ret);
+                printf("\n");
+                #endif
+            }
+        }
     }
 
     return true;

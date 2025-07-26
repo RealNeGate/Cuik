@@ -126,6 +126,15 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     return info;
 }
 
+TB_DataType tb_data_type_ptr_int(TB_Module* m) {
+    switch (m->codegen->pointer_size) {
+        case 16: return TB_TYPE_I16;
+        case 32: return TB_TYPE_I32;
+        case 64: return TB_TYPE_I64;
+        default: tb_todo();
+    }
+}
+
 int tb_data_type_bit_size(TB_Module* m, uint8_t type) {
     static const int arr[16] = {
         [TB_TAG_BOOL] = 1,
@@ -165,6 +174,39 @@ char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
     memcpy(newstr, src, len);
     newstr[len] = 0;
     return newstr;
+}
+
+TB_FeatureSet tb_features_from_profile_str(TB_Module* m, const char* name) {
+    TB_FeatureSet features = { 0 };
+
+    switch (m->target_arch) {
+        case TB_ARCH_X86_64: {
+            features.x64 |= TB_FEATURE_X64_SSE2;
+            if (name == NULL || strncmp(name, "x86_64-v", 8) != 0) {
+                break;
+            }
+
+            int level = name[8] - '0';
+            if (level >= 2) {
+                features.x64 |= TB_FEATURE_X64_SSE3;
+                features.x64 |= TB_FEATURE_X64_SSE41;
+                features.x64 |= TB_FEATURE_X64_SSE42;
+                features.x64 |= TB_FEATURE_X64_POPCNT;
+            }
+
+            if (level >= 3) {
+                features.x64 |= TB_FEATURE_X64_AVX;
+                features.x64 |= TB_FEATURE_X64_AVX2;
+                features.x64 |= TB_FEATURE_X64_BMI1;
+                features.x64 |= TB_FEATURE_X64_BMI2;
+            }
+        } break;
+
+        default:
+        break;
+    }
+
+    return features;
 }
 
 TB_Module* tb_module_create_for_host(bool is_jit) {

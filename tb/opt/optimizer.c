@@ -14,12 +14,6 @@
 #include "passes.h"
 #include <log.h>
 
-#if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
-#define TB_OPTLOG(name, ...) do { if (f->enable_log) { TB_OPTDEBUG(name)(__VA_ARGS__); } } while (0)
-#else
-#define TB_OPTLOG(name, ...) do {} while (0)
-#endif
-
 #include "../sandbird/sandbird.h"
 
 // helps us do some matching later
@@ -42,7 +36,7 @@ TB_Node* dead_node(TB_Function* f);
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_Node* rhs);
-TB_Node* make_int_unary(TB_Function* f, TB_NodeTypeEnum type, TB_Node* src);
+TB_Node* make_int_unary(TB_Function* f, TB_DataType dt, TB_NodeTypeEnum type, TB_Node* src);
 
 // for random debugging stuff
 static mtx_t aaa;
@@ -422,16 +416,22 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
             Lattice* end = NULL;
             if (step_ptr) {
                 int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
+                int64_t step = tb__sxt(*step_ptr, bits, 64);
 
                 TB_InductionVar var;
                 if (find_latch_indvar(r, latch, &var)) {
                     Lattice* init = latuni_get(f, var.phi->inputs[1]);
                     end = var.end_cond ? latuni_get(f, var.end_cond) : lattice_int_const(f, var.end_const);
 
-                    if (lattice_is_const(init) && lattice_is_const(end)) {
+                    if (
+                        init->tag == LATTICE_INT &&
+                        end->tag == LATTICE_INT &&
+                        var.step > 0 &&
+                        init->_int.max <= end->_int.min
+                    ) {
                         int64_t pad = var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
-                        int64_t trips = (end->_int.min - init->_int.min + pad) / var.step;
-                        int64_t rem   = (end->_int.min - init->_int.min) % var.step;
+                        int64_t trips = (end->_int.max - init->_int.min + pad) / var.step;
+                        int64_t rem   = (end->_int.max - init->_int.min) % var.step;
                         if (rem == 0 || var.pred != IND_NE) {
                             trips_max = trips;
                         }
@@ -459,11 +459,11 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                     }
 
                     if (lattice_is_const(init) && trips_max <= INT64_MAX) {
-                        Lattice* range = affine_iv(f, init, trips_min, trips_max, *step_ptr, bits);
+                        Lattice* range = affine_iv(f, init, trips_min, trips_max, step, bits);
                         if (range) { return range; }
                     }
 
-                    if (*step_ptr > 0 && cant_signed_overflow(n->inputs[2])) {
+                    if (step > 0 && cant_signed_overflow(n->inputs[2])) {
                         // pretty common that iterators won't overflow, thus never goes below init
                         int64_t min = init->_int.min;
                         int64_t max = end ? end->_int.max : lattice_int_max(bits);
@@ -472,7 +472,24 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                         if (old == &TOP_IN_THE_SKY) {
                             return lattice_gimme_int(f, min, max, bits);
                         } else {
-                            return lattice_gimme_int(f, TB_MAX(min, old->_int.min), TB_MIN(max, old->_int.max), bits);
+                            min = TB_MAX(min, old->_int.min);
+                            max = TB_MIN(max, old->_int.max);
+
+                            #if 0
+                            if (init->_int.known_zeros) {
+                                tb_print(f);
+                                __debugbreak();
+                            }
+
+                            // if the bottom bits are all zeros in the init & step, we
+                            // want to make sure the phi knows that.
+                            uint64_t step_zeros = *step_ptr;
+                            uint64_t diff = ~(init->_int.known_zeros ^ step_zeros);
+                            int lsb_diff = __builtin_ffsll(diff) - 1;
+                            uint64_t zeros = lsb_diff ? UINT64_MAX >> (64 - lsb_diff) : 0;
+                            #endif
+
+                            return lattice_gimme_int2(f, min, max, 0, 0, bits);
                         }
                     }
                 }
@@ -496,36 +513,36 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
         }
     }
 
-    if (old->tag == LATTICE_INT) {
-        // we wanna preserve widening count regardless (on pessimistic stuff
-        // it would never widen so it'll stay as 0, on optimistic stuff old values
-        // might have a widening that the meet of the phi doesn't include, we account
-        // for that here)
-        if (l->tag == LATTICE_INT && l->_int.widen < old->_int.widen) {
+    // we wanna preserve widening count regardless (on pessimistic stuff
+    // it would never widen so it'll stay as 0, on optimistic stuff old values
+    // might have a widening that the meet of the phi doesn't include, we account
+    // for that here)
+    if (l->tag == LATTICE_INT && old->tag == LATTICE_INT) {
+        if (l->_int.widen < old->_int.widen) {
             Lattice new_l = *l;
             new_l._int.widen = old->_int.widen;
             l = lattice_intern(f, new_l);
         }
 
-        // downward progress will widen...
-        if (old != l) {
-            Lattice* glb = lattice_meet(f, old, l);
-            if (glb == l && l->tag == LATTICE_INT) {
-                // we've hit the widening limit, since MAFs scale with the lattice height we limit how
-                // many steps our ints can take since the lattice itself has a height of 18 quintillion...
-                if (l->_int.widen >= INT_WIDEN_LIMIT) {
-                    int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
-                    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
-                                .min         =  lattice_int_min(bits),
-                                .max         =  lattice_int_max(bits),
-                                .widen       =  INT_WIDEN_LIMIT
-                            } });
-                }
+        // we've hit the widening limit, since MAFs scale with the lattice height we limit how
+        // many steps our ints can take since the lattice itself has a height of 18 quintillion...
+        if (l->_int.widen >= INT_WIDEN_LIMIT) {
+            int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
+                        .min         =  lattice_int_min(bits),
+                        .max         =  lattice_int_max(bits),
+                        .widen       =  INT_WIDEN_LIMIT
+                    } });
+        }
+    }
 
-                Lattice new_l = *l;
-                new_l._int.widen = TB_MAX(old->_int.widen, l->_int.widen) + 1;
-                return lattice_intern(f, new_l);
-            }
+    // downward progress will widen...
+    if (old->tag == LATTICE_INT && old != l) {
+        Lattice* glb = lattice_meet(f, old, l);
+        if (glb == l && l->tag == LATTICE_INT) {
+            Lattice new_l = *l;
+            new_l._int.widen = TB_MAX(old->_int.widen, l->_int.widen) + 1;
+            return lattice_intern(f, new_l);
         }
     }
 
@@ -689,12 +706,16 @@ TB_Node* dead_node(TB_Function* f) {
     return tb__gvn(f, n, 0);
 }
 
-TB_Node* make_int_unary(TB_Function* f, TB_NodeTypeEnum type, TB_Node* src) {
-    TB_Node* n = tb_alloc_node(f, type, src->dt, 2, 0);
+TB_Node* make_int_unary(TB_Function* f, TB_DataType dt, TB_NodeTypeEnum type, TB_Node* src) {
+    TB_Node* n = tb_alloc_node(f, type, dt, 2, 0);
     set_input(f, n, src, 1);
-    n = tb__gvn(f, n, 0);
 
-    mark_node(f, n);
+    TB_Node* k = tb_opt_peep_node(f, n);
+    if (k != n && n->user_count == 0) {
+        violent_kill(f, n);
+        n = k;
+    }
+
     return n;
 }
 
@@ -702,9 +723,12 @@ TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_N
     TB_Node* n = tb_alloc_node(f, type, lhs->dt, 3, sizeof(TB_NodeBinopInt));
     set_input(f, n, lhs, 1);
     set_input(f, n, rhs, 2);
-    n = tb__gvn(f, n, sizeof(TB_NodeBinopInt));
 
-    mark_node(f, n);
+    TB_Node* k = tb_opt_peep_node(f, n);
+    if (k != n && n->user_count == 0) {
+        violent_kill(f, n);
+        n = k;
+    }
     return n;
 }
 
@@ -890,7 +914,10 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         return NULL;
     }
 
-    if (n->type != TB_ROOT && !cfg_is_region(n) && n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
+    if (cfg_is_region(n)) {
+        // regions just should prune their dead edges
+        return prune_region(f, n);
+    } else if (n->type != TB_ROOT && n->type != TB_UNREACHABLE && n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
         // control-dependent nodes which become considered dead will also
         // have to be dead.
         if (n->dt.type == TB_TAG_TUPLE) {
@@ -925,85 +952,106 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         } else {
             return make_poison(f, n->dt);
         }
-    }
+    } else {
+        // fold simple constants, calls, and branches
+        switch (l->tag) {
+            case LATTICE_INT: {
+                // degenerate range
+                if (l->_int.min == l->_int.max) {
+                    return make_int_node(f, n->dt, l->_int.max);
+                }
 
-    switch (l->tag) {
-        case LATTICE_INT: {
-            // degenerate range
-            if (l->_int.min == l->_int.max) {
-                return make_int_node(f, n->dt, l->_int.max);
-            }
+                // all bits are known
+                int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
+                uint64_t mask = tb__mask(bits);
+                if ((l->_int.known_zeros | l->_int.known_ones) == UINT64_MAX) {
+                    return make_int_node(f, n->dt, l->_int.known_ones);
+                }
 
-            // all bits are known
-            int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
-            uint64_t mask = tb__mask(bits);
-            if ((l->_int.known_zeros | l->_int.known_ones) == UINT64_MAX) {
-                return make_int_node(f, n->dt, l->_int.known_ones);
-            }
-
-            return NULL;
-        }
-
-        case LATTICE_FLTCON32: {
-            TB_Node* k = tb_alloc_node(f, TB_F32CONST, n->dt, 1, sizeof(TB_NodeFloat32));
-            set_input(f, k, f->root_node, 0);
-            TB_NODE_SET_EXTRA(k, TB_NodeFloat32, .value = l->_f32);
-            latuni_set(f, k, l);
-            return tb__gvn(f, k, sizeof(TB_NodeFloat32));
-        }
-
-        case LATTICE_FLTCON64: {
-            TB_Node* k = tb_alloc_node(f, TB_F64CONST, n->dt, 1, sizeof(TB_NodeFloat64));
-            set_input(f, k, f->root_node, 0);
-            TB_NODE_SET_EXTRA(k, TB_NodeFloat64, .value = l->_f64);
-            latuni_set(f, k, l);
-            return tb__gvn(f, k, sizeof(TB_NodeFloat64));
-        }
-
-        case LATTICE_NULL:
-        return make_int_node(f, n->dt, 0);
-
-        case LATTICE_TUPLE: {
-            if (n->type != TB_BRANCH && n->type != TB_AFFINE_LATCH) {
                 return NULL;
             }
 
-            // check if tuple is constant path
-            int trues = 0;
-            FOR_N(i, 0, l->_elem_count) {
-                if (l->elems[i] == &LIVE_IN_THE_SKY) {
-                    trues++;
-                }
+            case LATTICE_FLTCON32: {
+                TB_Node* k = tb_alloc_node(f, TB_F32CONST, n->dt, 1, sizeof(TB_NodeFloat32));
+                set_input(f, k, f->root_node, 0);
+                TB_NODE_SET_EXTRA(k, TB_NodeFloat32, .value = l->_f32);
+                latuni_set(f, k, l);
+                return tb__gvn(f, k, sizeof(TB_NodeFloat32));
             }
 
-            if (trues == 1) {
-                TB_Node* dead = dead_node(f);
-                TB_Node* ctrl = n->inputs[0];
+            case LATTICE_FLTCON64: {
+                TB_Node* k = tb_alloc_node(f, TB_F64CONST, n->dt, 1, sizeof(TB_NodeFloat64));
+                set_input(f, k, f->root_node, 0);
+                TB_NODE_SET_EXTRA(k, TB_NodeFloat64, .value = l->_f64);
+                latuni_set(f, k, l);
+                return tb__gvn(f, k, sizeof(TB_NodeFloat64));
+            }
 
-                for (size_t i = 0; i < n->user_count;) {
-                    TB_Node* un = USERN(&n->users[i]);
-                    if (is_proj(un)) {
-                        TB_ASSERT(USERI(&n->users[i]) == 0);
-                        int index   = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
-                        TB_Node* in = l->elems[index] == &LIVE_IN_THE_SKY ? ctrl : dead;
+            case LATTICE_NULL:
+            return make_int_node(f, n->dt, 0);
 
-                        set_input(f, un, NULL, 0);
-                        subsume_node(f, un, in);
-                    } else {
-                        i += 1;
+            case LATTICE_TUPLE: {
+                if (n->type == TB_CALL && l->tag == LATTICE_TUPLE && l->elems[0] != &LIVE_IN_THE_SKY) {
+                    TB_Node* ctrl_out = USERN(proj_with_index(n, 0));
+                    TB_Node* succ = USERN(cfg_next_user(ctrl_out));
+                    if (succ->type != TB_UNREACHABLE) {
+                        TB_Node* mem_out = USERN(proj_with_index(n, 1));
+
+                        TB_Node* dead = dead_node(f);
+                        subsume_node2(f, ctrl_out, dead);
+
+                        // either we find a new unreachable to hook it to
+                        TB_Node* end = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 2, 0);
+                        set_input(f, end, ctrl_out, 0);
+                        set_input(f, end, mem_out,  1);
+                        add_input_late(f, f->root_node, end);
+
+                        mark_users(f, n);
+                        return n;
                     }
                 }
 
-                // no more projections, kill the branch
-                tb_kill_node(f, n);
-                mark_users(f, dead);
-                return ctrl;
-            } else {
-                return NULL;
-            }
-        }
+                if (n->type != TB_BRANCH && n->type != TB_AFFINE_LATCH) {
+                    return NULL;
+                }
 
-        default: return NULL;
+                // check if tuple is constant path
+                int trues = 0;
+                FOR_N(i, 0, l->_elem_count) {
+                    if (l->elems[i] == &LIVE_IN_THE_SKY) {
+                        trues++;
+                    }
+                }
+
+                if (trues == 1) {
+                    TB_Node* dead = dead_node(f);
+                    TB_Node* ctrl = n->inputs[0];
+
+                    for (size_t i = 0; i < n->user_count;) {
+                        TB_Node* un = USERN(&n->users[i]);
+                        if (is_proj(un)) {
+                            TB_ASSERT(USERI(&n->users[i]) == 0);
+                            int index   = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+                            TB_Node* in = l->elems[index] == &LIVE_IN_THE_SKY ? ctrl : dead;
+
+                            set_input(f, un, NULL, 0);
+                            subsume_node(f, un, in);
+                        } else {
+                            i += 1;
+                        }
+                    }
+
+                    // no more projections, kill the branch
+                    tb_kill_node(f, n);
+                    mark_users(f, dead);
+                    return ctrl;
+                } else {
+                    return NULL;
+                }
+            }
+
+            default: return NULL;
+        }
     }
 }
 
@@ -1289,8 +1337,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
-    #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
-    if (strcmp(f->super.name, "onerror") == 0) {
+    #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_MEMORY
+    if (strcmp(f->super.name, "dfa_range") == 0) {
         f->enable_log = true;
     }
     #endif
@@ -1401,12 +1449,12 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_OPTLOG(PEEP, printf("=== LOOPS OPTS ===\n"));
             TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
 
+            TB_OPTLOG(PEEP, tb_print_dumb(f));
+
             // rotate loops, SLP, and strength reduction
             if (tb_opt_loops(f)) {
                 dirty |= CPROP_DIRTY;
             }
-
-            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Loops"));
         }
         // don't worry, we'll scan all the nodes regardless
         worklist_clear(f->worklist);

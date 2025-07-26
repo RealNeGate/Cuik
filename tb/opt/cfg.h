@@ -37,7 +37,7 @@ static TB_Node* end_of_bb(TB_Node* n) {
     return n;
 }
 
-static Block* create_block(TB_Arena* arena, TB_Node* n) {
+static Block* create_block(TB_Arena* arena, TB_Function* f, TB_Node* n) {
     TB_ArenaSavepoint sp = tb_arena_save(arena);
     TB_Node* end = end_of_bb(n);
 
@@ -70,7 +70,13 @@ static Block* create_block(TB_Arena* arena, TB_Node* n) {
             }
         }
     } else if (!cfg_is_endpoint(end)) {
-        top->succ[0] = USERN(cfg_next_user(end));
+        TB_User* u = cfg_next_user(end);
+        if (u == NULL) {
+            tb_print_dumb(f);
+            __debugbreak();
+        }
+
+        top->succ[0] = USERN(u);
     }
 
     return top;
@@ -95,7 +101,7 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, bool dom
     int pre_n = 0;
 
     // push initial block
-    Block* top = create_block(tmp_arena, f->params[0]);
+    Block* top = create_block(tmp_arena, f, f->params[0]);
     top->pre_index = pre_n++;
     worklist_test_n_set(ws, f->params[0]);
 
@@ -105,7 +111,7 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, bool dom
             // push next unvisited succ
             TB_Node* succ = top->succ[--top->succ_i];
             if (!worklist_test_n_set(ws, succ)) {
-                Block* new_top = create_block(tmp_arena, succ);
+                Block* new_top = create_block(tmp_arena, f, succ);
                 new_top->parent = top;
                 new_top->pre_index = pre_n++;
                 top = new_top;
