@@ -774,7 +774,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
     } else {
         // tb_print_dumb_node(NULL, n);
 
-        printf("  %s ", tb_node_get_name(n->type));
+        printf("  %%%u = %s ", n->gvn, tb_node_get_name(n->type));
         if (n->dt.type != TB_TAG_TUPLE && n->dt.type != TB_TAG_CONTROL) {
             print_pretty_edge(ctx, n);
             printf(" = ");

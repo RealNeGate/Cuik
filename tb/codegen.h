@@ -281,27 +281,31 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
+static double get_node_spill_cost(Ctx* restrict ctx, TB_Node* n) {
+    if (n->type == TB_MACH_TEMP) {
+        return 1.0;
+    } else if (can_remat(ctx, n)) {
+        return -1.0;
+    } else if (n->type == TB_MACH_FRAME_PTR || n->user_count == 0) {
+        // no users? probably a projection that can't be spilled
+        return INFINITY;
+    } else {
+        double c = 0.0f;
+
+        // sum of (block_freq * uses_in_block)
+        FOR_USERS(u, n) {
+            TB_Node* un = USERN(u);
+            if (ctx->f->scheduled[un->gvn] == NULL) { continue; }
+            c += ctx->f->scheduled[un->gvn]->freq;
+        }
+
+        return c;
+    }
+}
+
 static double get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
     if (isnan(vreg->spill_cost)) {
-        if (vreg->n->type == TB_MACH_TEMP) {
-            vreg->spill_cost = 1.0 + vreg->spill_bias;
-        } else if (can_remat(ctx, vreg->n)) {
-            vreg->spill_cost = -1.0 + vreg->spill_bias;
-        } else if (vreg->n->type == TB_MACH_FRAME_PTR || vreg->n->user_count == 0) {
-            // no users? probably a projection that can't be spilled
-            vreg->spill_cost = INFINITY;
-        } else {
-            double c = 0.0f;
-
-            // sum of (block_freq * uses_in_block)
-            FOR_USERS(u, vreg->n) {
-                TB_Node* un = USERN(u);
-                if (ctx->f->scheduled[un->gvn] == NULL) { continue; }
-                c += ctx->f->scheduled[un->gvn]->freq;
-            }
-
-            vreg->spill_cost = c + vreg->spill_bias;
-        }
+        vreg->spill_cost = get_node_spill_cost(ctx, vreg->n) + vreg->spill_bias;
     }
 
     // no area? this means it's used right after def
