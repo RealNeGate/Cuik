@@ -36,6 +36,7 @@ TB_Node* dead_node(TB_Function* f);
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_Node* rhs);
+TB_Node* make_ptr_offset(TB_Function* f, TB_Node* lhs, TB_Node* rhs);
 TB_Node* make_int_unary(TB_Function* f, TB_DataType dt, TB_NodeTypeEnum type, TB_Node* src);
 
 // for random debugging stuff
@@ -704,6 +705,20 @@ TB_Node* dead_node(TB_Function* f) {
     set_input(f, n, f->root_node, 0);
     latuni_set(f, n, &DEAD_IN_THE_SKY);
     return tb__gvn(f, n, 0);
+}
+
+TB_Node* make_ptr_offset(TB_Function* f, TB_Node* lhs, TB_Node* rhs) {
+    TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
+    set_input(f, n, lhs, 1);
+    set_input(f, n, rhs, 2);
+
+    TB_Node* k = tb_opt_peep_node(f, n);
+    if (k != n && n->user_count == 0) {
+        violent_kill(f, n);
+        n = k;
+    }
+
+    return n;
 }
 
 TB_Node* make_int_unary(TB_Function* f, TB_DataType dt, TB_NodeTypeEnum type, TB_Node* src) {

@@ -1118,7 +1118,7 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
         int param_count = n->input_count - base;
         if (param_count > ctx->call_usage) {
             ctx->call_usage = param_count;
-            if (cc == &CC_WIN64 && ctx->call_usage > 0 && ctx->call_usage < 3) {
+            if (cc == &CC_WIN64 && ctx->call_usage > 0 && ctx->call_usage < 4) {
                 ctx->call_usage = 4;
             }
 

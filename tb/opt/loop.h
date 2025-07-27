@@ -1007,7 +1007,7 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
                 }
 
                 LSRVar new_var = *var;
-                new_var.init = reduce->inputs[1];
+                new_var.init = make_ptr_offset(f, reduce->inputs[1], var->init);
                 new_var.op = TB_PTR_OFFSET;
                 new_var.step = var->step;
                 new_var.node = reduce;

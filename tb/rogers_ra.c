@@ -1047,6 +1047,10 @@ static int last_use_in_bb(TB_BasicBlock* blocks, TB_BasicBlock** scheduled, Roge
 
     // printf(" Miss.\n");
     int l = 0;
+    if (scheduled[n->gvn] == bb) {
+        l = ra->order[n->gvn];
+    }
+
     FOR_USERS(u, n) {
         TB_Node* un = USERN(u);
         if (USERI(u) < un->input_count &&
@@ -1131,6 +1135,7 @@ static void mark_active(Ctx* restrict ctx, Rogers* restrict ra, int gvn) {
 }
 
 static void unmark_active(Ctx* restrict ctx, Rogers* restrict ra, int gvn) {
+    TB_ASSERT(ctx->vreg_map[gvn]);
     VReg* other = &ctx->vregs[ctx->vreg_map[gvn]];
     ra->active[other->class][other->assigned] = 0;
 }
@@ -1648,19 +1653,29 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
         //   each def will either put the node to sleep or kill it.
         FOR_REV_N(j, 0, aarray_length(bb->items)) {
             TB_Node* n = bb->items[j];
-            int def_t  = ra->order[n->gvn];
+            if (0) { // if (!is_proj(n) || n->inputs[0] != f->root_node) {
+                continue;
+            }
 
+            int def_t  = ra->order[n->gvn];
             cuikperf_region_start("step", NULL);
             // expire intervals
             int vreg_id = ctx->vreg_map[n->gvn];
             if (vreg_id > 0) {
                 // if a node is never used before its def, it's still considered
                 // for allocation for that single program point.
-                if (ctx->vregs[vreg_id].assigned < 0 && allocate_reg(ctx, ra, n)) {
+                if (!set_get(&ra->live, n->gvn) && allocate_reg(ctx, ra, n)) {
                     set_put(&ra->live, n->gvn);
                 }
 
                 expire_interval(ctx, ra, n->gvn, bb_id);
+
+                /*FOR_USERS(u, to_spill) {
+                    TB_BasicBlock* bb = f->scheduled[USERN(u)->gvn];
+                    if (is_proj(USERN(u))) {
+                        is_tuple = true;
+                    }
+                }*/
             }
 
             // if anything in the active set interferes with
@@ -1821,25 +1836,26 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 ////////////////////////////////
 static void expire_interval(Ctx* ctx, Rogers* restrict ra, uint32_t gvn, size_t bb_i) {
     TB_ASSERT(gvn < ctx->f->node_count);
-
-    bool pause = false;
-    FOR_N(k, 0, bb_i) {
-        TB_BasicBlock* other = &ctx->cfg.blocks[k];
-        if (set_get(&other->live_out, gvn)) {
-            // move to future active
-            set_put(&ra->future_active, gvn);
-            pause = true;
-            break;
+    if (ctx->vreg_map[gvn]) {
+        bool pause = false;
+        FOR_N(k, 0, bb_i) {
+            TB_BasicBlock* other = &ctx->cfg.blocks[k];
+            if (set_get(&other->live_out, gvn)) {
+                // move to future active
+                set_put(&ra->future_active, gvn);
+                pause = true;
+                break;
+            }
         }
-    }
 
-    if (pause) {
-        TB_OPTDEBUG(REGALLOC)(printf("#   sleep  %%%u\n", gvn));
-    } else {
-        TB_OPTDEBUG(REGALLOC)(printf("#   expire %%%u\n", gvn));
+        if (pause) {
+            TB_OPTDEBUG(REGALLOC5)(printf("#   sleep  %%%u\n", gvn));
+        } else {
+            TB_OPTDEBUG(REGALLOC5)(printf("#   expire %%%u\n", gvn));
+        }
+        unmark_active(ctx, ra, gvn);
+        set_remove(&ra->live, gvn);
     }
-    unmark_active(ctx, ra, gvn);
-    set_remove(&ra->live, gvn);
 }
 
 typedef struct {
@@ -2559,9 +2575,15 @@ static void rogers_remat(Ctx* ctx, Rogers* ra, TB_Node* n, bool kill_node) {
             TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
             TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
 
-            int pos = aarray_length(pred_bb->items) - 1;
-            while (pos > 0 && pred_bb->items[pos] != pred_bb->start && is_proj(pred_bb->items[pos])) {
+            int pos = aarray_length(pred_bb->items);
+            TB_Node* last = pred_bb->items[pos - 1];
+            if (is_proj(last)) { last = last->inputs[0]; }
+            if (cfg_is_terminator(last)) {
                 pos--;
+
+                while (pos > 0 && pred_bb->items[pos] != pred_bb->start && is_proj(pred_bb->items[pos])) {
+                    pos--;
+                }
             }
 
             // place at the end of the pred BB to the phi, basically the latest point
