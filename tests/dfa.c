@@ -12,7 +12,11 @@
 //
 // UTF-8 validator:
 //
-//   0 -> 1 [0,   126]
+//   0 -> 4 [any]
+//   4 -> 4 [any]
+//
+//   0 -> 0 [0,   126]
+//   0 -> 1 [192, 223]
 //   0 -> 2 [224, 239]
 //   0 -> 3 [240, 247]
 //
@@ -20,7 +24,6 @@
 //   2 -> 1 [127, 191]
 //   1 -> 0 [127, 191]
 //
-// UTF-8 convert:
 uint64_t table[256];
 static uint64_t run(const uint8_t *start, const uint8_t *end, uint64_t state) {
     for (const uint8_t *s = start; s != end; s++) {
@@ -47,19 +50,24 @@ static void dfa_dump(void) {
 }
 
 int main() {
-    dfa_range(0, 0,   126, 1);
+    dfa_range(0, 0,   255, 4);
+    dfa_range(4, 0,   255, 4);
     dfa_dump();
-    dfa_range(0, 224, 239, 2);
+    dfa_range(0, 0b00000000, 0b01111111, 0);
     dfa_dump();
-    dfa_range(0, 240, 247, 3);
+    dfa_range(0, 0b11000000, 0b11011111, 1);
+    dfa_dump();
+    dfa_range(0, 0b11100000, 0b11101111, 2);
+    dfa_dump();
+    dfa_range(0, 0b11110000, 0b11110111, 2);
     dfa_dump();
 
     for (int i = 1; i < 4; i++) {
         // error? stick it
-        dfa_range(i, 0, 255, i);
+        dfa_range(i, 0, 255, 4);
 
         // step down
-        dfa_range(i, 127, 191, i-1);
+        dfa_range(i, 0b10000000, 0b10111111, i-1);
     }
 
     dfa_dump();
