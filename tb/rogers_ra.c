@@ -1246,7 +1246,7 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
     }
 
     if (set_get(&ra->future_active, n->gvn)) {
-        TB_OPTDEBUG(REGALLOC)(printf("#   woke up %%%u\n", n->gvn));
+        TB_OPTDEBUG(REGALLOC5)(printf("#     woke up %%%u\n", n->gvn));
 
         // we're done with some lifetime hole, time to lock in
         set_remove(&ra->future_active, n->gvn);

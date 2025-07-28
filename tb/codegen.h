@@ -482,6 +482,9 @@ static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg
 #define BITS64_FOR(it, set, cap) for (int it = bits64_first(set, cap); it >= 0; it = bits64_next(set, cap, it))
 
 static int bits64_next(uint64_t* arr, size_t cnt, int x) {
+    // skip one ahead
+    x += 1;
+
     // unpack coords
     size_t i = x / 64, j = x % 64;
 
@@ -490,7 +493,8 @@ static int bits64_next(uint64_t* arr, size_t cnt, int x) {
         // we're done
         if (i*64 >= cnt) { return -1; }
         // chop off the bottom bits which have been processed
-        word = arr[i] & ~(UINT64_MAX >> (63 - j));
+        uint64_t mask = UINT64_MAX << j;
+        word = arr[i] & mask;
         if (word != 0) {
             return i*64 + tb_ffs64(word) - 1;
         }

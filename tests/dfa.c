@@ -45,7 +45,7 @@ static void dfa_range(int state, int min, int max, int next) {
 static void dfa_dump(void) {
     printf("===\n");
     for (int i = 0; i < 256; i++) {
-        printf("%d %"PRIx64"\n", i, table[i]);
+        printf("%d %016"PRIx64"\n", i, table[i]);
     }
 }
 
@@ -72,7 +72,7 @@ int main() {
 
     dfa_dump();
 
-    const uint8_t* str = (const uint8_t*) "hello";
+    const uint8_t* str = (const uint8_t*) "h\x80llo";
     int final = run(str, str + 5, 0);
     printf("final: %d\n", final);
     return 0;
