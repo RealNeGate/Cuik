@@ -554,7 +554,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 
 static bool is_vreg_match(Ctx* ctx, TB_Node* a, TB_Node* b) {
     VReg* aa = &ctx->vregs[ctx->vreg_map[a->gvn]];
-    VReg* bb = &ctx->vregs[ctx->vreg_map[a->gvn]];
+    VReg* bb = &ctx->vregs[ctx->vreg_map[b->gvn]];
     if (aa == bb) {
         return true;
     }

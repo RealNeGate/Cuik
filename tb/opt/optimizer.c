@@ -1008,8 +1008,8 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
             case LATTICE_TUPLE: {
                 if (n->type == TB_CALL && l->tag == LATTICE_TUPLE && l->elems[0] != &LIVE_IN_THE_SKY) {
                     TB_Node* ctrl_out = USERN(proj_with_index(n, 0));
-                    TB_Node* succ = USERN(cfg_next_user(ctrl_out));
-                    if (succ->type != TB_UNREACHABLE) {
+                    TB_User* succ_u = cfg_next_user(ctrl_out);
+                    if (succ_u && USERN(succ_u)->type != TB_UNREACHABLE) {
                         TB_Node* mem_out = USERN(proj_with_index(n, 1));
 
                         TB_Node* dead = dead_node(f);
@@ -1214,11 +1214,11 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
         if (glb != old_type) {
             // HACK(NeGate): forward progress when making a range into a constant can sometimes get fucky with
             // the known bits so i'll just hack around that for now.
-            if (lattice_is_const(old_type) || !lattice_is_const(new_type)) {
-                TB_OPTLOG(PEEP, printf("\n\nFORWARD PROGRESS ASSERT!\n"));
-                TB_OPTLOG(PEEP, printf("  "), print_lattice(old_type), printf("  is not higher than  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
-                TB_ASSERT_MSG(0, "forward progress assert!");
-            }
+            // if (lattice_is_const(old_type) || !lattice_is_const(new_type)) {
+            TB_OPTLOG(PEEP, printf("\n\nFORWARD PROGRESS ASSERT!\n"));
+            TB_OPTLOG(PEEP, printf("  "), print_lattice(old_type), printf("  is not higher than  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
+            TB_ASSERT_MSG(0, "forward progress assert!");
+            // }
         }
         #else
         Lattice* new_type = value_of(f, n);
@@ -1343,6 +1343,14 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     if (f->super.tag != TB_SYMBOL_FUNCTION) {
         return false;
     }
+
+    #if 0
+    __debugbreak();
+    Lattice* a = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, 240, .known_zeros = 0xffffffffffffff0f } });
+    Lattice* b = lattice_gimme_int(f, 0, lattice_uint_max(32), 32);
+    Lattice* c = lattice_join(f, a, b);
+    __debugbreak();
+    #endif
 
     TB_ASSERT_MSG(f->root_node, "missing root node");
     f->worklist = ws;

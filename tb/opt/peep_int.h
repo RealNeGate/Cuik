@@ -208,6 +208,28 @@ static bool will_add_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattic
     return false;
 }
 
+static void known_bits_add(uint64_t a_zeros, uint64_t a_ones, uint64_t b_zeros, uint64_t b_ones, uint64_t mask, bool sub, uint64_t* out_known) {
+    uint64_t possible_sum_zeros = ~a_zeros + ~b_zeros;
+    uint64_t possible_sum_ones  =  a_ones  +  b_ones;
+    if (sub) {
+        possible_sum_zeros += 1;
+        possible_sum_ones  += 1;
+    }
+
+    // based on: https://llvm.org/doxygen/KnownBits_8cpp_source.html#l00021
+    // known carry bits
+    uint64_t known_carry_ones  = ~(possible_sum_zeros ^ a_zeros ^ b_zeros);
+    uint64_t known_carry_zeros =   possible_sum_ones  ^ a_ones  ^ b_ones;
+    // only trust which the bits in the intersection of all known bits
+    uint64_t known = (a_zeros | a_ones)
+        & (b_zeros | b_ones)
+        & (known_carry_zeros | known_carry_ones)
+        & mask;
+
+    out_known[0] = ~possible_sum_zeros & known;
+    out_known[1] =  possible_sum_ones  & known;
+}
+
 static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b, bool congruent) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
@@ -281,30 +303,18 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
     if (min == max) {
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
     } else if (type == TB_ADD || type == TB_SUB) {
-        uint64_t possible_sum_zeros = ~a->_int.known_zeros + ~b->_int.known_zeros;
-        uint64_t possible_sum_ones  =  a->_int.known_ones  +  b->_int.known_ones;
+        uint64_t known[2];
         if (type == TB_SUB) {
-            possible_sum_zeros += 1;
-            possible_sum_ones  += 1;
+            // a - b = a + ~b + 1
+            known_bits_add(a->_int.known_zeros, a->_int.known_ones, b->_int.known_ones, b->_int.known_zeros, mask, true, known);
+        } else {
+            known_bits_add(a->_int.known_zeros, a->_int.known_ones, b->_int.known_zeros, b->_int.known_ones, mask, false, known);
         }
-
-        // based on: https://llvm.org/doxygen/KnownBits_8cpp_source.html#l00021
-        // known carry bits
-        uint64_t known_carry_ones  = ~(possible_sum_zeros ^ a->_int.known_zeros ^ b->_int.known_zeros);
-        uint64_t known_carry_zeros =   possible_sum_ones  ^ a->_int.known_ones  ^ b->_int.known_ones;
-        // only trust which the bits in the intersection of all known bits
-        uint64_t known = (a->_int.known_zeros | a->_int.known_ones)
-            & (b->_int.known_zeros | b->_int.known_ones)
-            & (known_carry_zeros | known_carry_ones)
-            & mask;
-
-        uint64_t zeros = ~possible_sum_zeros & known;
-        uint64_t ones  =  possible_sum_ones  & known;
 
         // during the optimistic solver, this will be evaluated before the type-based splitting
         // and since congruences can never exist from nodes which produce different types we should
         // prune based on that fact to avoid an ambiguity.
-        Lattice* t = lattice_gimme_int2(f, min, max, zeros, ones, 64);
+        Lattice* t = lattice_gimme_int2(f, min, max, known[0], known[1], 64);
         if (congruent && type == TB_SUB) {
             return lattice_int_const(f, 0);
         } else {

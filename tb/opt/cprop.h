@@ -522,11 +522,11 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 if (glb != new_type) {
                     // HACK(NeGate): forward progress when making a range into a constant can sometimes get fucky with
                     // the known bits so i'll just hack around that for now.
-                    if (!lattice_is_const(old_type) || lattice_is_const(new_type)) {
-                        TB_OPTDEBUG(SCCP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
-                        TB_OPTDEBUG(SCCP)(printf("  "), print_lattice(old_type), printf("  became  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
-                        TB_ASSERT_MSG(0, "forward progress assert!");
-                    }
+                    // if (!lattice_is_const(old_type) || lattice_is_const(new_type)) {
+                    TB_OPTDEBUG(SCCP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
+                    TB_OPTDEBUG(SCCP)(printf("  "), print_lattice(old_type), printf("  became  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
+                    TB_ASSERT_MSG(0, "forward progress assert!");
+                    // }
                 }
                 #endif
 
@@ -961,6 +961,7 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
     TB_Worklist* ws = f->worklist;
     CProp_Node** nodes = f->gcf_nodes;
     TB_ASSERT(nodes);
+    TB_OPTLOG(SCCP, tb_print_dumb_raw(f, &OUT_STREAM_DEFAULT, true));
 
     int rewrites = 0;
     size_t node_barrier = f->node_count;

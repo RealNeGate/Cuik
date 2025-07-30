@@ -43,14 +43,16 @@ static void ipo_opt_task(TPool* tp, void** arg) {
     tb_opt(f, ipo_worklist, true);
 
     // notify the IPO thread to stop waiting
-    f->ipo_lock = IPO_FUNC_READY;
-    futex_signal(&f->ipo_lock);
+    // f->ipo_lock = IPO_FUNC_READY;
+    // futex_signal(&f->ipo_lock);
 
     log_debug("%s: optimized!", f->super.name);
 
-    tracker[0] += 1;
-    if (tracker[0] == tracker[1]) { // might be done?
-        futex_signal(&tracker[0]);
+    if (tracker) {
+        tracker[0] += 1;
+        if (tracker[0] == tracker[1]) { // might be done?
+            futex_signal(&tracker[0]);
+        }
     }
     cuikperf_region_end();
 }
@@ -295,7 +297,6 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
     bool progress = false;
     TB_OPTDEBUG(INLINE)(printf("BOTTOM-UP ORDER:\n"));
 
-    Futex tracker[2] = { 0 };
     FOR_N(i, 0, ipo->ws_cnt) {
         TB_Function* f = ipo->ws[i];
         if (f->super.tag == TB_SYMBOL_DEAD) {
@@ -306,6 +307,7 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
         TB_Node* callgraph = f->root_node->inputs[0];
         TB_ASSERT(callgraph->type == TB_CALLGRAPH);
 
+        #if 0
         cuikperf_region_start("lock", f->super.name);
         // lock all the nodes necessary for the inlining attempt
         bool ready = true;
@@ -340,6 +342,7 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
             log_debug("%s: we're ready now!", f->super.name);
         }
         cuikperf_region_end();
+        #endif
 
         int size = ipo->size_metric[f->uid];
         TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s (%d, %s)\n", f->super.name, size, classify_size_str(size)));
@@ -394,22 +397,13 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
         f->ipo_lock = IPO_FUNC_OPT;
 
         // optimize the function now that we've inlined the callees we wanted
-        void* args[2] = { f, tracker };
-        // tracker[1] += 1;
-        // tpool_add_task2(pool, ipo_opt_task, 2, args);
+        void* args[2] = { f, NULL };
         ipo_opt_task(pool, args);
         cuikperf_region_end();
 
         // update the callgraph, this may change the shape of the SCC
     }
 
-    // finish up our initial round of function-local optimizations
-    /* int64_t old;
-    while (old = tracker[0], old != tracker[1]) {
-         futex_wait(&tracker[0], old);
-    } */
-
     // we might have empty sections, we should prune those now
-
     return progress;
 }

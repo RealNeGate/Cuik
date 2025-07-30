@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -72,8 +73,15 @@ int main() {
 
     dfa_dump();
 
-    const uint8_t* str = (const uint8_t*) "h\x80llo";
-    int final = run(str, str + 5, 0);
+    FILE* fp = fopen("UTF-8-demo.txt", "rb");
+    uint8_t* str = malloc(16384);
+    int len = fread(str, 1, 16384, fp);
+    fclose(fp);
+
+    printf("validating %d bytes...\n", len);
+
+    int final = run(str, str + len, 0);
+
     printf("final: %d\n", final);
     return 0;
 }
@@ -103,7 +111,7 @@ static int count_newlines(int* arr, int n) {
     return c;
 }
 
-static int exists(int key) {
+/*static int exists(int key) {
     switch (key) {
         case '\n': return false;
         case 'a': return true;
@@ -116,5 +124,5 @@ static int exists(int key) {
         case '}': return false;
         case '~': return false;
     }
-}
+}*/
 

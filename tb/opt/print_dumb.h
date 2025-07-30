@@ -165,14 +165,14 @@ static void dumb_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
 }
 
 static bool cfg_is_fork_proj(TB_Node* n) { return cfg_is_cproj(n) && cfg_is_fork(n->inputs[0]); }
-void tb_print_dumb_raw(TB_Function* f, OutStream* s) {
+void tb_print_dumb_raw(TB_Function* f, OutStream* s, bool use_fancy_types) {
     s_writef(s, "====== DUMP %-20s ======\n", f->super.name);
 
     TB_Worklist ws = { 0 };
     worklist_alloc(&ws, f->node_count);
 
     TB_Node* root   = f->root_node;
-    Lattice** types = NULL; // use_fancy_types ? f->types : NULL;
+    Lattice** types = use_fancy_types ? f->types : NULL;
 
     dumb_walk(f, &ws, root);
 
@@ -195,12 +195,12 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
 }
 
 void tb_print_dumb(TB_Function* f) {
-    tb_print_dumb_raw(f, &OUT_STREAM_DEFAULT);
+    tb_print_dumb_raw(f, &OUT_STREAM_DEFAULT, false);
 }
 
 void tb_save_dump(TB_Function* f, const char* path) {
     FILE* fp = fopen(path, "wb");
     FileOutStream s = fos_make(fp);
-    tb_print_dumb_raw(f, &s.header);
+    tb_print_dumb_raw(f, &s.header, false);
     fclose(fp);
 }

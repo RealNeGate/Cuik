@@ -715,27 +715,29 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
             }
             return true;
         }
-    } else if (affine_indvar(cond, header) && exit_when_key) {
-        TB_Node* stepper = cond;
-        if (cond->type == TB_PHI) {
-            stepper = cond->inputs[2];
-        }
+    } else if (affine_indvar(cond, header)) {
+        if (exit_when_key || if_br->key == 0) {
+            TB_Node* stepper = cond;
+            if (cond->type == TB_PHI) {
+                stepper = cond->inputs[2];
+            }
 
-        TB_ASSERT(stepper->type == TB_ADD || stepper->type == TB_SUB);
-        int64_t step = TB_NODE_GET_EXTRA_T(stepper->inputs[2], TB_NodeInt)->value;
-        if (stepper->type == TB_SUB) {
-            step = -step;
-        }
+            TB_ASSERT(stepper->type == TB_ADD || stepper->type == TB_SUB);
+            int64_t step = TB_NODE_GET_EXTRA_T(stepper->inputs[2], TB_NodeInt)->value;
+            if (stepper->type == TB_SUB) {
+                step = -step;
+            }
 
-        *var = (TB_InductionVar){
-            .cond = cond,
-            .phi  = cond,
-            .step = step,
-            .end_const = if_br->key,
-            .pred = IND_NE,
-            .backwards = false
-        };
-        return true;
+            *var = (TB_InductionVar){
+                .cond = cond,
+                .phi  = cond,
+                .step = step,
+                .end_const = if_br->key,
+                .pred = IND_NE,
+                .backwards = false
+            };
+            return true;
+        }
     }
 
     return false;

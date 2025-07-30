@@ -11,6 +11,10 @@
 #include "../targets/targets.h"
 #include "../parser.h"
 
+#ifdef CONFIG_HAS_TB
+#include <tb_linker.h>
+#endif
+
 #ifdef CUIK_ALLOW_THREADS
 #include <stdatomic.h>
 #endif
@@ -181,9 +185,9 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
-    // if (strcmp(name, "main") != 0) {
-    // return;
-    // }
+    if (0 && strcmp(name, "dfa_dump") != 0) {
+        // return;
+    }
 
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
         #if TB_ENABLE_LOG
@@ -377,10 +381,6 @@ static void ld_invoke(TPool* tp, void** arg) {
     CUIK_TIMED_BLOCK("Backend") {
         if (args->optimize) {
             tb_module_ipo(mod, tp);
-            /* if (tp) {
-            } else {
-                cuiksched_per_function(tp, s->ld.cu, mod, args, local_opt_func);
-            } */
         }
 
         if (args->emit_ir) {
@@ -424,10 +424,6 @@ static void ld_invoke(TPool* tp, void** arg) {
     // generate object file
     ////////////////////////////////
     if (args->based && args->flavor != TB_FLAVOR_OBJECT) {
-        fprintf(stderr, "unsupported platform to link with... sorry (contact NeGate)\n");
-        abort();
-
-        #if 0
         TB_ExecutableType exe;
         switch (sys) {
             case CUIK_SYSTEM_WINDOWS: exe = TB_EXECUTABLE_PE;  break;
@@ -438,10 +434,19 @@ static void ld_invoke(TPool* tp, void** arg) {
             goto done;
         }
 
-        TB_Linker* l = tb_linker_create(exe, args->target->arch);
+        TB_Linker* l = tb_linker_create(exe, args->target->arch, tp);
 
-        TB_Arena* code_arena = get_code_arena();
-        TB_ArenaSavepoint sp = tb_arena_save(code_arena);
+        // initial options
+        if (args->entrypoint) { tb_linker_set_entrypoint(l, args->entrypoint); }
+        if (args->subsystem) { tb_linker_set_subsystem(l, args->subsystem); }
+
+        // process CLI objects
+        tb_linker_append_module(l, mod);
+
+        // windows requires a barrier here to guarentee link order
+        if (sys == CUIK_SYSTEM_WINDOWS) {
+            tb_linker_barrier(l);
+        }
 
         // locate libraries and feed them into TB... in theory this process
         // can be somewhat multithreaded so we might wanna consider that.
@@ -457,12 +462,7 @@ static void ld_invoke(TPool* tp, void** arg) {
                     goto skip;
                 }
 
-                FileMap fm = open_file_map(path);
-                tb_linker_append_library(
-                    l,
-                    (TB_Slice){ (const uint8_t*) cuik_strdup(path), strlen(path) },
-                    (TB_Slice){ fm.data, fm.size }
-                );
+                tb_linker_append_library(l, path);
             }
 
             skip:;
@@ -473,39 +473,13 @@ static void ld_invoke(TPool* tp, void** arg) {
             dyn_array_for(i, tmp_linker.libpaths) {
                 fprintf(stderr, "  %s\n", tmp_linker.libpaths[i]);
             }
-            goto error;
+        } else if (tb_linker_export(l, output_path.data)) {
+            tb_module_destroy(mod);
+            goto done;
         }
 
-        CUIK_TIMED_BLOCK("tb_linker_append_module") {
-            tb_linker_append_module(l, mod);
-        }
-
-        if (args->entrypoint) {
-            tb_linker_set_entrypoint(l, args->entrypoint);
-        }
-
-        if (args->subsystem) {
-            tb_linker_set_subsystem(l, args->subsystem);
-        }
-
-        /*TB_LinkerMsg m;
-        while (tb_linker_get_msg(l, &m)) {
-            if (m.tag == TB_LINKER_MSG_IMPORT) {
-                // TODO(NeGate): implement this
-            }
-        }*/
-
-        TB_ExportBuffer buffer = tb_linker_export(l, code_arena);
-        if (!tb_export_buffer_to_file(buffer, output_path.data)) {
-            goto error;
-        }
-
-        error:
-        tb_arena_restore(code_arena, sp);
         step_error(s);
         tb_module_destroy(mod);
-        goto done;
-        #endif
     } else {
         Cuik_Path obj_path;
         if (args->output_name == NULL) {

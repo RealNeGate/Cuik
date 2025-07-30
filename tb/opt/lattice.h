@@ -395,7 +395,15 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
         case LATTICE_DEAD: return &LIVE_IN_THE_SKY;
         case LATTICE_INT: {
             LatticeInt i = type->_int;
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { i.max, i.min, ~i.known_zeros, ~i.known_ones, INT_WIDEN_LIMIT - i.widen } });
+            SWAP(int64_t, i.min, i.max);
+            i.widen = INT_WIDEN_LIMIT - i.widen;
+
+            // invert unknowns
+            uint64_t unknown = (i.known_zeros | i.known_ones);
+            i.known_zeros = ~(i.known_ones | unknown);
+            i.known_ones  &= unknown;
+
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = i });
         }
         case LATTICE_ALLPTR: return &ANYPTR_IN_THE_SKY;
         case LATTICE_ANYPTR: return &ALLPTR_IN_THE_SKY;
@@ -446,12 +454,21 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
                 return &BOT_IN_THE_SKY;
             }
 
+            // unknown is when it's not one and not zero
+            uint64_t a_unk = ~(a->_int.known_ones | a->_int.known_zeros);
+            uint64_t b_unk = ~(b->_int.known_ones | b->_int.known_zeros);
+            uint64_t unknown = a_unk | b_unk | (a->_int.known_ones ^ b->_int.known_ones);
+
+            // not one, not unknown
+            uint64_t known_ones = a->_int.known_ones & b->_int.known_ones;
+            uint64_t known_zeros = ~unknown & ~known_ones;
+
             // [amin, amax] /\ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
             LatticeInt i = {
                 .min         = TB_MIN(a->_int.min, b->_int.min),
                 .max         = TB_MAX(a->_int.max, b->_int.max),
-                .known_zeros = a->_int.known_zeros & b->_int.known_zeros,
-                .known_ones  = a->_int.known_ones  & b->_int.known_ones,
+                .known_zeros = known_zeros,
+                .known_ones  = known_ones,
                 .widen       = TB_MAX(a->_int.widen, b->_int.widen),
             };
 
@@ -555,7 +572,9 @@ static bool lattice_spec_eq(TB_Function* f, Lattice* a, Lattice* b) {
 static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b) {
     a = lattice_dual(f, a);
     b = lattice_dual(f, b);
-    return lattice_dual(f, lattice_meet(f, a, b));
+
+    Lattice* glb = lattice_meet(f, a, b);
+    return lattice_dual(f, glb);
 }
 
 // a >= b if a /\ b = b

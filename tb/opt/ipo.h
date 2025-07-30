@@ -32,6 +32,9 @@ struct IPOSolver {
     int* size_metric;
     int* ref_count;
 
+    // IPSCCP worklist given that we don't multithread the solver
+    ArenaArray(TB_Function*) ipsccp_ws;
+
     CallGraphEdge** call_graph;
 };
 
@@ -298,12 +301,14 @@ static void func_opt_task(TPool* tp, void** arg) {
 
     // if (strcmp(f->super.name, "collectgarbage") == 0) {
     log_debug("OPT: %s: function local optimizer", f->super.name);
-    tb_opt(f, ipo_worklist, true);
+    tb_opt(f, ipo_worklist, false);
     // }
 
-    tracker[0] += 1;
-    if (tracker[0] == tracker[1]) { // might be done?
-        futex_signal(&tracker[0]);
+    if (tracker) {
+        tracker[0] += 1;
+        if (tracker[0] == tracker[1]) { // might be done?
+            futex_signal(&tracker[0]);
+        }
     }
     cuikperf_region_end();
 }
@@ -332,26 +337,38 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
 
     // Run function-local opts and
     CUIK_TIMED_BLOCK("initial optimize round") {
-        Futex tracker[2] = { 0 };
-        nbhs_for(entry, &m->symbols) {
-            TB_Symbol* s = *entry;
-            if (s->tag == TB_SYMBOL_FUNCTION) {
-                ((TB_Function*) s)->uid = scc.fn_count++;
+        if (pool) {
+            Futex tracker[2] = { 0 };
+            nbhs_for(entry, &m->symbols) {
+                TB_Symbol* s = *entry;
+                if (s->tag == TB_SYMBOL_FUNCTION) {
+                    ((TB_Function*) s)->uid = scc.fn_count++;
 
-                void* args[2] = { s, tracker };
-                tracker[1] += 1;
+                    void* args[2] = { s, tracker };
+                    tracker[1] += 1;
 
-                tpool_add_task2(pool, func_opt_task, 2, args);
+                    tpool_add_task2(pool, func_opt_task, 2, args);
+                }
+            }
+
+            // finish up our initial round of function-local optimizations
+            int64_t old;
+            while (old = tracker[0], old != tracker[1]) {
+                futex_wait(&tracker[0], old);
+            }
+        } else {
+            nbhs_for(entry, &m->symbols) {
+                TB_Symbol* s = *entry;
+                if (s->tag == TB_SYMBOL_FUNCTION) {
+                    ((TB_Function*) s)->uid = scc.fn_count++;
+
+                    void* args[2] = { s, NULL };
+                    func_opt_task(NULL, args);
+                }
             }
         }
 
-        // finish up our initial round of function-local optimizations
-        int64_t old;
-        while (old = tracker[0], old != tracker[1]) {
-            futex_wait(&tracker[0], old);
-        }
-
-        log_debug("Starting IPO with %"PRId64" functions", tracker[1]);
+        log_debug("Initial optimization of %"PRId64" functions", scc.fn_count);
     }
 
     IPOSolver ipo = { 0 };
@@ -438,7 +455,10 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
     }
 
     CUIK_TIMED_BLOCK("IPSCCP") {
+        TB_ArenaSavepoint sp = tb_arena_save(scc.arena);
+        ipo.ipsccp_ws = aarray_create(scc.arena, TB_Function*, scc.fn_count);
         run_ipsccp(m, pool);
+        tb_arena_restore(scc.arena, sp);
     }
 
     bool progress;
