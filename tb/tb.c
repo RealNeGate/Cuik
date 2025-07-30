@@ -72,7 +72,7 @@ static void init_codegen_families(void) {
     }
 }
 
-static ICodeGen* tb_codegen_info(TB_Module* m) { return &tb_codegen_families[m->target_arch]; }
+ICodeGen* tb_codegen_info(TB_Module* m) { return &tb_codegen_families[m->target_arch]; }
 
 TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     static thread_local TB_ThreadInfo* chain;

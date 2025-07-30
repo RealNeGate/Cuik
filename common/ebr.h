@@ -205,7 +205,7 @@ static int ebr_thread_fn(void* arg) {
             // we can't free the first entry in the list without causing issues so we just
             // mark it as dead for now, next cycle we'll try again
             if (!list->gc_mark && prev != NULL) {
-                printf("THREAD %u DIED!\n", list->os_handle);
+                // printf("THREAD %u DIED!\n", list->os_handle);
 
                 // object was marked as dead, let's remove the entry
                 atomic_store_explicit(&prev->next, next, memory_order_release);

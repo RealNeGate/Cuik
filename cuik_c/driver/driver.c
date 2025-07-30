@@ -440,6 +440,11 @@ static void ld_invoke(TPool* tp, void** arg) {
         if (args->entrypoint) { tb_linker_set_entrypoint(l, args->entrypoint); }
         if (args->subsystem) { tb_linker_set_subsystem(l, args->subsystem); }
 
+        Cuik_Linker tmp_linker = gimme_linker(args);
+        dyn_array_for(i, tmp_linker.libpaths) {
+            tb_linker_add_libpath(l, tmp_linker.libpaths[i]);
+        }
+
         // process CLI objects
         tb_linker_append_module(l, mod);
 
@@ -448,32 +453,11 @@ static void ld_invoke(TPool* tp, void** arg) {
             tb_linker_barrier(l);
         }
 
-        // locate libraries and feed them into TB... in theory this process
-        // can be somewhat multithreaded so we might wanna consider that.
-        int errors = 0;
-        Cuik_Linker tmp_linker = gimme_linker(args);
-        char path[FILENAME_MAX];
         dyn_array_for(i, tmp_linker.inputs) {
-            CUIK_TIMED_BLOCK(tmp_linker.inputs[i]) {
-                if (!cuiklink_find_library(&tmp_linker, path, tmp_linker.inputs[i])) {
-                    fprintf(stderr, "could not find library: %s\n", tmp_linker.inputs[i]);
-                    step_error(s);
-                    errors++;
-                    goto skip;
-                }
-
-                tb_linker_append_library(l, path);
-            }
-
-            skip:;
+            tb_linker_append_library(l, tmp_linker.inputs[i]);
         }
 
-        if (errors) {
-            fprintf(stderr, "library search paths:\n");
-            dyn_array_for(i, tmp_linker.libpaths) {
-                fprintf(stderr, "  %s\n", tmp_linker.libpaths[i]);
-            }
-        } else if (tb_linker_export(l, output_path.data)) {
+        if (tb_linker_export(l, output_path.data)) {
             tb_module_destroy(mod);
             goto done;
         }

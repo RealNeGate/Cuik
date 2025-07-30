@@ -289,7 +289,7 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
         m->during_ipsccp = false;
         m->ipsccp_tracker[0] = m->ipsccp_tracker[1] = 0;
 
-        dump_ipsccp(m);
+        // dump_ipsccp(m);
 
         // Transform phase
         //   we can apply the rewrites now, in parallel

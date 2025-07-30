@@ -259,11 +259,14 @@ typedef struct {
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
     FileMap (*find_lib)(TB_Linker* l, const char* file_name, char* out_path);
+    void (*append_module)(TPool* pool, void** args);
     void (*append_object)(TPool* pool, void** args);
     void (*append_library)(TPool* pool, void** args);
     void (*parse_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
     bool (*export)(TB_Linker* l, const char* file_name);
 } TB_LinkerVtbl;
+
+typedef void(*RelocParser)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
 
 typedef struct TB_Linker {
     TB_Arch target_arch;
@@ -369,6 +372,8 @@ uint64_t tb__get_symbol_rva(TB_LinkerSymbol* sym);
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align);
 void tb_linker_apply_module_relocs(TB_Linker* l, TB_Module* m, TB_LinkerSection* text, uint8_t* output);
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base);
+bool tb__linker_is_library_new(TB_Linker* l, const char* file_name);
+void tb__linker_module_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
 
 bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p);
 void tb_linker_push_named(TB_Linker* l, const char* name);
