@@ -41,6 +41,16 @@ TB_Node* make_int_unary(TB_Function* f, TB_DataType dt, TB_NodeTypeEnum type, TB
 
 // for random debugging stuff
 static mtx_t aaa;
+_Atomic(uint64_t) tb_stats[STATS_MAX];
+
+static const char* stats_get_name(int type) {
+    switch (type) {
+        #define X(name, desc) case STATS_ ## name: return desc;
+        #include "stats.h"
+
+        default: return "???";
+    }
+}
 
 static void node_resize_inputs(TB_Function* f, TB_Node* n, size_t cnt) {
     if (cnt >= n->input_cap) {
@@ -1333,6 +1343,64 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     return k ? k : n;
 }
 
+int tb_opt_peeps(TB_Function* f) {
+    if (alloc_types(f)) {
+        FOR_N(i, 0, dyn_array_length(f->worklist->items)) {
+            TB_Node* n = f->worklist->items[i];
+            f->types[n->gvn] = lattice_from_dt(f, n->dt);
+        }
+        f->types[f->root_node->gvn] = lattice_tuple_from_node(f, f->root_node);
+    }
+
+    int changes = 0;
+
+    #if TB_OPTDEBUG_STATS
+    uint64_t start = cuik_time_in_nanos();
+    f->stats.solver_n = f->node_count;
+    f->stats.solver_big_o = f->node_count;
+    #endif
+
+    CUIK_TIMED_BLOCK("peephole") {
+        int i = 0;
+
+        TB_Worklist* ws = f->worklist;
+        while (worklist_count(ws)) {
+            TB_ASSERT(i < dyn_array_length(ws->items));
+            TB_Node* n = ws->items[i];
+
+            // remove item
+            worklist_remove(ws, n);
+            dyn_array_remove(ws->items, i);
+
+            // advance to literally any other place
+            i += 1;
+            if (i >= dyn_array_length(ws->items)) {
+                i = 0;
+            }
+
+            // must've dead sometime between getting scheduled and getting here.
+            if (n->type == TB_NULL) {
+                continue;
+            }
+
+            if (!is_proj(n) && n->user_count == 0) {
+                DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.killed, n->type));
+                TB_OPTLOG(PEEP, printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+                TB_OPTLOG(PEEP, printf(" => \x1b[196mKILL\x1b[0m\n"));
+                tb_kill_node(f, n);
+            } else if (peephole(f, n)) {
+                changes += 1;
+            }
+        }
+    }
+
+    #if TB_OPTDEBUG_STATS
+    f->stats.solver_time = (cuik_time_in_nanos() - start);
+    #endif
+
+    return changes;
+}
+
 static void* zalloc(size_t s) {
     void* ptr = cuik_malloc(s);
     memset(ptr, 0, s);
@@ -1361,7 +1429,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_MEMORY
-    if (strcmp(f->super.name, "dfa_range") == 0) {
+    if (strcmp(f->super.name, "main") == 0) {
         f->enable_log = true;
     }
     #endif
@@ -1426,10 +1494,12 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
 
             // combined pessimistic solver
+            STATS_ENTER(PEEPHOLES);
             if (k = tb_opt_peeps(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
                 dirty |= ALL_DIRTY;
             }
+            STATS_EXIT(PEEPHOLES);
             TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Peepholes"));
 
             #if TB_OPTDEBUG_STATS
@@ -1443,12 +1513,12 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             // work when it returns true.
             TB_OPTDEBUG(PASSES)(printf("      * Locals\n"));
             TB_OPTLOG(PEEP, printf("=== LOCALS ===\n"));
-            // uint64_t start = cuik_time_in_nanos();
+            STATS_ENTER(MEMORY);
             if (k = tb_opt_locals(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
                 dirty |= ALL_DIRTY;
             }
-            // total += cuik_time_in_nanos() - start;
+            STATS_EXIT(MEMORY);
 
             TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Memory"));
         }
@@ -1471,11 +1541,92 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
             TB_OPTLOG(PEEP, printf("=== LOOPS OPTS ===\n"));
             TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
-
             TB_OPTLOG(PEEP, tb_print_dumb(f));
+            cuikperf_region_start("loops", NULL);
 
-            // rotate loops, SLP, and strength reduction
-            if (tb_opt_loops(f)) {
+            TB_Worklist tmp_ws = { 0 };
+            worklist_alloc(&tmp_ws, f->node_count);
+
+            // Loop optimizer:
+            ////////////////////////////////
+            // 1. Loop finding
+            ////////////////////////////////
+            bool progress = false;
+            STATS_ENTER(LOOP_FIND);
+            LoopOpt ctx = loop_opt_begin(f);
+            STATS_EXIT(LOOP_FIND);
+            ////////////////////////////////
+            // 2. Remove safepoints
+            ////////////////////////////////
+            progress |= loop_opt_remove_safepoints(f, &ctx);
+            ////////////////////////////////
+            // 3. Rotate loops + Simplify backedges
+            ////////////////////////////////
+            STATS_ENTER(LOOP_ROTATE);
+            progress |= loop_opt_canonicalize(f, &ctx, &tmp_ws);
+            STATS_EXIT(LOOP_ROTATE);
+            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Loop rotation"));
+            ////////////////////////////////
+            // 4. SLP vectorizer
+            ////////////////////////////////
+            // Run SLP on each loop (+ the main body)
+            TB_OPTDEBUG(PASSES)(printf("    * Vectorize\n"));
+            CUIK_TIMED_BLOCK("SLP") {
+                STATS_ENTER(SUPERWORD);
+                aarray_for(i, ctx.cfg.loops) {
+                    TB_LoopTree* loop = ctx.cfg.loops[i];
+                    if (loop->header->type != TB_NATURAL_LOOP && loop->header->type != TB_AFFINE_LOOP) {
+                        continue;
+                    }
+
+                    if (slp_transform(f, &ctx, &tmp_ws, loop)) {
+                        TB_OPTDEBUG(PASSES)(printf("      * Vectorized Loop%zu!\n", i));
+                        progress = true;
+                    }
+                }
+
+                if (slp_transform(f, &ctx, &tmp_ws, NULL)) {
+                    TB_OPTDEBUG(PASSES)(printf("      * Vectorized Body!\n"));
+                    progress = true;
+                }
+                STATS_EXIT(SUPERWORD);
+            }
+            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "SLP"));
+            ////////////////////////////////
+            // 5. Peepholes
+            ////////////////////////////////
+            STATS_ENTER(PEEPHOLES);
+            CUIK_TIMED_BLOCK("loop peeps") {
+                tb_opt_peeps(f);
+            }
+            STATS_EXIT(PEEPHOLES);
+            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Peepholes"));
+            ////////////////////////////////
+            // 6. Loop strength reduction
+            ////////////////////////////////
+            STATS_ENTER(STRENGTH_REDUCE);
+            CUIK_TIMED_BLOCK("induction vars") {
+                aarray_for(i, ctx.cfg.loops) {
+                    TB_LoopTree* loop = ctx.cfg.loops[i];
+                    if (loop->header->type == TB_AFFINE_LOOP) {
+                        loop_strength_reduce(f, loop->header);
+                    }
+                }
+            }
+            STATS_EXIT(STRENGTH_REDUCE);
+            TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Loop IVs"));
+
+            worklist_free(&tmp_ws);
+            nl_table_free(ctx.loop_map);
+            tb_free_cfg(&ctx.cfg);
+
+            f->doms = NULL;
+            f->doms_n = 0;
+
+            tb_arena_clear(&f->tmp_arena);
+            cuikperf_region_end();
+
+            if (progress) {
                 dirty |= CPROP_DIRTY;
             }
         }
@@ -1620,63 +1771,3 @@ TB_API void tb_opt_free_types(TB_Function* f) {
         f->types = NULL;
     }
 }
-
-int tb_opt_peeps(TB_Function* f) {
-    if (alloc_types(f)) {
-        FOR_N(i, 0, dyn_array_length(f->worklist->items)) {
-            TB_Node* n = f->worklist->items[i];
-            f->types[n->gvn] = lattice_from_dt(f, n->dt);
-        }
-        f->types[f->root_node->gvn] = lattice_tuple_from_node(f, f->root_node);
-    }
-
-    int changes = 0;
-
-    #if TB_OPTDEBUG_STATS
-    uint64_t start = cuik_time_in_nanos();
-    f->stats.solver_n = f->node_count;
-    f->stats.solver_big_o = f->node_count;
-    #endif
-
-    CUIK_TIMED_BLOCK("peephole") {
-        int i = 0;
-
-        TB_Worklist* ws = f->worklist;
-        while (worklist_count(ws)) {
-            TB_ASSERT(i < dyn_array_length(ws->items));
-            TB_Node* n = ws->items[i];
-
-            // remove item
-            worklist_remove(ws, n);
-            dyn_array_remove(ws->items, i);
-
-            // advance to literally any other place
-            i += 1;
-            if (i >= dyn_array_length(ws->items)) {
-                i = 0;
-            }
-
-            // must've dead sometime between getting scheduled and getting here.
-            if (n->type == TB_NULL) {
-                continue;
-            }
-
-            if (!is_proj(n) && n->user_count == 0) {
-                DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.killed, n->type));
-                TB_OPTLOG(PEEP, printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
-                TB_OPTLOG(PEEP, printf(" => \x1b[196mKILL\x1b[0m\n"));
-                tb_kill_node(f, n);
-            } else if (peephole(f, n)) {
-                changes += 1;
-            }
-        }
-    }
-
-    #if TB_OPTDEBUG_STATS
-    f->stats.solver_time = (cuik_time_in_nanos() - start);
-    #endif
-
-    return changes;
-}
-
-

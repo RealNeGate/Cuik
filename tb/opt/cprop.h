@@ -124,17 +124,14 @@ bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b) {
         Lattice* bb = f->types[b->gvn];
 
         // TOPs are always congruent
-        return aa == &TOP_IN_THE_SKY || bb == &TOP_IN_THE_SKY || aa == bb;
+        if (aa == &TOP_IN_THE_SKY || bb == &TOP_IN_THE_SKY) {
+            return true;
+        }
 
-        // if the types disagree, they can't be congruent but sometimes
-        // types might fall in such a way where they'd be congruent and then stop
-        // breaking monotonicity in the splitting (we can only split, never join).
-        //
-        // is_congruent(1, BOT)   => no
-        // is_congruent(BOT, BOT) => yes
-        //
-        // TODO(NeGate): resolve this phase ordering issue...
-        // return !lattice_is_top_or_constant(aa) && !lattice_is_top_or_constant(bb);
+        // they must directly cross each other, if not then they couldn't be
+        // congruent
+        Lattice* glb = lattice_meet(f, aa, bb);
+        return lattice_spec_eq(f, aa, glb) || lattice_spec_eq(f, bb, glb);
     }
 
     return false;

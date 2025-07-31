@@ -31,16 +31,21 @@ local total = 0
 for i=1,#x do
     total = total + 1
 
+    local args = ""
+    if x[i] == "nbody.c" then
+        args = "50000000"
+    end
+
     print("Testing... "..x[i])
     print("  Clang:")
-    code = os.execute(string.format("clang %s && %s > clang.txt", x[i], exe_name))
+    code = os.execute(string.format("clang %s -O1 && %s %s > clang.txt", x[i], exe_name, args))
     if code ~= 0 then
-        print("    BAD!!!")
+        print("    BAD!!!", code)
         goto skip
     end
 
     print("  Cuik:", configs[1])
-    local code = os.execute(string.format("cuik %s %s && %s > cuik.txt", x[i], configs[1], exe_name))
+    local code = os.execute(string.format("cuik %s %s && %s %s > cuik.txt", x[i], configs[1], exe_name, args))
     if code ~= 0 then
         print("    BAD CUIK!!!", configs[1])
         goto skip
@@ -49,7 +54,7 @@ for i=1,#x do
     -- Compare the flavors of cuik compiles first
     for j=2,#configs do
         print("  Cuik:", configs[j])
-        code = os.execute(string.format("cuik %s %s && %s > cuik2.txt", x[i], configs[j], exe_name))
+        code = os.execute(string.format("cuik %s %s && %s %s > cuik2.txt", x[i], configs[j], exe_name, args))
         if code ~= 0 then
             print("    BAD CUIK!!!", configs[j])
             goto skip

@@ -797,7 +797,7 @@ static TB_Node* generate_loop_trip_count(TB_Function* f, TB_InductionVar var) {
     } else {
         // we can probably fold this case
         Lattice* end = lattice_int_const(f, var.end_const);
-        Lattice* sub = value_arith_raw(f, TB_SUB, var.phi->dt, end, start, false);
+        Lattice* sub = value_arith_raw(f, TB_SUB, var.phi->dt, end, start, false, false);
         if (lattice_is_iconst(sub)) {
             range = make_int_node(f, var.phi->dt, sub->_int.min);
         } else {
@@ -810,7 +810,7 @@ static TB_Node* generate_loop_trip_count(TB_Function* f, TB_InductionVar var) {
     Lattice* pad = lattice_int_const(f, var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0));
     if (!lattice_is_izero(pad)) {
         Lattice* range_ty = latuni_get(f, range);
-        Lattice* add = value_arith_raw(f, TB_ADD, var.phi->dt, range_ty, pad, false);
+        Lattice* add = value_arith_raw(f, TB_ADD, var.phi->dt, range_ty, pad, false, false);
         if (lattice_is_iconst(add)) {
             range = make_int_node(f, var.phi->dt, add->_int.min);
         } else {
@@ -1146,11 +1146,7 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
     nl_table_free(ctx.loop_map);
 }
 
-bool tb_opt_loops(TB_Function* f) {
-    cuikperf_region_start("loop opts", NULL);
-
-    bool progress = false;
-
+static LoopOpt loop_opt_begin(TB_Function* f) {
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     TB_CFG cfg = tb_compute_cfg(f, f->worklist, &f->tmp_arena, true);
 
@@ -1197,10 +1193,15 @@ bool tb_opt_loops(TB_Function* f) {
         f->scheduled_n = 0;
     }
     CUIK_TIMED_BLOCK("find loops") {
-        loop_find(f, &cfg, &ctx);
+        loop_find(f, &ctx.cfg, &ctx);
     }
+    return ctx;
+}
+
+static bool loop_opt_remove_safepoints(TB_Function* f, LoopOpt* ctx) {
+    #if 0
+    bool progress = false;
     CUIK_TIMED_BLOCK("remove safepoints") {
-        #if 0
         TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
 
         // dominating safepoint of a block
@@ -1250,440 +1251,388 @@ bool tb_opt_loops(TB_Function* f) {
             }
         }
         tb_arena_restore(&f->tmp_arena, sp2);
-        #endif
     }
+    return progress;
+    #else
+    return false;
+    #endif
+}
 
-    TB_Worklist tmp_ws = { 0 };
-    worklist_alloc(&tmp_ws, f->node_count);
+// canonicalize regions into natural loop headers (or affine loops) and
+// join all backedges into one pred path on the header
+static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp_ws) {
+    bool progress = false;
+    DynArray(ptrdiff_t) backedges = NULL;
+    aarray_for(i, ctx->cfg.loops) {
+        TB_LoopTree* loop = ctx->cfg.loops[i];
+        if (!loop->is_natural) { continue; }
 
-    // canonicalize regions into natural loop headers (or affine loops)
-    CUIK_TIMED_BLOCK("rotate loops") {
-        DynArray(ptrdiff_t) backedges = NULL;
-        aarray_for(i, cfg.loops) {
-            TB_LoopTree* loop = cfg.loops[i];
-            if (!loop->is_natural) { continue; }
+        TB_Node* header = loop->header;
+        if (!cfg_is_region(header) && header->input_count >= 2) { continue; }
 
-            TB_Node* header = loop->header;
-            if (!cfg_is_region(header) && header->input_count >= 2) { continue; }
+        // find all backedges
+        dyn_array_clear(backedges);
+        FOR_N(j, 0, header->input_count) {
+            if (tb_is_dom_of(f, header, header->inputs[j])) {
+                dyn_array_put(backedges, j);
+            }
+        }
 
-            // find all backedges
-            dyn_array_clear(backedges);
+        TB_ASSERT(dyn_array_length(backedges) >= 1);
+        TB_OPTDEBUG(LOOP)(printf("found natural loop on .bb%zu (%%%u)\n", i, header->gvn));
+
+        // as part of loop simplification we convert backedges (and entries) into one.
+        ptrdiff_t single_backedge = backedges[0];
+        if (dyn_array_length(backedges) > 1 || header->input_count > 2) {
+            // we're splitting regions, usually the peeps would join these together but that doesn't apply
+            // to loop regions.
+            TB_OPTDEBUG(LOOP)(printf("region split on loop header %%%u\n", header->gvn));
+            progress = true;
+
+            // we'll make both regions regardless, the peeps will clean it up.
+            int back_path_count = dyn_array_length(backedges);
+            int entry_path_count = header->input_count - back_path_count;
+            TB_Node* back_region  = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, back_path_count, sizeof(TB_NodeRegion));
+            TB_Node* entry_region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, entry_path_count, sizeof(TB_NodeRegion));
+
+            size_t phi_count = 0;
+            FOR_USERS(u, header) {
+                if (USERN(u)->type == TB_PHI) { phi_count++; }
+            }
+
+            TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
+
+            // find out which are the entry paths
+            bool* is_backedge = tb_arena_alloc(&f->tmp_arena, back_path_count * sizeof(bool));
+            memset(is_backedge, 0, back_path_count * sizeof(bool));
+            FOR_N(j, 0, back_path_count) {
+                is_backedge[backedges[j]] = true;
+            }
+
+            // clone & sort phi ins into either entry or backedge phi ins
+            int phi_i = 0;
+            FOR_USERS(u, header) {
+                if (USERN(u)->type != TB_PHI) { continue; }
+
+                TB_Node* un = USERN(u);
+                TB_Node* entry_phi = tb_alloc_node(f, TB_PHI, un->dt, 1 + entry_path_count, 0);
+                TB_Node* back_phi = tb_alloc_node(f, TB_PHI, un->dt, 1 + back_path_count, 0);
+                set_input(f, entry_phi, entry_region, 0);
+                set_input(f, back_phi, back_region, 0);
+
+                size_t back_i = 1, entry_i = 1;
+                FOR_N(j, 1, un->input_count) {
+                    if (is_backedge[j - 1]) {
+                        set_input(f, back_phi, un->inputs[j], back_i);
+                        back_i += 1;
+                    } else {
+                        set_input(f, entry_phi, un->inputs[j], entry_i);
+                        entry_i += 1;
+                    }
+                    set_input(f, un, NULL, j);
+                }
+
+                // header phis need to get truncated now
+                set_input(f, un, entry_phi, 1);
+                set_input(f, un, back_phi, 2);
+                un->input_count = 3;
+            }
+
+            // sort preds into regions
+            size_t back_i = 0, entry_i = 0;
             FOR_N(j, 0, header->input_count) {
-                if (tb_is_dom_of(f, header, header->inputs[j])) {
-                    dyn_array_put(backedges, j);
+                if (is_backedge[j]) {
+                    set_input(f, back_region, header->inputs[j], back_i);
+                    back_i += 1;
+                } else {
+                    set_input(f, entry_region, header->inputs[j], entry_i);
+                    entry_i += 1;
                 }
             }
 
-            TB_ASSERT(dyn_array_length(backedges) >= 1);
-            TB_OPTDEBUG(LOOP)(printf("found natural loop on .bb%zu (%%%u)\n", i, header->gvn));
+            // hook to loop region
+            set_input(f, header, entry_region, 0);
+            set_input(f, header, back_region,  1);
+            FOR_N(i, 2, header->input_count) {
+                set_input(f, header, NULL, i);
+            }
+            header->input_count = 2;
 
-            // as part of loop simplification we convert backedges (and entries) into one.
-            ptrdiff_t single_backedge = backedges[0];
-            if (dyn_array_length(backedges) > 1 || header->input_count > 2) {
-                // we're splitting regions, usually the peeps would join these together but that doesn't apply
-                // to loop regions.
-                TB_OPTDEBUG(LOOP)(printf("region split on loop header %%%u\n", header->gvn));
-                progress = true;
+            // we need to make sure the back region is still dom'd by the header but if we can
+            // get more accurate than that we're better off.
+            tb_set_idom(f, back_region, easy_dom(f, back_region, header));
+            tb_set_idom(f, entry_region, tb_get_idom_RAW(f, header));
+            tb_set_idom(f, header, entry_region);
 
-                // we'll make both regions regardless, the peeps will clean it up.
-                int back_path_count = dyn_array_length(backedges);
-                int entry_path_count = header->input_count - back_path_count;
-                TB_Node* back_region  = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, back_path_count, sizeof(TB_NodeRegion));
-                TB_Node* entry_region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, entry_path_count, sizeof(TB_NodeRegion));
+            mark_node_n_users(f, entry_region);
+            mark_node_n_users(f, back_region);
+            mark_node_n_users(f, header);
 
-                size_t phi_count = 0;
-                FOR_USERS(u, header) {
-                    if (USERN(u)->type == TB_PHI) { phi_count++; }
+            tb_arena_restore(&f->tmp_arena, sp2);
+            single_backedge = 1;
+        }
+
+        // somehow we couldn't simplify the loop? welp
+        if (single_backedge >= 0) {
+            // guarentee that the dominator is inputs[0]
+            if (single_backedge == 0) {
+                swap_nodes(f, header, 0, 1);
+                FOR_USERS(phi, header) {
+                    if (USERN(phi)->type == TB_PHI) { swap_nodes(f, USERN(phi), 1, 2); }
                 }
-
-                TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
-
-                // find out which are the entry paths
-                bool* is_backedge = tb_arena_alloc(&f->tmp_arena, back_path_count * sizeof(bool));
-                memset(is_backedge, 0, back_path_count * sizeof(bool));
-                FOR_N(j, 0, back_path_count) {
-                    is_backedge[backedges[j]] = true;
-                }
-
-                // clone & sort phi ins into either entry or backedge phi ins
-                int phi_i = 0;
-                FOR_USERS(u, header) {
-                    if (USERN(u)->type != TB_PHI) { continue; }
-
-                    TB_Node* un = USERN(u);
-                    TB_Node* entry_phi = tb_alloc_node(f, TB_PHI, un->dt, 1 + entry_path_count, 0);
-                    TB_Node* back_phi = tb_alloc_node(f, TB_PHI, un->dt, 1 + back_path_count, 0);
-                    set_input(f, entry_phi, entry_region, 0);
-                    set_input(f, back_phi, back_region, 0);
-
-                    size_t back_i = 1, entry_i = 1;
-                    FOR_N(j, 1, un->input_count) {
-                        if (is_backedge[j - 1]) {
-                            set_input(f, back_phi, un->inputs[j], back_i);
-                            back_i += 1;
-                        } else {
-                            set_input(f, entry_phi, un->inputs[j], entry_i);
-                            entry_i += 1;
-                        }
-                        set_input(f, un, NULL, j);
-                    }
-
-                    // header phis need to get truncated now
-                    set_input(f, un, entry_phi, 1);
-                    set_input(f, un, back_phi, 2);
-                    un->input_count = 3;
-                }
-
-                // sort preds into regions
-                size_t back_i = 0, entry_i = 0;
-                FOR_N(j, 0, header->input_count) {
-                    if (is_backedge[j]) {
-                        set_input(f, back_region, header->inputs[j], back_i);
-                        back_i += 1;
-                    } else {
-                        set_input(f, entry_region, header->inputs[j], entry_i);
-                        entry_i += 1;
-                    }
-                }
-
-                // hook to loop region
-                set_input(f, header, entry_region, 0);
-                set_input(f, header, back_region,  1);
-                FOR_N(i, 2, header->input_count) {
-                    set_input(f, header, NULL, i);
-                }
-                header->input_count = 2;
-
-                // we need to make sure the back region is still dom'd by the header but if we can
-                // get more accurate than that we're better off.
-                tb_set_idom(f, back_region, easy_dom(f, back_region, header));
-                tb_set_idom(f, entry_region, tb_get_idom_RAW(f, header));
-                tb_set_idom(f, header, entry_region);
-
-                mark_node_n_users(f, entry_region);
-                mark_node_n_users(f, back_region);
-                mark_node_n_users(f, header);
-
-                tb_arena_restore(&f->tmp_arena, sp2);
                 single_backedge = 1;
             }
 
-            // somehow we couldn't simplify the loop? welp
-            if (single_backedge >= 0) {
-                // guarentee that the dominator is inputs[0]
-                if (single_backedge == 0) {
-                    swap_nodes(f, header, 0, 1);
-                    FOR_USERS(phi, header) {
-                        if (USERN(phi)->type == TB_PHI) { swap_nodes(f, USERN(phi), 1, 2); }
-                    }
-                    single_backedge = 1;
+            TB_NodeTypeEnum type = TB_NATURAL_LOOP;
+
+            TB_InductionVar var;
+            TB_Node* latch = NULL;
+
+            // if there's a latch on the header, move it to the backedge. also not properly
+            // rotated if there's things attached to the backedge cproj, they should've been moved above it.
+            TB_Node* header_end = end_of_bb(header);
+            TB_Node* exit_proj = get_simple_loop_exit(ctx, loop, header, header_end);
+            // if (exit_proj && (!cfg_is_cproj(exit_proj) || exit_proj->inputs[0] != header->inputs[1]->inputs[0] || header->inputs[1]->user_count != 1)) {
+            if (exit_proj && (!cfg_is_cproj(exit_proj) || header->inputs[1]->user_count != 1)) {
+                #if 1
+                TB_OPTDEBUG(PASSES)(printf("      * Rotating loop %%%u %p\n", header->gvn, exit_proj));
+
+                latch = header_end;
+                int exit_loop_i = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeProj)->index;
+                TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
+
+                TB_Node** cloned;
+                size_t cloned_n = f->node_count;
+                CUIK_TIMED_BLOCK("alloc cloned table") {
+                    cloned = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(TB_Node*));
+                    memset(cloned, 0, f->node_count * sizeof(TB_Node*));
                 }
 
-                TB_NodeTypeEnum type = TB_NATURAL_LOOP;
+                // let's rotate the loop:
+                //
+                //     header:                    ztc:
+                //       i = phi(init, next)        ...
+                //       ...                        if (A) header else exit
+                //       if (A) body else exit    header:
+                //     body:                        i = phi(init, next)
+                //       ...                        ...
+                //       jmp body                   if (A) header else exit
+                //     exit:                      exit:
+                //
+                TB_Node* ztc_start = header->inputs[0];
+                // construct the ZTC's version of the branch (same as the original latch but
+                // uses the phi's inputs[1] edge instead of the phis directly)
+                ArenaArray(TB_Node*) cloned_list = loop_clone_ztc(ctx, tmp_ws, cloned_n, cloned, header, latch);
+                TB_Node* top_cloned = cloned[header->gvn];
+                TB_Node* bot_cloned = cloned[latch->gvn];
+                // make a ZTC branch
+                TB_ASSERT(top_cloned->input_cap >= 1);
+                top_cloned->input_count = 1;
+                set_input(f, top_cloned, ztc_start, 0);
+                TB_Node* into_loop = branch_cproj(f, bot_cloned, 90, 0, 1 - exit_loop_i);
+                TB_Node* exit_loop = branch_cproj(f, bot_cloned, 10, 0, exit_loop_i);
+                mark_node(f, into_loop), mark_node(f, exit_loop);
+                // connect up to the loop
+                set_input(f, header, into_loop, 0);
+                // intercept exit path and place a region (merging the ZTC & rotated loop)
+                TB_User after_exit = *cfg_next_user(exit_proj);
+                mark_node_n_users(f, USERN(&after_exit));
+                TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
+                set_input(f, USERN(&after_exit), join, USERI(&after_exit));
+                set_input(f, join, exit_loop, 0);
+                set_input(f, join, exit_proj, 1);
+                // any non-CFG nodes attached to this exit projection
+                // should be moved down to the new shared join point.
+                loop_hoist_ops(f, exit_proj, join);
+                loop_set_ctrl(ctx, join, join);
+                mark_node(f, join);
+                // fill in the doms
+                if (bot_cloned != top_cloned) {
+                    tb_set_idom(f, bot_cloned, top_cloned);
+                }
+                tb_set_idom(f, top_cloned, tb_walk_to_bb_bounds(f, ztc_start));
+                tb_set_idom(f, header, top_cloned);
+                tb_set_idom(f, join, top_cloned);
+                tb_set_idom(f, exit_loop, bot_cloned);
+                tb_set_idom(f, into_loop, bot_cloned);
+                // latch gets moved down to the bottom (backedge)
+                TB_Node* into_loop2 = USERN(proj_with_index(latch, 1 - exit_loop_i));
+                {
+                    // latch no longer connected to the top
+                    TB_User* after_into_loop2 = cfg_next_user(into_loop2);
+                    mark_node_n_users(f, USERN(after_into_loop2));
+                    set_input(f, USERN(after_into_loop2), latch->inputs[0], USERI(after_into_loop2));
+                    // backedge has a lovely "new" latch
+                    set_input(f, latch,  header->inputs[1], 0);
+                    set_input(f, header, into_loop2,        1);
 
-                TB_InductionVar var;
-                TB_Node* latch = NULL;
-
-                // if there's a latch on the header, move it to the backedge. also not properly
-                // rotated if there's things attached to the backedge cproj, they should've been moved above it.
-                TB_Node* header_end = end_of_bb(header);
-                TB_Node* exit_proj = get_simple_loop_exit(&ctx, loop, header, header_end);
-                // if (exit_proj && (!cfg_is_cproj(exit_proj) || exit_proj->inputs[0] != header->inputs[1]->inputs[0] || header->inputs[1]->user_count != 1)) {
-                if (exit_proj && (!cfg_is_cproj(exit_proj) || header->inputs[1]->user_count != 1)) {
-                    #if 1
-                    TB_OPTDEBUG(PASSES)(printf("      * Rotating loop %%%u %p\n", header->gvn, exit_proj));
-
-                    latch = header_end;
-                    int exit_loop_i = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeProj)->index;
-                    TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
-
-                    TB_Node** cloned;
-                    size_t cloned_n = f->node_count;
-                    CUIK_TIMED_BLOCK("alloc cloned table") {
-                        cloned = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(TB_Node*));
-                        memset(cloned, 0, f->node_count * sizeof(TB_Node*));
+                    mark_node_n_users(f, latch);
+                    mark_node_n_users(f, header);
+                }
+                // if we were ctrl-dependent on successfully entering the
+                // loop body, we need to be hooked to the header now
+                loop_hoist_ops(f, into_loop2, header);
+                // since everything in the original header BB was cloned, there's two versions and
+                // when we're using these values past the loop exit, we need to insert a phi to resolve
+                // these conflicting definitions.
+                size_t snapshot_count = f->node_count;
+                aarray_for(i, cloned_list) {
+                    TB_Node* n = cloned_list[i];
+                    if (n->dt.type == TB_TAG_CONTROL || cfg_is_fork(n)) {
+                        continue;
                     }
 
-                    // let's rotate the loop:
-                    //
-                    //     header:                    ztc:
-                    //       i = phi(init, next)        ...
-                    //       ...                        if (A) header else exit
-                    //       if (A) body else exit    header:
-                    //     body:                        i = phi(init, next)
-                    //       ...                        ...
-                    //       jmp body                   if (A) header else exit
-                    //     exit:                      exit:
-                    //
-                    TB_Node* ztc_start = header->inputs[0];
-                    // construct the ZTC's version of the branch (same as the original latch but
-                    // uses the phi's inputs[1] edge instead of the phis directly)
-                    ArenaArray(TB_Node*) cloned_list = loop_clone_ztc(&ctx, &tmp_ws, cloned_n, cloned, header, latch);
-                    TB_Node* top_cloned = cloned[header->gvn];
-                    TB_Node* bot_cloned = cloned[latch->gvn];
-                    // make a ZTC branch
-                    TB_ASSERT(top_cloned->input_cap >= 1);
-                    top_cloned->input_count = 1;
-                    set_input(f, top_cloned, ztc_start, 0);
-                    TB_Node* into_loop = branch_cproj(f, bot_cloned, 90, 0, 1 - exit_loop_i);
-                    TB_Node* exit_loop = branch_cproj(f, bot_cloned, 10, 0, exit_loop_i);
-                    mark_node(f, into_loop), mark_node(f, exit_loop);
-                    // connect up to the loop
-                    set_input(f, header, into_loop, 0);
-                    // intercept exit path and place a region (merging the ZTC & rotated loop)
-                    TB_User after_exit = *cfg_next_user(exit_proj);
-                    mark_node_n_users(f, USERN(&after_exit));
-                    TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
-                    set_input(f, USERN(&after_exit), join, USERI(&after_exit));
-                    set_input(f, join, exit_loop, 0);
-                    set_input(f, join, exit_proj, 1);
-                    // any non-CFG nodes attached to this exit projection
-                    // should be moved down to the new shared join point.
-                    loop_hoist_ops(f, exit_proj, join);
-                    loop_set_ctrl(&ctx, join, join);
-                    mark_node(f, join);
-                    // fill in the doms
-                    if (bot_cloned != top_cloned) {
-                        tb_set_idom(f, bot_cloned, top_cloned);
-                    }
-                    tb_set_idom(f, top_cloned, tb_walk_to_bb_bounds(f, ztc_start));
-                    tb_set_idom(f, header, top_cloned);
-                    tb_set_idom(f, join, top_cloned);
-                    tb_set_idom(f, exit_loop, bot_cloned);
-                    tb_set_idom(f, into_loop, bot_cloned);
-                    // latch gets moved down to the bottom (backedge)
-                    TB_Node* into_loop2 = USERN(proj_with_index(latch, 1 - exit_loop_i));
-                    {
-                        // latch no longer connected to the top
-                        TB_User* after_into_loop2 = cfg_next_user(into_loop2);
-                        mark_node_n_users(f, USERN(after_into_loop2));
-                        set_input(f, USERN(after_into_loop2), latch->inputs[0], USERI(after_into_loop2));
-                        // backedge has a lovely "new" latch
-                        set_input(f, latch,  header->inputs[1], 0);
-                        set_input(f, header, into_loop2,        1);
+                    // any nodes created during this loop close fixup shouldn't themselves need fixup btw.
+                    bool is_loop_phi = n->type == TB_PHI && n->inputs[0] == header;
 
-                        mark_node_n_users(f, latch);
-                        mark_node_n_users(f, header);
-                    }
-                    // if we were ctrl-dependent on successfully entering the
-                    // loop body, we need to be hooked to the header now
-                    loop_hoist_ops(f, into_loop2, header);
-                    // since everything in the original header BB was cloned, there's two versions and
-                    // when we're using these values past the loop exit, we need to insert a phi to resolve
-                    // these conflicting definitions.
-                    size_t snapshot_count = f->node_count;
-                    aarray_for(i, cloned_list) {
-                        TB_Node* n = cloned_list[i];
-                        if (n->dt.type == TB_TAG_CONTROL || cfg_is_fork(n)) {
-                            continue;
-                        }
+                    // lazily constructed
+                    //   [0] exit, [1] body
+                    TB_Node* phis[2] = { NULL, NULL };
+                    for (size_t i = 0; i < n->user_count;) {
+                        TB_Node* un = USERN(&n->users[i]);
+                        int ui      = USERI(&n->users[i]);
 
-                        // any nodes created during this loop close fixup shouldn't themselves need fixup btw.
-                        bool is_loop_phi = n->type == TB_PHI && n->inputs[0] == header;
+                        if (un->gvn < snapshot_count && un->type != TB_CALLGRAPH) {
+                            // if it's not within the loop (including the kids), it's used
+                            // after the loop which means it should refer to the "new_phi"
+                            TB_Node* bb = ctx->ctrl[un->gvn];
+                            TB_LoopTree* use_loop = nl_table_get(&ctx->loop_map, bb);
 
-                        // lazily constructed
-                        //   [0] exit, [1] body
-                        TB_Node* phis[2] = { NULL, NULL };
-                        for (size_t i = 0; i < n->user_count;) {
-                            TB_Node* un = USERN(&n->users[i]);
-                            int ui      = USERI(&n->users[i]);
+                            if (loop != use_loop && (use_loop == NULL || bb != loop->header)) {
+                                int flavor = loop_inside(loop, use_loop) ? 1 : 0;
 
-                            if (un->gvn < snapshot_count && un->type != TB_CALLGRAPH) {
-                                // if it's not within the loop (including the kids), it's used
-                                // after the loop which means it should refer to the "new_phi"
-                                TB_Node* bb = ctx.ctrl[un->gvn];
-                                TB_LoopTree* use_loop = nl_table_get(&ctx.loop_map, bb);
-
-                                if (loop != use_loop && (use_loop == NULL || bb != loop->header)) {
-                                    int flavor = loop_inside(loop, use_loop) ? 1 : 0;
-
-                                    // we don't "escape" if it's just the loop phis being used in the loop body
-                                    if (flavor != 1 || !is_loop_phi) {
-                                        TB_Node* p = phis[flavor];
-                                        if (p == NULL) {
-                                            #if TB_OPTDEBUG_LOOP
-                                            printf("ESCAPE %s! ", flavor ? "BODY" : "EXIT");
-                                            tb_print_dumb_node(NULL, n);
-                                            printf("\n");
-                                            #endif
-
-                                            // cloned form is the init-case
-                                            TB_ASSERT(n->gvn < cloned_n);
-                                            TB_Node* init_path = cloned[n->gvn];
-
-                                            TB_Node* r = flavor ? header : join;
-                                            TB_ASSERT(r->input_count == 2);
-
-                                            p = phis[flavor] = tb_alloc_node(f, TB_PHI, n->dt, 3, 0);
-                                            set_input(f, p, r,         0);
-                                            set_input(f, p, init_path, 1);
-                                            if (is_loop_phi) {
-                                                set_input(f, p, n->inputs[2], 2);
-                                            } else {
-                                                set_input(f, p, n, 2);
-                                            }
-                                            loop_set_ctrl(&ctx, p, r);
-                                            mark_node(f, p);
-
-                                            latuni_set(f, p, latuni_get(f, n));
-                                        }
-
+                                // we don't "escape" if it's just the loop phis being used in the loop body
+                                if (flavor != 1 || !is_loop_phi) {
+                                    TB_Node* p = phis[flavor];
+                                    if (p == NULL) {
                                         #if TB_OPTDEBUG_LOOP
-                                        printf("   USER(");
-                                        tb_print_dumb_node(NULL, un);
-                                        printf(", %d)\n", ui);
+                                        printf("ESCAPE %s! ", flavor ? "BODY" : "EXIT");
+                                        tb_print_dumb_node(NULL, n);
+                                        printf("\n");
                                         #endif
 
-                                        set_input(f, un, p, ui);
-                                        continue;
+                                        // cloned form is the init-case
+                                        TB_ASSERT(n->gvn < cloned_n);
+                                        TB_Node* init_path = cloned[n->gvn];
+
+                                        TB_Node* r = flavor ? header : join;
+                                        TB_ASSERT(r->input_count == 2);
+
+                                        p = phis[flavor] = tb_alloc_node(f, TB_PHI, n->dt, 3, 0);
+                                        set_input(f, p, r,         0);
+                                        set_input(f, p, init_path, 1);
+                                        if (is_loop_phi) {
+                                            set_input(f, p, n->inputs[2], 2);
+                                        } else {
+                                            set_input(f, p, n, 2);
+                                        }
+                                        loop_set_ctrl(ctx, p, r);
+                                        mark_node(f, p);
+
+                                        latuni_set(f, p, latuni_get(f, n));
                                     }
+
+                                    #if TB_OPTDEBUG_LOOP
+                                    printf("   USER(");
+                                    tb_print_dumb_node(NULL, un);
+                                    printf(", %d)\n", ui);
+                                    #endif
+
+                                    set_input(f, un, p, ui);
+                                    continue;
                                 }
                             }
-
-                            i += 1;
                         }
 
-                        if (phis[0] != NULL) { mark_node_n_users(f, phis[0]); }
-                        if (phis[1] != NULL) { mark_node_n_users(f, phis[1]); }
+                        i += 1;
                     }
-                    progress = true;
-                    tb_arena_restore(&f->tmp_arena, sp2);
 
-                    TB_OPTDEBUG(PASSES)(printf("        * Added extra latch %%%u\n", latch->gvn));
-                    TB_OPTDEBUG(PASSES)(printf("        * Added extra join %%%u\n", join->gvn));
-
-                    #ifndef NDEBUG
-                    TB_Node* exit_proj2 = get_simple_loop_exit(&ctx, loop, header, header_end);
-                    TB_ASSERT(exit_proj2->inputs[0] == latch);
-                    TB_ASSERT(into_loop2->inputs[0] == latch);
-                    TB_ASSERT(header->inputs[1] == into_loop2 && header->inputs[1]->user_count == 1);
-                    #endif
-                    #endif
-                } else {
-                    // the loop is already rotated if there's a latch at the bottom, maybe
-                    // it's marked, maybe it's not.
-                    if (cfg_is_cproj(header->inputs[1])) {
-                        TB_Node* exit_proj = get_simple_loop_exit(&ctx, loop, header, header->inputs[1]->inputs[0]);
-                        if (exit_proj) {
-                            TB_OPTDEBUG(PASSES)(printf("      * Found rotated loop %%%u\n", header->gvn));
-                            latch = exit_proj->inputs[0];
-                        }
-                    }
+                    if (phis[0] != NULL) { mark_node_n_users(f, phis[0]); }
+                    if (phis[1] != NULL) { mark_node_n_users(f, phis[1]); }
                 }
-
-                if (latch != NULL) {
-                    TB_InductionVar var;
-                    if (find_latch_indvar(header, latch, &var)) {
-                        type = TB_AFFINE_LOOP;
-
-                        uint64_t* init = iconst(var.phi->inputs[1]);
-                        uint64_t* end  = var.end_cond ? iconst(var.end_cond) : &var.end_const;
-
-                        #if TB_OPTDEBUG_LOOP
-                        TB_Node *phi = var.phi, *cond = var.cond;
-                        int64_t step = var.step;
-
-                        if (init) {
-                            printf("  affine loop: %%%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init);
-                        } else {
-                            printf("  affine loop: %%%u = %"PRId64"*x + %%%u\n", phi->gvn, step, phi->inputs[1]->gvn);
-                        }
-
-                        if (end) {
-                            printf("        latch: %s(%%%u, %"PRId64, ind_pred_names[var.pred], phi->gvn, *end);
-                        } else {
-                            printf("        latch: %s(%%%u, %%%u", ind_pred_names[var.pred], phi->gvn, var.end_cond->gvn);
-                        }
-
-                        if (var.backwards) {
-                            printf(", flipped");
-                        }
-                        printf(")\n");
-
-                        // fixed trip count loops aren't *uncommon*
-                        if (init && end) {
-                            int64_t pad = step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
-                            uint64_t trips = (*end - *init + pad) / step;
-                            uint64_t rem   = (*end - *init + pad) % step;
-                            if (rem != 0 && var.pred == IND_NE) {
-                                printf("        trips: overshoot\n");
-                            } else {
-                                printf("        trips: %"PRId64" (%"PRId64" ... %"PRId64")\n", trips, *init, *end);
-                            }
-                        }
-                        #endif
-                    }
-                }
-
-                // first time we've seen this loop
-                if (header->type != type) {
-                    progress = true;
-                    header->type = type;
-                    mark_node_n_users(f, header);
-
-                    // all affine loops have an affine latch
-                    if (type == TB_AFFINE_LOOP) {
-                        header->inputs[1]->inputs[0]->type = TB_AFFINE_LATCH;
-                        mark_node_n_users(f, header->inputs[1]->inputs[0]);
-                    }
-                }
-            }
-        }
-    }
-
-    TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Loop rotation"));
-
-    #if 1
-    // Run SLP on each loop (+ the main body)
-    TB_OPTDEBUG(PASSES)(printf("    * Vectorize\n"));
-    CUIK_TIMED_BLOCK("SLP") {
-        aarray_for(i, cfg.loops) {
-            TB_LoopTree* loop = cfg.loops[i];
-            if (loop->header->type != TB_NATURAL_LOOP && loop->header->type != TB_AFFINE_LOOP) {
-                continue;
-            }
-
-            if (slp_transform(f, &ctx, &tmp_ws, loop)) {
-                TB_OPTDEBUG(PASSES)(printf("      * Vectorized Loop%zu!\n", i));
                 progress = true;
+                tb_arena_restore(&f->tmp_arena, sp2);
+
+                TB_OPTDEBUG(PASSES)(printf("        * Added extra latch %%%u\n", latch->gvn));
+                TB_OPTDEBUG(PASSES)(printf("        * Added extra join %%%u\n", join->gvn));
+
+                #ifndef NDEBUG
+                TB_Node* exit_proj2 = get_simple_loop_exit(ctx, loop, header, header_end);
+                TB_ASSERT(exit_proj2->inputs[0] == latch);
+                TB_ASSERT(into_loop2->inputs[0] == latch);
+                TB_ASSERT(header->inputs[1] == into_loop2 && header->inputs[1]->user_count == 1);
+                #endif
+                #endif
+            } else {
+                // the loop is already rotated if there's a latch at the bottom, maybe
+                // it's marked, maybe it's not.
+                if (cfg_is_cproj(header->inputs[1])) {
+                    TB_Node* exit_proj = get_simple_loop_exit(ctx, loop, header, header->inputs[1]->inputs[0]);
+                    if (exit_proj) {
+                        TB_OPTDEBUG(PASSES)(printf("      * Found rotated loop %%%u\n", header->gvn));
+                        latch = exit_proj->inputs[0];
+                    }
+                }
+            }
+
+            if (latch != NULL) {
+                TB_InductionVar var;
+                if (find_latch_indvar(header, latch, &var)) {
+                    type = TB_AFFINE_LOOP;
+
+                    uint64_t* init = iconst(var.phi->inputs[1]);
+                    uint64_t* end  = var.end_cond ? iconst(var.end_cond) : &var.end_const;
+
+                    #if TB_OPTDEBUG_LOOP
+                    TB_Node *phi = var.phi, *cond = var.cond;
+                    int64_t step = var.step;
+
+                    if (init) {
+                        printf("  affine loop: %%%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init);
+                    } else {
+                        printf("  affine loop: %%%u = %"PRId64"*x + %%%u\n", phi->gvn, step, phi->inputs[1]->gvn);
+                    }
+
+                    if (end) {
+                        printf("        latch: %s(%%%u, %"PRId64, ind_pred_names[var.pred], phi->gvn, *end);
+                    } else {
+                        printf("        latch: %s(%%%u, %%%u", ind_pred_names[var.pred], phi->gvn, var.end_cond->gvn);
+                    }
+
+                    if (var.backwards) {
+                        printf(", flipped");
+                    }
+                    printf(")\n");
+
+                    // fixed trip count loops aren't *uncommon*
+                    if (init && end) {
+                        int64_t pad = step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
+                        uint64_t trips = (*end - *init + pad) / step;
+                        uint64_t rem   = (*end - *init + pad) % step;
+                        if (rem != 0 && var.pred == IND_NE) {
+                            printf("        trips: overshoot\n");
+                        } else {
+                            printf("        trips: %"PRId64" (%"PRId64" ... %"PRId64")\n", trips, *init, *end);
+                        }
+                    }
+                    #endif
+                }
+            }
+
+            // first time we've seen this loop
+            if (header->type != type) {
+                progress = true;
+                header->type = type;
+                mark_node_n_users(f, header);
+
+                // all affine loops have an affine latch
+                if (type == TB_AFFINE_LOOP) {
+                    header->inputs[1]->inputs[0]->type = TB_AFFINE_LATCH;
+                    mark_node_n_users(f, header->inputs[1]->inputs[0]);
+                }
             }
         }
-
-        if (slp_transform(f, &ctx, &tmp_ws, NULL)) {
-            TB_OPTDEBUG(PASSES)(printf("      * Vectorized Body!\n"));
-            progress = true;
-        }
     }
-    #endif
-
-    TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "SLP"));
-
-    CUIK_TIMED_BLOCK("loop peeps") {
-        tb_opt_peeps(f);
-    }
-
-    TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Peepholes"));
-
-    CUIK_TIMED_BLOCK("induction vars") {
-        aarray_for(i, cfg.loops) {
-            TB_LoopTree* loop = cfg.loops[i];
-            if (loop->header->type == TB_AFFINE_LOOP) {
-                loop_strength_reduce(f, loop->header);
-            }
-        }
-    }
-
-    TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Loop IVs"));
-
-    worklist_free(&tmp_ws);
-    nl_table_free(ctx.loop_map);
-    tb_free_cfg(&cfg);
-
-    f->doms = NULL;
-    f->doms_n = 0;
-
-    tb_arena_clear(&f->tmp_arena);
-    cuikperf_region_end();
 
     return progress;
 }

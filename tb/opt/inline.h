@@ -344,6 +344,7 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
         cuikperf_region_end();
         #endif
 
+        STATS_ENTER(INLINE);
         int size = ipo->size_metric[f->uid];
         TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s (%d, %s)\n", f->super.name, size, classify_size_str(size)));
 
@@ -392,6 +393,7 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
             }
             cuikperf_region_end();
         }
+        STATS_EXIT(INLINE);
 
         log_debug("%s: queue'd to optimize now that it has tried inlining!", f->super.name);
         f->ipo_lock = IPO_FUNC_OPT;

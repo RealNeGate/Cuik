@@ -25,6 +25,17 @@ enum {
 
 #define FOR_USERS(u, n) for (TB_User *u = (n)->users, *_end_ = &u[(n)->user_count]; u != _end_; u++)
 
+enum {
+    #define X(name, desc) STATS_ ## name,
+    #include "stats.h"
+    STATS_MAX
+};
+
+extern _Atomic(uint64_t) tb_stats[];
+
+#define STATS_ENTER(name) uint64_t t_ ## name = cuik_time_in_nanos();
+#define STATS_EXIT(name) tb_stats[STATS_ ## name] += cuik_time_in_nanos() - t_ ## name;
+
 ////////////////////////////////
 // Constant prop
 ////////////////////////////////

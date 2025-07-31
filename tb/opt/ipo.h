@@ -316,6 +316,32 @@ static void func_opt_task(TPool* tp, void** arg) {
 #include "ipsccp.h"
 #include "inline.h"
 
+void tb_dump_stats(void) {
+    uint64_t total_time = 0;
+    FOR_N(i, 0, STATS_MAX) {
+        total_time += tb_stats[i];
+    }
+
+    if (0) {
+        // CSV dump
+        FOR_N(i, 0, STATS_MAX) {
+            printf("%s,%zu\n", stats_get_name(i), tb_stats[i]);
+        }
+    } else {
+        printf("Total exec time: %f ms\n\n", total_time / 1000000.0);
+        printf("  ----  Time  ----   --- Name ---\n");
+        FOR_N(i, 0, STATS_MAX) {
+            uint64_t t = tb_stats[i];
+            double percent = total_time ? ((double)t / (double)total_time) * 100.0 : 0.0;
+            int frac_p = fmodf(percent * 10.0, 10.0);
+            int int_p  = floorf(percent);
+
+            printf("  %.4f (%3d.%1d%%)   %s\n", tb_stats[i] / 1000000.0, int_p, frac_p, stats_get_name(i));
+        }
+        printf("\n");
+    }
+}
+
 bool tb_module_ipo(TB_Module* m, TPool* pool) {
     cuikperf_region_start("Optimizer", NULL);
     mtx_init(&aaa, mtx_plain);
@@ -457,7 +483,11 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
     CUIK_TIMED_BLOCK("IPSCCP") {
         TB_ArenaSavepoint sp = tb_arena_save(scc.arena);
         ipo.ipsccp_ws = aarray_create(scc.arena, TB_Function*, scc.fn_count);
+
+        STATS_ENTER(IPSCCP);
         run_ipsccp(m, pool);
+        STATS_EXIT(IPSCCP);
+
         tb_arena_restore(scc.arena, sp);
     }
 

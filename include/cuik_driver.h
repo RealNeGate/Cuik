@@ -55,6 +55,7 @@ struct Cuik_DriverArgs {
     bool write_deps      : 1;
     bool optimize        : 1;
     bool time            : 1;
+    bool time_report     : 1;
     bool verbose         : 1;
     bool syntax_only     : 1;
     bool test_preproc    : 1;

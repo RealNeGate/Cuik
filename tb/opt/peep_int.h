@@ -230,7 +230,7 @@ static void known_bits_add(uint64_t a_zeros, uint64_t a_ones, uint64_t b_zeros, 
     out_known[1] =  possible_sum_ones  & known;
 }
 
-static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b, bool congruent) {
+static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b, bool congruent, bool at_top) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
     int64_t imin = lattice_int_min(bits);
@@ -316,10 +316,17 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         // prune based on that fact to avoid an ambiguity.
         Lattice* t = lattice_gimme_int2(f, min, max, known[0], known[1], 64);
         if (congruent && type == TB_SUB) {
-            return lattice_int_const(f, 0);
-        } else {
-            return t;
+            Lattice* zero = &FALSE_IN_THE_SKY; // it's a zero
+
+            // we can only drop to zero from TOP and our current approximation
+            // is subset of 0 (that way if push comes to shove we can extend
+            // from 0 -> t without weird conflicts)
+            if (at_top && lattice_meet(f, t, zero) == t) {
+                return zero;
+            }
         }
+
+        return t;
     } else {
         return lattice_gimme_int(f, min, max, bits);
     }
@@ -332,8 +339,9 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
+    Lattice* old_type = latuni_get(f, n);
     bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
-    return value_arith_raw(f, n->type, n->dt, a, b, c);
+    return value_arith_raw(f, n->type, n->dt, a, b, c, old_type == &TOP_IN_THE_SKY);
 }
 
 ////////////////////////////////
@@ -972,8 +980,9 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
 
     TB_DataType dt = n->inputs[1]->dt;
     if (TB_IS_INTEGER_TYPE(dt)) {
-        bool c = false; // gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
-        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, a, b, c);
+        Lattice* old_type = latuni_get(f, n);
+        bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
+        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, a, b, c, old_type == &TOP_IN_THE_SKY);
 
         // ok it's really annoying that i have to deal with the "idk bro" case in the middle
         // of each but that's why it looks like this... if you were curious (which you aren't :p)

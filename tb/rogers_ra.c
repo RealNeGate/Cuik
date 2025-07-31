@@ -639,14 +639,12 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                     rm = new_mask;
                 }
 
-                TB_ASSERT(n->inputs[k]->gvn < ra.uf_len);
-
                 // hard coalesce with direct input
                 y = uf_find(ra.uf, ra.uf_len, n->inputs[k]->gvn);
                 rogers_coalesce(ctx, &ra, x, y, n, n->inputs[k]);
             }
 
-            x = uf_find(ra.uf, ra.uf_len, n->gvn);
+            TB_ASSERT(x == ra.uf[x]); // must've stayed the head
             ctx->vregs[ctx->vreg_map[x]].mask = rm;
         }
 

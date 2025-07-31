@@ -21,6 +21,7 @@
 //   MOP  - Meet Over all Paths
 //   IPO  - InterProcedural Optimizations
 //   RPC  - Return Program Counter
+//   SLP  - Superword-Level Parallelism
 #ifndef TB_CORE_H
 #define TB_CORE_H
 
@@ -1375,6 +1376,9 @@ TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_CodegenRA ra, TB_Worklis
 // interprocedural optimizer iter
 typedef struct TPool TPool;
 TB_API bool tb_module_ipo(TB_Module* m, TPool* pool);
+
+// global perf stats
+TB_API void tb_dump_stats(void);
 
 ////////////////////////////////
 // Cooler IR building

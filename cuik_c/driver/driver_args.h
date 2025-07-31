@@ -33,7 +33,8 @@ X(ENTRY,       "e",        true,  "set entrypoint")
 // misc
 X(TARGET,      "target",   true,  "change the target system and arch")
 X(THREADS,     "j",        true,  "enabled multithreaded compilation")
-X(TIME,        "T",        false, "profile the compile times")
+X(TIME,        "T",        false, "profile the compile times (outputs spall)")
+X(TIMEREPORT,  "t",        false, "time report of the passes")
 X(THINK,       "think",    false, "aids in thinking about serious problems")
 // run
 X(RUN,         "r",        false, "JIT the executable (NOT READY)")

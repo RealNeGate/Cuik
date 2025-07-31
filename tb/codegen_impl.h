@@ -627,6 +627,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     }
 
     CUIK_TIMED_BLOCK("isel") {
+        STATS_ENTER(MACH_ISEL);
         log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f);
 
         // rewrite the root node
@@ -743,10 +744,12 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         log_phase_end(f, og_size, "isel");
 
         TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "ISel"));
+        STATS_EXIT(MACH_ISEL);
     }
 
     TB_CFG cfg;
     CUIK_TIMED_BLOCK("global sched") {
+        STATS_ENTER(MACH_GCM);
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
         #if !TB_OPTDEBUG_ISEL && !TB_OPTDEBUG_ISEL2 && !TB_OPTDEBUG_ISEL3
@@ -767,15 +770,16 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         }
         tb_dataflow(f, &f->tmp_arena, cfg);
         log_phase_end(f, og_size, "GCM");
+        STATS_EXIT(MACH_GCM);
     }
 
     size_t bb_count = aarray_length(cfg.blocks);
-
     Set has_safepoints = set_create_in_arena(&f->arena, f->node_count);
 
     size_t node_count = f->node_count;
     size_t vreg_cap = 0;
     CUIK_TIMED_BLOCK("local schedule") {
+        STATS_ENTER(MACH_LCM);
         ctx.vreg_map = aarray_create(&f->arena, int, tb_next_pow2(f->node_count + 16));
         aarray_set_length(ctx.vreg_map, f->node_count);
 
@@ -851,6 +855,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         // setup for the next phase
         ctx.vregs = aarray_create(&f->arena, VReg, tb_next_pow2(vreg_count + 16));
         aarray_set_length(ctx.vregs, vreg_count);
+        STATS_EXIT(MACH_LCM);
     }
 
     CUIK_TIMED_BLOCK("gather RA constraints") {
@@ -904,6 +909,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
+        STATS_ENTER(MACH_RA);
         switch (ra) {
             case TB_RA_ROGERS: tb__rogers(&ctx, &f->tmp_arena); break;
             case TB_RA_BRIGGS: tb__briggs(&ctx, &f->tmp_arena); break;
@@ -911,6 +917,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);
+        STATS_EXIT(MACH_RA);
 
         log_phase_end(f, og_size, "RA");
     }
@@ -919,6 +926,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     size_t final_order_count = 0;
 
     CUIK_TIMED_BLOCK("BB scheduling") {
+        STATS_ENTER(MACH_BB_SCHED);
         if (bb_count == 1) {
             // none of this shit is necessary for single BB functions
             final_order_count = 1;
@@ -1019,9 +1027,12 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             printf("  BB%-3d (freq=%f)\n", id, cfg.blocks[id].freq);
         }
         #endif
+        STATS_EXIT(MACH_BB_SCHED);
     }
 
     CUIK_TIMED_BLOCK("emit") {
+        STATS_ENTER(MACH_EMIT);
+
         // most functions are probably decently small, it's ok tho if it needs to
         // resize it can do that pretty quickly
         ctx.emit.capacity = 1024;
@@ -1174,6 +1185,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 *ctx.jump_table_patches[i].pos = target & ~0x80000000;
             }
         }
+
+        STATS_EXIT(MACH_EMIT);
     }
 
     if (ctx.locations) {
@@ -1182,6 +1195,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
     // TODO(NeGate): move the assembly output to code arena
     if (emit_asm) CUIK_TIMED_BLOCK("dissassembly") {
+        STATS_ENTER(MACH_ASM_PRINT);
+
         dump_stack_layout(&ctx, &ctx.emit);
         dyn_array_for(i, ctx.debug_stack_slots) {
             TB_StackSlot* s = &ctx.debug_stack_slots[i];
@@ -1262,6 +1277,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             }
             disassemble(arch, e, &d, id, start, end);
         }
+
+        STATS_EXIT(MACH_ASM_PRINT);
     }
 
     // cleanup memory

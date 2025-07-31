@@ -391,6 +391,10 @@ static void ld_invoke(TPool* tp, void** arg) {
         CUIK_TIMED_BLOCK("Codegen") {
             cuiksched_per_function(tp, s->ld.cu, mod, args, apply_func);
         }
+
+        if (args->time_report) {
+            tb_dump_stats();
+        }
     }
 
     // Once the frontend is complete we don't need this... unless we wanna keep it

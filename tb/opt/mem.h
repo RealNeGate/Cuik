@@ -334,7 +334,6 @@ static TB_Node* next_of_memory_sese(TB_Node* curr) {
 }
 
 static TB_Node* end_of_memory_sese(TB_Function* f, TB_Node* curr) {
-    TB_OPTLOG(MEMORY, printf("SESE:\n"));
     for (;;) {
         TB_OPTLOG(MEMORY, printf("  WALK %%%u\n", curr->gvn));
 
@@ -370,6 +369,8 @@ static MemoryState* start_of_memory_sese(NL_Table* sese2set, TB_Node* n) {
 static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* restrict ctx, TB_Node* curr, MemoryState* state, NL_Table* non_aliasing, bool* out_progress) {
     TB_Node** latest = state->walked_once ? NULL : state->latest;
     TB_OPTLOG(MEMORY, printf("\n\n"));
+
+    bool progress = false;
 
     // current aliasing set is a meet over all preds
     nl_table_clear(non_aliasing);
@@ -774,7 +775,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
     }
 
     if (out_progress) {
-        *out_progress = false;
+        *out_progress = latest != NULL;
     }
     return curr;
 }
@@ -796,6 +797,21 @@ static void postorder_memory(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
             // don't traverse past it
         } else if (use_n->type == TB_MERGEMEM || use_n->type == TB_PHI || cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
             postorder_memory(f, sese2set, sese_worklist, use_n, local_count);
+        }
+    }
+
+    {
+        TB_Node* curr = start;
+        TB_OPTLOG(MEMORY, printf("SESE %zu:\n", dyn_array_length(sese_worklist->items)));
+        for (;;) {
+            TB_OPTLOG(MEMORY, printf("  WALK %%%u\n", curr->gvn));
+
+            // the next memory output, NULL if there's multiple
+            TB_Node* next = next_of_memory_sese(curr);
+            if (next == NULL) {
+                break;
+            }
+            curr = next;
         }
     }
 
@@ -979,7 +995,8 @@ int tb_opt_locals(TB_Function* f) {
         }
 
         // tb_print(f);
-        TB_OPTLOG(MEMORY, tb_print_dumb(f));
+        TB_OPTLOG(MEMORY, tb_print(f));
+        TB_OPTLOG(MEMORY, __debugbreak());
         // __debugbreak();
 
         TB_Worklist sese_worklist;
@@ -999,7 +1016,7 @@ int tb_opt_locals(TB_Function* f) {
         // basic loop finding
         ctx.postorder_len = dyn_array_length(sese_worklist.items);
         ctx.postorder_states = tb_arena_alloc(&f->tmp_arena, ctx.postorder_len * sizeof(MemoryState*));
-        FOR_REV_N(i, 0, ctx.postorder_len) {
+        FOR_N(i, 0, ctx.postorder_len) {
             TB_Node* start = sese_worklist.items[i];
             MemoryState* state = nl_table_get(&sese2set, start);
 
@@ -1017,6 +1034,7 @@ int tb_opt_locals(TB_Function* f) {
             }
 
             if (loop_tail) {
+                TB_OPTLOG(MEMORY, printf("MEMORY LOOP: SESE %u -> SESE %u\n", state->order, loop_tail->order));
                 state->is_loop = true;
                 loop_tail->loop_head = state;
             }
@@ -1046,6 +1064,7 @@ int tb_opt_locals(TB_Function* f) {
                 bool progress;
                 process_sese(f, &sese2set, &ctx, state->loop_head->start, state->loop_head, &non_aliasing, &progress);
                 if (progress && i + 1 > state->loop_head->order) {
+                    progress = false;
                     i = state->loop_head->order + 1;
                 }
             }
@@ -1154,9 +1173,7 @@ int tb_opt_locals(TB_Function* f) {
             }
         }
 
-        // tb_print_dumb(f);
         // tb_print(f);
-        // __debugbreak();
 
         worklist_free(&sese_worklist);
     }
