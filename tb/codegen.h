@@ -94,7 +94,8 @@ struct VReg {
     // BRIGGS: when coalesced this number will go up
     int uses;
 
-    bool was_spilled;
+    bool was_spilled : 1;
+    bool was_reload  : 1;
 };
 
 typedef struct Ctx Ctx;
@@ -118,7 +119,7 @@ typedef bool (*NodeRemat)(TB_Node* n);
 typedef int (*TB_2Addr)(TB_Node* n);
 
 typedef struct {
-    uint32_t* pos;
+    uint64_t* pos;
     uint32_t target;
 } JumpTablePatch;
 
@@ -162,6 +163,7 @@ typedef struct {
 
 struct Ctx {
     TB_CGEmitter emit;
+    TB_FeatureSet features;
 
     TB_Module* module;
     TB_Function* f;
@@ -193,6 +195,11 @@ struct Ctx {
     // used when calling node_constraint since it needs an array, we
     // figure out the max input count of all nodes before allocating it.
     RegMask** ins;
+
+    // cached set of mask for all argument passing slots, these are generally
+    // clobbered by function calls so i figured keeping a copy of them around
+    // would be nice.
+    RegMask* cached_arg_list_mask;
 
     // Values
     ArenaArray(VReg) vregs;   // [vid]
@@ -274,27 +281,31 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
+static double get_node_spill_cost(Ctx* restrict ctx, TB_Node* n) {
+    if (n->type == TB_MACH_TEMP) {
+        return 1.0;
+    } else if (can_remat(ctx, n)) {
+        return -1.0;
+    } else if (n->type == TB_MACH_FRAME_PTR || n->user_count == 0) {
+        // no users? probably a projection that can't be spilled
+        return INFINITY;
+    } else {
+        double c = 0.0f;
+
+        // sum of (block_freq * uses_in_block)
+        FOR_USERS(u, n) {
+            TB_Node* un = USERN(u);
+            if (ctx->f->scheduled[un->gvn] == NULL) { continue; }
+            c += ctx->f->scheduled[un->gvn]->freq;
+        }
+
+        return c;
+    }
+}
+
 static double get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
     if (isnan(vreg->spill_cost)) {
-        if (vreg->n->type == TB_MACH_TEMP) {
-            vreg->spill_cost = 1.0 + vreg->spill_bias;
-        } else if (can_remat(ctx, vreg->n)) {
-            vreg->spill_cost = -1.0 + vreg->spill_bias;
-        } else if (vreg->n->type == TB_MACH_FRAME_PTR || vreg->n->user_count == 0) {
-            // no users? probably a projection that can't be spilled
-            vreg->spill_cost = INFINITY;
-        } else {
-            double c = 0.0f;
-
-            // sum of (block_freq * uses_in_block)
-            FOR_USERS(u, vreg->n) {
-                TB_Node* un = USERN(u);
-                if (ctx->f->scheduled[un->gvn] == NULL) { continue; }
-                c += ctx->f->scheduled[un->gvn]->freq;
-            }
-
-            vreg->spill_cost = c + vreg->spill_bias;
-        }
+        vreg->spill_cost = get_node_spill_cost(ctx, vreg->n) + vreg->spill_bias;
     }
 
     // no area? this means it's used right after def
@@ -394,6 +405,30 @@ static RegMask* new_regmask(TB_Function* f, int reg_class, bool may_spill, uint6
     return rm;
 }
 
+static RegMask* new_regmask_range(TB_Function* f, int reg_class, bool may_spill, int start, int count) {
+    TB_ASSERT(count != 0);
+    int end = start + count;
+    int words = (end + 63) / 64;
+
+    RegMask* rm = tb_arena_alloc(&f->arena, sizeof(RegMask) + words*sizeof(uint64_t));
+    rm->may_spill = may_spill;
+    rm->class = reg_class;
+    rm->count = words;
+
+    // leading
+    FOR_N(j, 0, (start + 63) / 64) { rm->mask[j] = 0; }
+    if (start % 64) {
+        rm->mask[start / 64] |= UINT64_MAX << (start % 64);
+    }
+
+    // trailing
+    FOR_N(j, (start + 63) / 64, (end + 63) / 64) { rm->mask[j] = UINT64_MAX; }
+    if (end % 64) {
+        rm->mask[end / 64] &= UINT64_MAX >> (64ull - (end % 64));
+    }
+    return rm;
+}
+
 static uint32_t rm_hash(void* a) {
     RegMask* x = a;
     uint32_t sum = 0;
@@ -447,6 +482,9 @@ static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg
 #define BITS64_FOR(it, set, cap) for (int it = bits64_first(set, cap); it >= 0; it = bits64_next(set, cap, it))
 
 static int bits64_next(uint64_t* arr, size_t cnt, int x) {
+    // skip one ahead
+    x += 1;
+
     // unpack coords
     size_t i = x / 64, j = x % 64;
 
@@ -455,7 +493,8 @@ static int bits64_next(uint64_t* arr, size_t cnt, int x) {
         // we're done
         if (i*64 >= cnt) { return -1; }
         // chop off the bottom bits which have been processed
-        word = arr[i] & ~(UINT64_MAX >> (63 - j));
+        uint64_t mask = UINT64_MAX << j;
+        word = arr[i] & mask;
         if (word != 0) {
             return i*64 + tb_ffs64(word) - 1;
         }

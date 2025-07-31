@@ -52,8 +52,10 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
     *g = (TB_GraphBuilder){ .f = f, .arena = &f->tmp_arena };
     g->peep = ws ? tb_opt_peep_node : tb_opt_gvn_node;
 
+    bool has_aggregate_return = dbg && dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
+
     // both RPC and memory are mutable vars
-    int def_count = 3 + (dbg ? 0 : f->param_count);
+    int def_count = 3 + (dbg ? has_aggregate_return : f->param_count);
     TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, def_count, sizeof(TB_NodeSymbolTable));
     set_input(f, syms, f->params[0], 0);
     set_input(f, syms, f->params[0], 1);
@@ -73,7 +75,10 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
         }
 
         // reassemble values
-        bool has_aggregate_return = dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
+        if (has_aggregate_return) {
+            set_input(f, syms, f->params[3], 3);
+        }
+
         FOR_N(i, 0, param_count) {
             TB_DebugType* type = param_list[i]->field.type;
             const char* name = param_list[i]->field.name;
@@ -140,10 +145,26 @@ void tb_builder_exit(TB_GraphBuilder* g) {
         tb_builder_label_kill(g, g->start_syms);
     }
 
+    // if the return block was never used, throw it away
+    TB_Function* f = g->f;
+    TB_Node* ret = f->root_node->inputs[1];
+    if (ret->type == TB_RETURN && ret->inputs[0]->type == TB_REGION && ret->inputs[0]->input_count == 0) {
+        tb_kill_node(f, ret->inputs[0]);
+
+        int last = f->root_node->input_count - 1;
+        TB_Node* last_n = f->root_node->inputs[last];
+        TB_ASSERT(last != 1); // can't have no termination
+
+        set_input(f, f->root_node, NULL, last);
+        set_input(f, f->root_node, last_n, 1);
+        f->root_node->input_count--;
+
+        tb_kill_node(f, ret);
+    }
+
     // needs to be empty for the optimizer not to act up
     tb_arena_clear(g->arena);
 
-    TB_Function* f = g->f;
     if (f->worklist) {
         worklist_clear(f->worklist);
         tb_opt(f, f->worklist, false);
@@ -282,6 +303,14 @@ TB_Node* tb_builder_select(TB_GraphBuilder* g, TB_Node* cond, TB_Node* a, TB_Nod
     set_input(f, n, cond, 1);
     set_input(f, n, a, 2);
     set_input(f, n, b, 3);
+    return g->peep(f, n);
+}
+
+TB_Node* tb_builder_va_start(TB_GraphBuilder* g, TB_Node* src) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_VA_START, TB_TYPE_PTR, 2, 0);
+    set_input(f, n, f->root_node, 0);
+    set_input(f, n, src, 1);
     return g->peep(f, n);
 }
 
@@ -868,8 +897,7 @@ void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file, int li
 
 TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int nargs, TB_Node** args) {
     TB_Function* f = g->f;
-
-    size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
+    size_t proj_count = 2 + proto->return_count;
 
     TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + nargs, sizeof(TB_NodeCall));
     set_input(f, n, target, 2);
@@ -951,6 +979,14 @@ void tb_builder_debugbreak(TB_GraphBuilder* g, int mem_var) {
     TB_Node* n = tb_alloc_node(g->f, TB_DEBUGBREAK, TB_TYPE_CONTROL, 2, 0);
     set_input(g->f, n, xfer_ctrl(g, n), 0);
     set_input(g->f, n, peek_mem(g, mem_var), 1);
+}
+
+void tb_builder_blackhole(TB_GraphBuilder* g, int count, TB_Node** args) {
+    TB_Node* n = tb_alloc_node(g->f, TB_BLACKHOLE, TB_TYPE_CONTROL, 1 + count, 0);
+    set_input(g->f, n, xfer_ctrl(g, n), 0);
+    FOR_N(i, 0, count) {
+        set_input(g->f, n, args[i], 1+i);
+    }
 }
 
 void tb_builder_entry_fork(TB_GraphBuilder* g, int count, TB_Node* paths[]) {

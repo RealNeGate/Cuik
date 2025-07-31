@@ -158,8 +158,13 @@ void tb_linker_print_map(TB_Linker* l) {
     printf("\n  Address         Publics by Value              Rva+Base               Lib:Object\n\n");
     dyn_array_for(i, symbols) {
         TB_LinkerSymbol* sym = symbols[i];
-        uint32_t secidx = sym->normal.piece->parent->segment->number;
-        uint32_t secrel = sym->normal.piece->parent->offset + sym->normal.secrel;
+
+        uint32_t secidx = 0;
+        uint32_t secrel = 0;
+        if (sym->normal.piece->parent->segment) {
+            secidx = sym->normal.piece->parent->segment->number;
+            secrel = sym->normal.piece->parent->offset + sym->normal.secrel;
+        }
 
         int len = printf(" %04"PRIx32":%08"PRIx32"       %.*s", secidx, secrel, (int) sym->name.length, sym->name.data);
         // add padding
@@ -196,9 +201,48 @@ void tb_linker_append_object(TB_Linker* l, const char* file_name) {
 }
 
 void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
-    CUIK_TIMED_BLOCK("append_module") {
-        __debugbreak();
+    #ifdef CONFIG_HAS_TB
+    if (!linker_thread_init) {
+        linker_thread_init = true;
+        tb_arena_create(&linker_perm_arena, "LinkerPerm");
+        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
     }
+
+    size_t newlen = sizeof("Module")-1;
+    char* newstr = linker_newstr(newlen, "Module");
+
+    TB_LinkerObject* lib_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
+    *lib_file = (TB_LinkerObject){
+        { (const uint8_t*) newstr, newlen },
+        l,
+        .module = m,
+        atomic_fetch_add(&l->time, 0x100000000),
+    };
+
+    if (l->jobs.pool != NULL) {
+        l->jobs.count += 1;
+        tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_module, lib_file);
+    } else {
+        l->vtbl.append_module(NULL, &(void*){ lib_file });
+    }
+    #endif
+}
+
+static bool tb__linker_is_library_new(TB_Linker* l, const char* file_name) {
+    if (!linker_thread_init) {
+        linker_thread_init = true;
+        tb_arena_create(&linker_perm_arena, "LinkerPerm");
+        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
+    }
+
+    size_t len = strlen(file_name);
+    char* str = tb_arena_alloc(&linker_perm_arena, len + 1);
+    memcpy(str, file_name, len);
+    str[len] = 0;
+
+    bool found = strhs_get(&l->libs, str);
+    tb_arena_free(&linker_perm_arena, str, len + 1);
+    return !found;
 }
 
 void tb_linker_append_library(TB_Linker* l, const char* file_name) {
@@ -704,7 +748,7 @@ void tb_linker_export_pieces(TB_Linker* l) {
         futex_wait_eq(&l->jobs.done, l->jobs.count);
     } else {
         dyn_array_for(i, sections) {
-            FOR_N(j, 0, sections[i]->piece_count) {
+            dyn_array_for(j, sections[i]->pieces) {
                 TB_LinkerSectionPiece* p = sections[i]->pieces[j];
                 if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind != PIECE_BSS) {
                     void* args[2] = { l, p };
@@ -899,11 +943,12 @@ bool tb_linker_layout(TB_Linker* l) {
             *segment = (TB_LinkerSegment){
                 .name   = name,
                 .number = segment_count,
-                .flags = sections[i]->flags,
+                .flags  = sections[i]->flags,
             };
             dyn_array_put(segments, segment);
         } else {
             segment = segments[j];
+            segment->flags  = sections[i]->flags;
         }
 
         sections[i]->segment = segment;
@@ -973,11 +1018,22 @@ static int32_t resolve_reloc(TB_LinkerSymbol* sym, TB_ObjectRelocType type, uint
     }
 }
 
+void tb__linker_module_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc) {
+    const TB_LinkerReloc* relocs = p->relocs;
+    *out_reloc = relocs[reloc_i];
+}
+
 size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail) {
+    #ifdef CONFIG_HAS_TB
+    RelocParser parse_reloc = p->obj && p->obj->module ? tb__linker_module_parse_reloc : l->vtbl.parse_reloc;
+    #else
+    RelocParser parse_reloc = l->vtbl.parse_reloc;
+    #endif
+
     size_t reloc_len = p->reloc_count;
     while (reloc_i < reloc_len) {
         TB_LinkerReloc rel;
-        l->vtbl.parse_reloc(l, p, reloc_i, &rel);
+        parse_reloc(l, p, reloc_i, &rel);
 
         int rel_size = rel.type == TB_OBJECT_RELOC_ADDR64 ? 8 : 4;
 
@@ -1010,9 +1066,13 @@ size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* ou
         }
 
         if (rel.type == TB_OBJECT_RELOC_ADDR64) {
+            if (sym->tag != TB_LINKER_SYMBOL_ABSOLUTE) {
+                target_rva += 0x140000000;
+            }
+
             // we write out the fake VA and the base relocs will fix it up
             int64_t* dst = (int64_t*) &out[dst_pos];
-            *dst += 0x140000000 + target_rva;
+            *dst += target_rva;
         } else {
             uint32_t src_rva = section_rva + p->offset + rel.src_offset;
             int32_t* dst = (int32_t*) &out[dst_pos];
@@ -1111,12 +1171,18 @@ void tb_linker_mark_live(TB_Linker* l) {
             }
         }
 
+        #ifdef CONFIG_HAS_TB
+        RelocParser parse_reloc = p->obj && p->obj->module ? tb__linker_module_parse_reloc : l->vtbl.parse_reloc;
+        #else
+        RelocParser parse_reloc = l->vtbl.parse_reloc;
+        #endif
+
         // mark any relocations:
         //   by this point, the symbols aren't being fought for so we really should
         // use relaxed loads when possible (might matter for ARM but not x86)
         FOR_N(i, 0, p->reloc_count) {
             TB_LinkerReloc rel;
-            l->vtbl.parse_reloc(l, p, i, &rel);
+            parse_reloc(l, p, i, &rel);
 
             TB_LinkerSymbol* sym = tb_linker_symbol_find(rel.target);
             if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN || sym->tag == TB_LINKER_SYMBOL_LAZY) {

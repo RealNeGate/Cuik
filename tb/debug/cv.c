@@ -509,11 +509,15 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
                             CV_RegRel32 l = {
                                 .reclen = sizeof(CV_RegRel32) + (var_name_len + 1) - 2,
                                 .rectyp = S_REGREL32,
-                                .off = (out_f->stack_usage - out_f->stack_header) + stack_pos,
                                 .typind = type_index,
                                 // AMD64_RBP is 334, AMD64_RSP is 335
                                 .reg = 335,
                             };
+                            if (stack_pos < 0) {
+                                l.off = out_f->stack_usage + out_f->stack_header + (-stack_pos - 8);
+                            } else {
+                                l.off = out_f->base_locals + stack_pos;
+                            }
                             tb_outs(&debugs_out, sizeof(CV_RegRel32), &l);
                             tb_outs(&debugs_out, var_name_len + 1, (const uint8_t*) var_name);
                         }

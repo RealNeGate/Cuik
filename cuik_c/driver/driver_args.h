@@ -15,7 +15,7 @@ X(SYNTAX,      "xe",       false, "type check only")
 X(DEPS,        "MD",       false, "write header dependencies")
 X(DEPFILE,     "MF",       true,  "write depout from -MD into a file")
 // optimizer
-X(OPTLVL,      "O",        false,  "no optimizations")
+X(OPTLVL,      "O",        false, "enabled the optimizer")
 // backend
 X(EMITIR,      "emit-ir",  false, "print IR into stdout")
 X(OUTPUT,      "o",        true,  "set the output filepath")
@@ -32,7 +32,7 @@ X(SUBSYSTEM,   "subsystem",true,  "set windows subsystem (windows only... of cou
 X(ENTRY,       "e",        true,  "set entrypoint")
 // misc
 X(TARGET,      "target",   true,  "change the target system and arch")
-X(THREADS,     "j",        false, "enabled multithreaded compilation")
+X(THREADS,     "j",        true,  "enabled multithreaded compilation")
 X(TIME,        "T",        false, "profile the compile times")
 X(THINK,       "think",    false, "aids in thinking about serious problems")
 // run

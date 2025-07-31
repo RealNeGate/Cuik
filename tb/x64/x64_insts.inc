@@ -14,6 +14,7 @@ X(UD2,       "ud2",         BYTE_EXT,   0x0B)
 X(NOT,       "not",         UNARY,      .op_i = 0xF7, 0x02)
 X(NEG,       "neg",         UNARY,      .op_i = 0xF7, 0x03)
 X(MUL,       "mul",         UNARY,      .op_i = 0xF7, 0x04)
+X(IMUL1,     "imul",        UNARY,      .op_i = 0xF7, 0x05)
 X(DIV,       "div",         UNARY,      .op_i = 0xF7, 0x06)
 X(IDIV,      "idiv",        UNARY,      .op_i = 0xF7, 0x07)
 X(CALL,      "call",        UNARY,      0xE8,   0xFF, 0x02)
@@ -138,4 +139,8 @@ X(FP_AND,    "and",         BINOP_SSE,  0x54)
 X(FP_OR,     "or",          BINOP_SSE,  0x56)
 X(FP_XOR,    "xor",         BINOP_SSE,  0x57)
 X(FP_SHUF,   "shuf",        BINOP_SSE,  0xC6)
+
+// SSE int binops
+X(MOVDQU,    "movdqu",      BINOP_SSE, 0x6F)
+X(MOVDQA,    "movdqa",      BINOP_SSE, 0x6F)
 #undef X

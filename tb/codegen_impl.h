@@ -44,7 +44,7 @@ static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b);
 // Scheduling bits:
 //   simple latency until the results of a node are useful (list scheduler will
 //   generally prioritize dispatching higher latency ops first).
-static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end);
+static int node_latency(TB_Function* f, TB_Node* n, int i);
 //   on VLIWs it's important that we keep track of which functional units a specific
 //   node can even run on, use the bits to represent that (at most you can make 64
 //   functional units in the current design but i don't think i need more than 10 rn)
@@ -72,14 +72,18 @@ typedef struct {
 } NodeCursor;
 
 // Helpers
-static void dump_sched(Ctx* restrict ctx) {
+static void dump_sched(Ctx* restrict ctx, OutStream* s) {
+    if (s == NULL) {
+        s = &OUT_STREAM_DEFAULT;
+    }
+
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-        printf("BB %zu:\n", i);
+        s_writef(s, "BB %zu:\n", i);
         aarray_for(j, bb->items) {
-            printf("  ");
-            tb_print_dumb_node(NULL, bb->items[j]);
-            printf("\n");
+            s_writef(s, "  ");
+            tb_print_dumb_node_raw(NULL, bb->items[j], s);
+            s_writef(s, "\n");
         }
     }
 }
@@ -96,6 +100,38 @@ static void dump_pretty_sched(Ctx* restrict ctx) {
     }
     printf("\n");
 }
+
+/*static void dbg_submit_sched_event(Ctx* restrict ctx, const char* desc, ...) {
+    #if TB_OPTDEBUG_SERVER
+    if (dbg_server == NULL) {
+        return;
+    }
+
+    // if we're acting as a debug server, submit the latest copy of the
+    // IR to the list of events. The viewer will organize the timeline
+    // on it's end
+    int t = f->dbg_server_t++;
+
+    BufferOutStream s = bos_make();
+    s.header.quoted = true;
+    s_writef(&s.header, "{ \"type\":\"OPT\", \"name\":\"%s\", \"time\":%d, \"desc\":\"", f->super.name, t);
+
+    va_list ap;
+    va_start(ap, desc);
+    s.header.writef(&s.header, desc, ap);
+    va_end(ap);
+
+    s_writef(&s.header, "\", \"content\":\"");
+    tb_print_to_stream(f, &s.header);
+    s_writef(&s.header, "\" }");
+
+    // printf("%.*s\n", (int) s.cnt, s.data);
+
+    write_bytes(dbg_client, s.data, s.cnt);
+    sb_poll_server(dbg_server, 0);
+    cuik_free(s.data);
+    #endif
+}*/
 
 static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b) {
     #if TB_OPTDEBUG_EMIT
@@ -258,6 +294,7 @@ static uint32_t* mach_grammar;
 static bool mach_is_operand[512];
 static bool mach_is_subpat[512];
 static TB_Node* mach_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state);
+static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n);
 
 static void node_grammar_alloc(size_t cap) {
     cap = (cap * 4) / 3;
@@ -312,9 +349,16 @@ static uint32_t node_grammar_get(uint32_t k) {
     return 0;
 }
 
+static void indent(int depth) {
+    FOR_N(i, 0, depth) {
+        printf("  ");
+    }
+}
+
+// root is at depth=1
 static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws, int depth) {
     TB_ASSERT(n->type != TB_PHI);
-    if (depth == 0 && mach_is_subpat[n->type]) {
+    if (depth == 1 && mach_is_subpat[n->type]) {
         return NULL;
     }
 
@@ -322,7 +366,7 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
     int head = 1, state = 0;
     stk[0] = (NodeCursor){ 0 };
 
-    TB_OPTDEBUG(ISEL2)(printf("Matching %%%u (%d uses)...\n", n->gvn, n->user_count));
+    TB_OPTDEBUG(ISEL2)(indent(depth), printf("Matching %%%u (%d uses)...\n", n->gvn, n->user_count));
 
     TB_Node* curr = NULL;
     int index = 0;
@@ -331,43 +375,78 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
         TB_Node* in = curr ? (index < curr->input_count ? curr->inputs[index] : NULL) : n;
         TB_NodeTypeEnum in_type = in ? in->type : TB_NULL;
         if (in) {
-            TB_OPTDEBUG(ISEL2)(printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
+            TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
 
             // either matches against COND or MEMORY
-            bool wants_operand = node_grammar_get(state << 16 | (256+1)) > 0;
-            wants_operand |= node_grammar_get(state << 16 | (257+1)) > 0;
+            int wants_operand = 0;
+            if (node_grammar_get(state << 16 | (256+1)) > 0) {
+                wants_operand = 1; // MEMORY
+            } else if (node_grammar_get(state << 16 | (257+1)) > 0) {
+                wants_operand = 2; // COND
+            }
 
-            if (mach_is_operand[in->type] && in != n && wants_operand) {
-                worklist_test_n_set(walker_ws, in);
-                tb__gvn_remove(f, in);
+            if (in->type != n->type && wants_operand) {
+                if (mach_is_operand[in->type]) {
+                    bool pushed_already = worklist_test_n_set(walker_ws, in);
 
-                TB_OPTDEBUG(ISEL2)(printf("\n>>>\n"));
-                TB_Node* new_in = node_isel_raw(ctx, f, in, walker_ws, depth + 1);
-                if (new_in && new_in != n) {
-                    // we can GVN machine nodes :)
-                    new_in = tb_opt_gvn_node(f, new_in);
-                    subsume_node(f, in, new_in);
+                    TB_OPTDEBUG(ISEL2)(printf("\n"));
+                    TB_Node* new_in = node_isel_raw(ctx, f, in, walker_ws, depth + 1);
+                    if (new_in && new_in != in) {
+                        // we can GVN machine nodes :)
+                        if (!mach_is_subpat[in->type]) {
+                            subsume_node(f, in, new_in);
+                        } else {
+                            // tb__gvn_remove(f, curr);
+                            set_input(f, curr, new_in, index);
+                        }
 
-                    // don't walk the replacement
-                    worklist_push(walker_ws, new_in);
+                        // don't walk the replacement
+                        worklist_push(walker_ws, new_in);
 
-                    in = new_in;
-                    in_type = in ? in->type : TB_NULL;
+                        in = new_in;
+                        in_type = in ? in->type : TB_NULL;
+                    } else if (!pushed_already) {
+                        // node failed but hasn't been processed, treat it as a node of its own
+                        dyn_array_put(walker_ws->items, in);
+                    }
+
+                    #if TB_OPTDEBUG_ISEL2
+                    indent(depth);
+                    printf("    => ");
+                    tb_print_dumb_node(NULL, in);
+                    printf("\n");
+                    #endif
+                } else {
+                    uint32_t next = node_grammar_get(state << 16 | (in_type+1));
+                    if (next == 0) { next = node_grammar_get(state<<16); }
+
+                    // if there's no non-memory match, we'll take it as a last resort
+                    if (wants_operand == 1 && next == 0) {
+                        TB_Node* new_in = mach_dfa_bare_memory(ctx, f, in);
+                        set_input(f, curr, new_in, index);
+
+                        in = new_in;
+                        in_type = in ? in->type : TB_NULL;
+                        TB_ASSERT(in_type == 256);
+
+                        #if TB_OPTDEBUG_ISEL2
+                        printf("\n    %%%u treated as MEMORY node\n    ", in->gvn);
+                        tb_print_dumb_node(NULL, new_in);
+                        printf("\n");
+                        #endif
+
+                        TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
+                    }
                 }
-
-                #if TB_OPTDEBUG_ISEL2
-                printf("<<< ");
-                tb_print_dumb_node(NULL, in);
-                printf("\n");
-                #endif
             }
         } else {
-            TB_OPTDEBUG(ISEL2)(printf("  step(      %-16s, %3d): ", "___", state));
+            TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(      %-16s, %3d): ", "___", state));
         }
         uint32_t next = node_grammar_get(state<<16 | (in_type+1));
         // if there's no specific match, try general
         if (next == 0) { next = node_grammar_get(state<<16); }
         // if there's no match, try to resolve the input then go
+        TB_OPTDEBUG(ISEL2)(indent(depth));
         if (next == 0) {
             TB_OPTDEBUG(ISEL2)(printf("failed!\n"));
             return NULL;
@@ -400,7 +479,14 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
     } while (head > 1);
 
     // we've found a match, jump to the relevant C match
-    return mach_dfa_accept(ctx, f, n, state);
+    size_t old_node_count = f->node_count;
+    TB_Node* k = mach_dfa_accept(ctx, f, n, state);
+
+    if (k && k->gvn >= old_node_count) {
+        // we can GVN machine nodes :)
+        k = tb_opt_gvn_node(f, k);
+    }
+    return k;
 }
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
@@ -466,9 +552,17 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
     log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena) - og_size) / 1024.0f, label);
 }
 
-static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
-    cuikperf_region_start("compile", f->super.name);
+static bool is_vreg_match(Ctx* ctx, TB_Node* a, TB_Node* b) {
+    VReg* aa = &ctx->vregs[ctx->vreg_map[a->gvn]];
+    VReg* bb = &ctx->vregs[ctx->vreg_map[b->gvn]];
+    if (aa == bb) {
+        return true;
+    }
 
+    return aa->class == bb->class && aa->assigned == bb->assigned;
+}
+
+static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
     #if TB_OPTDEBUG_ISEL
     tb_print_dumb(f);
     #endif
@@ -509,6 +603,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         .remat       = node_remat,
         .print_pretty= print_pretty,
         .num_classes = REG_CLASS_COUNT,
+        .features = f->features,
         .emit = {
             .output = func_out,
             .arena = code_arena,
@@ -561,7 +656,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         CUIK_TIMED_BLOCK("dead node elim") {
             for (TB_Node* n; n = worklist_pop(ws), n;) {
                 if (n->user_count == 0 && !is_proj(n) && n != ctx.frame_ptr) {
-                    TB_OPTDEBUG(ISEL)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
+                    TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
                     tb_kill_node(f, n);
                 }
             }
@@ -571,15 +666,15 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         aarray_for(i, pins) {
             TB_Node* pin_n = pins[i];
 
-            TB_OPTDEBUG(ISEL)(printf("PIN    t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
+            TB_OPTDEBUG(ISEL3)(printf("PIN    t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
             worklist_push(&walker_ws, pin_n);
 
             while (dyn_array_length(walker_ws.items) > 0) {
                 TB_Node* n = dyn_array_pop(walker_ws.items);
-                TB_OPTDEBUG(ISEL)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+                TB_OPTDEBUG(ISEL3)(printf("ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
                 if (!is_proj(n) && n->user_count == 0) {
-                    TB_OPTDEBUG(ISEL)(printf(" => \x1b[31mKILL\x1b[0m\n"));
+                    TB_OPTDEBUG(ISEL3)(printf(" => \x1b[31mKILL\x1b[0m\n"));
                     worklist_push(ws, n);
                     continue;
                 }
@@ -593,24 +688,24 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     }
                 }
 
-                tb__gvn_remove(f, n);
-
                 // replace with machine op
-                TB_OPTDEBUG(ISEL)(printf("\n\n"));
+                TB_OPTDEBUG(ISEL3)(printf("\n"));
                 if (n->type == TB_PHI) {
                     worklist_test_n_set(&walker_ws, n);
                 } else {
+                    tb__gvn_remove(f, n);
+
                     bool progress;
                     do {
-                        TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws, 0);
+                        TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws, 1);
                         progress = k != NULL;
 
-                        if (k && k != n) {
-                            // we can GVN machine nodes :)
-                            k = tb_opt_gvn_node(f, k);
+                        if (k) {
+                            TB_OPTDEBUG(ISEL3)(printf("  => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
-                            TB_OPTDEBUG(ISEL)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
-                            subsume_node(f, n, k);
+                            if (k != n) {
+                                subsume_node(f, n, k);
+                            }
 
                             // don't walk the replacement
                             worklist_test_n_set(&walker_ws, k);
@@ -618,7 +713,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         }
                     } while (progress);
                 }
-                TB_OPTDEBUG(ISEL)(printf("\n"));
+                TB_OPTDEBUG(ISEL2)(printf("\n"));
 
                 node_add_tmps(&ctx, n);
 
@@ -638,7 +733,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         CUIK_TIMED_BLOCK("dead node elim") {
             for (TB_Node* n; n = worklist_pop(ws), n;) {
                 if (n->user_count == 0 && !is_proj(n)) {
-                    TB_OPTDEBUG(ISEL)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
+                    TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
                     tb_kill_node(f, n);
                 }
             }
@@ -646,13 +741,15 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
         tb_arena_restore(&f->tmp_arena, pins_sp);
         log_phase_end(f, og_size, "isel");
+
+        TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "ISel"));
     }
 
     TB_CFG cfg;
     CUIK_TIMED_BLOCK("global sched") {
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
-        #if !TB_OPTDEBUG_ISEL
+        #if !TB_OPTDEBUG_ISEL && !TB_OPTDEBUG_ISEL2 && !TB_OPTDEBUG_ISEL3
         tb_renumber_nodes(f, ws);
         #endif
 
@@ -686,7 +783,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             ctx.vreg_map[i] = 0;
         }
 
-        TB_OPTDEBUG(ISEL)(printf("=== SCHED %s ===\n", ctx.f->super.name));
+        TB_OPTDEBUG(SCHED2)(printf("=== SCHED %s ===\n", ctx.f->super.name));
 
         int max_ins = 0;
         size_t vreg_count = 1; // 0 is reserved as the NULL vreg
@@ -694,24 +791,23 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         FOR_N(i, 0, bb_count) {
             TB_BasicBlock* bb = &cfg.blocks[i];
 
-            // compute local schedule
+            // compute local schedule, this schedule doesn't care about the exact pipeline details
             CUIK_TIMED_BLOCK("local sched") {
-                // tb_greedy_scheduler(f, &cfg, ws, bb);
-                tb_list_scheduler(f, &cfg, ws, bb, node_latency, node_unit_mask, FUNCTIONAL_UNIT_COUNT);
+                tb_list_scheduler(f, &cfg, ws, bb, node_latency);
             }
 
             // a bit of slack for spills
             size_t item_count = dyn_array_length(ws->items);
             ArenaArray(TB_Node*) items = aarray_create(&f->arena, TB_Node*, item_count + 16);
 
-            TB_OPTDEBUG(ISEL)(printf(".bb%zu:\n", i));
+            TB_OPTDEBUG(SCHED2)(printf(".bb%zu:\n", i));
 
             // copy out sched
             for (size_t j = 0; j < item_count; j++) {
                 TB_Node* n = ws->items[j];
 
                 // projections cannot emit code
-                #if TB_OPTDEBUG_ISEL
+                #if TB_OPTDEBUG_SCHED2
                 if (!cfg_is_region(n)) {
                     print_pretty(&ctx, n);
                     printf("\n");
@@ -823,86 +919,92 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     size_t final_order_count = 0;
 
     CUIK_TIMED_BLOCK("BB scheduling") {
-        // any empty projection blocks will mark which block they want you to jump to, if the
-        // block "forwards" to itself then it's not actually forwarding.
-        FOR_N(i, 0, bb_count) {
-            TB_BasicBlock* bb = &cfg.blocks[i];
-            bool empty = true;
+        if (bb_count == 1) {
+            // none of this shit is necessary for single BB functions
+            final_order_count = 1;
+            final_order[0] = 0;
+        } else {
+            // any empty projection blocks will mark which block they want you to jump to, if the
+            // block "forwards" to itself then it's not actually forwarding.
+            FOR_N(i, 0, bb_count) {
+                TB_BasicBlock* bb = &cfg.blocks[i];
+                bool empty = true;
 
-            size_t item_count = aarray_length(bb->items);
-            if (cfg_is_region(bb->items[0])) {
-                // if it's all phis then we've got an empty enough block for forwarding
-                FOR_N(j, 1, item_count) {
-                    if (bb->items[j]->type != TB_PHI) {
+                size_t item_count = aarray_length(bb->items);
+                if (cfg_is_region(bb->items[0])) {
+                    // if it's all phis then we've got an empty enough block for forwarding
+                    FOR_N(j, 1, item_count) {
+                        if (bb->items[j]->type != TB_PHI) {
+                            empty = false;
+                            break;
+                        }
+                    }
+                } else if (item_count > 1 || !cfg_is_cproj(bb->start)) {
+                    // if there's just empty copies we can consider it empty
+                    FOR_N(j, 0, item_count) {
+                        TB_Node* n = bb->items[j];
+                        if (bb->start == n) {
+                            continue;
+                        } else if (n->type == TB_MACH_COPY) {
+                            // if both dst & src match, it's not gonna emit anything
+                            if (is_vreg_match(&ctx, n, n->inputs[1])) {
+                                continue;
+                            }
+                        }
+
                         empty = false;
                         break;
                     }
                 }
-            } else if (item_count > 1 || !cfg_is_cproj(bb->start)) {
-                // if there's just empty copies we can consider it empty
-                FOR_N(j, 0, item_count) {
-                    TB_Node* n = bb->items[j];
-                    if (bb->start == n) {
-                        continue;
-                    } else if (n->type == TB_MACH_COPY) {
-                        // if both dst & src match, it's not gonna emit anything
-                        if (ctx.vreg_map[n->gvn] == ctx.vreg_map[n->inputs[1]->gvn]) {
-                            continue;
-                        }
-                    }
 
-                    empty = false;
-                    break;
+                if (empty) {
+                    TB_Node* next = cfg_next_control(bb->start);
+                    TB_BasicBlock* succ = nl_map_get_checked(cfg.node_to_block, next);
+                    bb->fwd = succ - cfg.blocks;
+                } else {
+                    bb->fwd = i;
                 }
             }
 
-            if (empty) {
-                TB_Node* next = cfg_next_control(bb->start);
-                TB_BasicBlock* succ = nl_map_get_checked(cfg.node_to_block, next);
-                bb->fwd = succ - cfg.blocks;
-            } else {
-                bb->fwd = i;
-            }
-        }
+            // sometimes we forward twice (wacky cases around "empty" regions)
+            FOR_N(i, 0, bb_count) {
+                TB_BasicBlock* bb = &cfg.blocks[i];
 
-        // sometimes we forward twice (wacky cases around "empty" regions)
-        FOR_N(i, 0, bb_count) {
-            TB_BasicBlock* bb = &cfg.blocks[i];
+                int fwd = bb->fwd;
+                while (fwd != cfg.blocks[fwd].fwd) {
+                    fwd = cfg.blocks[fwd].fwd;
+                }
 
-            int fwd = bb->fwd;
-            while (fwd != cfg.blocks[fwd].fwd) {
-                fwd = cfg.blocks[fwd].fwd;
+                bb->fwd = fwd;
             }
 
-            bb->fwd = fwd;
-        }
+            // final_order_count = bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
+            final_order_count = bb_placement_trace(&f->tmp_arena, &cfg, final_order);
 
-        // final_order_count = bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
-        final_order_count = bb_placement_trace(&f->tmp_arena, &cfg, final_order);
+            // insert fallthrus
+            FOR_N(i, 0, final_order_count) {
+                TB_BasicBlock* bb = &cfg.blocks[final_order[i]];
 
-        // insert fallthrus
-        FOR_N(i, 0, final_order_count) {
-            TB_BasicBlock* bb = &cfg.blocks[final_order[i]];
+                int fallthru = -1;
+                if (i + 1 < final_order_count) {
+                    fallthru = final_order[i + 1];
+                }
 
-            int fallthru = -1;
-            if (i + 1 < final_order_count) {
-                fallthru = final_order[i + 1];
-            }
+                // insert jump for the fallthru case, this matters most for the platforms which can
+                // bundle jumps (branch delay slots and VLIWs)
+                if (!cfg_is_terminator(bb->end)) {
+                    TB_Node* succ_n = cfg_next_control(bb->end);
+                    TB_BasicBlock* succ_bb = nl_map_get_checked(ctx.cfg.node_to_block, succ_n);
+                    if (succ_bb->fwd != fallthru) {
+                        TB_Node* jmp = tb_alloc_node(f, TB_MACH_JUMP, TB_TYPE_CONTROL, 1, 0);
+                        TB_User* succ = cfg_next_user(bb->end);
+                        set_input(f, USERN(succ), jmp, USERI(succ));
+                        set_input(f, jmp, bb->end, 0);
+                        bb->end = jmp;
 
-            // insert jump for the fallthru case, this matters most for the platforms which can
-            // bundle jumps (branch delay slots and VLIWs)
-            if (!cfg_is_terminator(bb->end)) {
-                TB_Node* succ_n = cfg_next_control(bb->end);
-                TB_BasicBlock* succ_bb = nl_map_get_checked(ctx.cfg.node_to_block, succ_n);
-                if (succ_bb->fwd != fallthru) {
-                    TB_Node* jmp = tb_alloc_node(f, TB_MACH_JUMP, TB_TYPE_CONTROL, 1, 0);
-                    TB_User* succ = cfg_next_user(bb->end);
-                    set_input(f, USERN(succ), jmp, USERI(succ));
-                    set_input(f, jmp, bb->end, 0);
-                    bb->end = jmp;
-
-                    aarray_push(bb->items, jmp);
-                    tb__insert(&ctx, f, bb, jmp);
+                        aarray_push(bb->items, jmp);
+                        tb__insert(&ctx, f, bb, jmp);
+                    }
                 }
             }
         }
@@ -1037,11 +1139,19 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     TB_Node* n  = sfpt_nodes[i].n;
                     uint32_t ip = sfpt_nodes[i].ip;
 
+                    TB_Node* proj1 = USERN(proj_with_index(n, 1));
+                    TB_BasicBlock* succ_bb = nl_map_get_checked(ctx.cfg.node_to_block, proj1);
+
+                    uint32_t target = ctx.emit.labels[succ_bb->fwd];
+                    TB_ASSERT((target & 0x80000000) && "target label wasn't resolved... what?");
+
                     TB_NodeSafepoint* n_sfpt = TB_NODE_GET_EXTRA(n);
                     TB_Safepoint* sfpt = tb_arena_alloc(code_arena, sizeof(TB_Safepoint) + n_sfpt->saved_val_count*sizeof(int32_t));
+                    sfpt->func = ctx.f;
                     sfpt->node = n;
                     sfpt->userdata = n_sfpt->userdata;
                     sfpt->ip = ip;
+                    sfpt->target = target;
                     FOR_N(i, 0, n_sfpt->saved_val_count) {
                         TB_Node* in = n->inputs[3 + i];
                         VReg* vreg = &ctx.vregs[ctx.vreg_map[in->gvn]];
@@ -1156,7 +1266,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
     // cleanup memory
     tb_free_cfg(&cfg);
-    cuikperf_region_end();
 
     #ifndef NDEBUG
     log_debug("%s: total allocs on ir_arena=%.1f KiB", f->super.name, f->arena.alloc_bytes / 1024.0f);
@@ -1176,6 +1285,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     func_out->code = ctx.emit.data;
     func_out->code_size = ctx.emit.count;
     func_out->locations = ctx.locations;
+    func_out->base_locals = ctx.call_usage*8;
     func_out->stack_slots = ctx.debug_stack_slots;
     func_out->stack_header = ctx.stack_header;
     func_out->stack_usage = ctx.stack_usage;

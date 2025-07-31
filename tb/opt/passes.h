@@ -1,5 +1,6 @@
 #pragma once
 #include "../tb_internal.h"
+#include "streams.h"
 #include <arena_array.h>
 #include <limits.h>
 
@@ -14,6 +15,12 @@ enum {
 #else
 #define USERN(u) ((u)->_n)    // node
 #define USERI(u) ((u)->_slot) // index
+#endif
+
+#if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
+#define TB_OPTLOG(name, ...) do { if (f->enable_log) { TB_OPTDEBUG(name)(__VA_ARGS__); } } while (0)
+#else
+#define TB_OPTLOG(name, ...) do {} while (0)
 #endif
 
 #define FOR_USERS(u, n) for (TB_User *u = (n)->users, *_end_ = &u[(n)->user_count]; u != _end_; u++)
@@ -62,6 +69,7 @@ struct Lattice {
         LATTICE_FLT32,    LATTICE_FLT64,    // bottom types for floats
         LATTICE_NAN32,    LATTICE_NAN64,
         LATTICE_XNAN32,   LATTICE_XNAN64,
+        LATTICE_FLTINT32, LATTICE_FLTINT64, // floats which perfectly represent integers
         LATTICE_FLTCON32, LATTICE_FLTCON64, // _f32 and _f64
 
         // pointers:
@@ -126,15 +134,6 @@ TB_Node* tb_node_mem_in(TB_Node* n);
 ////////////////////////////////
 // Core optimizer
 ////////////////////////////////
-typedef struct {
-    TB_Module* mod;
-    NL_HashSet visited;
-
-    size_t ws_cap;
-    size_t ws_cnt;
-    TB_Function** ws;
-} IPOSolver;
-
 static bool cant_signed_overflow(TB_Node* n) {
     return TB_NODE_GET_EXTRA_T(n, TB_NodeBinopInt)->ab & TB_ARITHMATIC_NSW;
 }
@@ -216,7 +215,7 @@ static TB_User* get_single_use(TB_Node* n) {
 }
 
 static bool tb_node_is_pinned(TB_Node* n) {
-    if ((n->type >= TB_ROOT && n->type <= TB_SAFEPOINT) || is_proj(n) || cfg_is_control(n)) {
+    if ((n->type >= TB_ROOT && n->type <= TB_SAFEPOINT) || is_proj(n) || cfg_is_control(n) || n->type == TB_MACH_FRAME_PTR) {
         return true;
     }
 
@@ -372,14 +371,21 @@ static bool succ_iter_next(SuccIter* restrict it) {
     return false;
 }
 
+bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b);
+TB_Node* gcf_congruent_leader(TB_Function* f, TB_Node* n);
+
 // lovely properties
 bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);
 bool cfg_is_terminator(TB_Node* n);
 bool cfg_is_endpoint(TB_Node* n);
 
+// debug server
+void dbg_submit_event(TB_Function* f, const char* desc, ...);
+
 // internal debugging mostly
 void tb_print_dumb_node(Lattice** types, TB_Node* n);
+void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, OutStream* s);
 
 // computes basic blocks but also dominators and loop nests if necessary.
 TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp_arena, bool dominators);
@@ -402,11 +408,11 @@ void subsume_node_without_phis(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void tb__gvn_remove(TB_Function* f, TB_Node* n);
 
 // Scheduler's cost model crap (talk about these in codegen_impl.h)
-typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n, TB_Node* end);
+typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n, int i);
 typedef uint64_t (*TB_GetUnitMask)(TB_Function* f, TB_Node* n);
 
 // Local scheduler
-void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count);
+void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb, TB_GetLatency get_lat);
 void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb);
 void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg);
 
@@ -426,6 +432,8 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);
 int tb_opt_peeps(TB_Function* f);
 int tb_opt_locals(TB_Function* f);
+
+void push_ipsccp_job(TB_Module* m, TB_Function* f);
 
 // Integrated IR debugger
 void tb_integrated_dbg(TB_Function* f, TB_Node* n);

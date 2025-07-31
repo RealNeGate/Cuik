@@ -146,7 +146,7 @@ if is_windows then
             ld = "link"
         end
 
-        ldflags = ldflags.." /nologo /incremental:no /debug onecore.lib msvcrt.lib libcmt.lib"
+        ldflags = ldflags.." /stack:4194304 /nologo /incremental:no /debug onecore.lib msvcrt.lib libcmt.lib"
         ldflags = ldflags.." /defaultlib:libcmt /out:"
     end
 
@@ -281,26 +281,37 @@ command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
 command("cuik_pp/keywords.h cuik_pp/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
 
 -- package freestanding headers into C file
-local x = {}
-if is_windows then
-    local cmd = io.popen("dir /B freestanding\\*.h")
-    for c in cmd:lines() do
-        x[#x + 1] = "freestanding/"..c
+function list_files(path)
+    local x = {}
+    if is_windows then
+        local cmd = io.popen("dir /B "..path.."\\*")
+        for c in cmd:lines() do
+            x[#x + 1] = path.."/"..c
+        end
+        cmd:close()
+    else
+        local cmd = io.popen("find "..path.."/* -maxdepth 1")
+        for c in cmd:lines() do
+            x[#x + 1] = c
+        end
+        cmd:close()
     end
-    cmd:close()
-else
-    local cmd = io.popen("find freestanding/*.h -maxdepth 1")
-    for c in cmd:lines() do
-        x[#x + 1] = c
-    end
-    cmd:close()
+    return table.concat(x, " ")
 end
-local freestanding_headers = table.concat(x, " ")
 
 command("bin/objs/hexembed"..exe_ext, "meta/hexembed.c", cc.." $in -O1 -o $out")
-command("bin/objs/freestanding.c", freestanding_headers, "bin/objs/hexembed"..exe_ext.." $in", "bin/objs/hexembed"..exe_ext)
 
-src[#src + 1] = "bin/objs/freestanding.c"
+if added["cuik_c"] then
+    local freestanding_headers = list_files("freestanding")
+    command("bin/objs/freestanding.c", freestanding_headers, "bin/objs/hexembed"..exe_ext.." cuik__ifiles bin/objs/freestanding.c $in", "bin/objs/hexembed"..exe_ext)
+    src[#src + 1] = "bin/objs/freestanding.c"
+end
+
+if false then -- added["tb"] then
+    local dbg_server_files = list_files("dbg_server")
+    command("bin/objs/dbg_server_embed.c", dbg_server_files, "bin/objs/hexembed"..exe_ext.." tb__ifiles bin/objs/dbg_server_embed.c $in", "bin/objs/hexembed"..exe_ext)
+    src[#src + 1] = "bin/objs/dbg_server_embed.c"
+end
 
 -- normal C files
 local objs = {}

@@ -406,15 +406,20 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                 tokens_next(s);
                 expect_char(s, '(');
 
-                int depth = 1;
-                while (depth) {
-                    if (tokens_get(s)->type == '(') {
-                        depth++;
-                    } else if (tokens_get(s)->type == ')') {
-                        depth--;
-                    }
-
+                if (tokens_match(s, sizeof("noreturn")-1, "noreturn")) {
                     tokens_next(s);
+                    expect_char(s, ')');
+                } else {
+                    int depth = 1;
+                    while (depth) {
+                        if (tokens_get(s)->type == '(') {
+                            depth++;
+                        } else if (tokens_get(s)->type == ')') {
+                            depth--;
+                        }
+
+                        tokens_next(s);
+                    }
                 }
 
                 tokens_prev(s);

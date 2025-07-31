@@ -14,7 +14,7 @@ struct InternalFile {
 
 extern InternalFile* cuik__ifiles_root;
 
-InternalFile* find_internal_file(const char* name) {
+static InternalFile* find_internal_file(const char* name) {
     InternalFile* f = cuik__ifiles_root;
     for (; f != NULL; f = f->next) {
         if (strcmp(name, f->name) == 0) return f;
@@ -89,7 +89,7 @@ bool cuikpp_default_fs(void* user_data, const Cuik_Path* restrict input, Cuik_Fi
 void cuiklex_canonicalize(size_t length, char* data) {
     uint8_t* text = (uint8_t*) data;
 
-    #if USE_INTRIN
+    #if USE_INTRIN && CUIK__IS_X64
     size_t simd_end = length;
     length = length & 15;
     #endif
@@ -100,7 +100,7 @@ void cuiklex_canonicalize(size_t length, char* data) {
         if (text[i] == 12)   text[i] = ' ';
     }
 
-    #if USE_INTRIN
+    #if USE_INTRIN && CUIK__IS_X64
     // NOTE(NeGate): This code requires SSE4.1, it's not impossible to make
     // ARM variants and such but yea.
     // log_debug("SIMD starts at %zu (ends at %zu) such that the iterations are a multiple of 16", length, simd_end);

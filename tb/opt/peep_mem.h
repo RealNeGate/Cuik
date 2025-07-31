@@ -138,6 +138,29 @@ static TB_Node* ideal_store(TB_Function* f, TB_Node* n) {
     TB_Node *mem = n->inputs[1], *addr = n->inputs[2], *val = n->inputs[3];
     TB_DataType dt = val->dt;
 
+    #if 0
+    // combining adjacent stores
+    TB_Node* b = val;
+    KnownPointer b_ptr = known_pointer(addr);
+    if (mem->type == TB_STORE && mem->inputs[0] == n->inputs[0] && mem->user_count == 1) {
+        TB_Node* a = mem->inputs[3];
+        KnownPointer a_ptr = known_pointer(mem->inputs[2]);
+        if (a_ptr.base == b_ptr.base) {
+            if (a_ptr.offset > b_ptr.offset) {
+                SWAP(TB_Node*, a, b);
+                SWAP(KnownPointer, a_ptr, b_ptr);
+            }
+
+            int a_bytes = tb_data_type_byte_size(f->super.module, a->dt.type);
+            int b_bytes = tb_data_type_byte_size(f->super.module, b->dt.type);
+            int bytes = a_bytes + b_bytes;
+            if (TB_IS_INTEGER_TYPE(a->dt) && TB_IS_INTEGER_TYPE(b->dt) && a_ptr.offset + a_bytes == b_ptr.offset) {
+                bool valid_size = bytes == 2 || bytes == 4 || bytes == 8;
+                __debugbreak();
+            }
+        }
+    }
+    #endif
 
     #if 0
     // store is next to a non-aliasing adjacent store (or merge to non-adjacent stores)
@@ -226,6 +249,10 @@ static TB_Node* ideal_ptr_offset(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
+static TB_Node* identity_dead_store(TB_Function* f, TB_Node* n) {
+    return n->inputs[1];
+}
+
 static TB_Node* identity_ptr_offset(TB_Function* f, TB_Node* n) {
     Lattice* off = latuni_get(f, n->inputs[2]);
     if (lattice_int_eq(off, 0)) {
@@ -263,6 +290,7 @@ static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {
     TB_Node* split_node = n->inputs[1];
 
     // remove useless split edges
+    #if 0
     size_t i = 2;
     while (i < n->input_count) {
         if (n->inputs[i] == split_node) {
@@ -280,5 +308,8 @@ static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {
 
     skip:
     return progress ? n : NULL;
+    #endif
+
+    return NULL;
 }
 

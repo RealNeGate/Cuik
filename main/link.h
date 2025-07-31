@@ -1,6 +1,7 @@
 #include <pool.h>
 #include <ctype.h>
 #include <tb_linker.h>
+#include <ebr.h>
 
 static const char* link_output_name;
 static DynArray(const char*) link_default_libs;
@@ -126,7 +127,7 @@ int run_link(int argc, const char** argv) {
 
         #if CUIK_ALLOW_THREADS
         TPool pool;
-        tpool_init(&pool, 1);
+        tpool_init(&pool, 6);
         TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, &pool);
         #else
         TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, NULL);
@@ -178,6 +179,7 @@ int run_link(int argc, const char** argv) {
         #endif
     }
 
+    ebr_deinit();
     cuikperf_stop();
     return status;
 }

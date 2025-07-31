@@ -396,23 +396,14 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
                     size_t symbol_id = target->symbol_id;
                     assert(symbol_id != 0);
 
-                    if (target->tag == TB_SYMBOL_FUNCTION || target->tag == TB_SYMBOL_EXTERNAL) {
-                        *relocs++ = (COFF_ImageReloc){
-                            .Type = IMAGE_REL_AMD64_REL32,
-                            .SymbolTableIndex = symbol_id,
-                            .VirtualAddress = actual_pos
-                        };
-                    } else if (target->tag == TB_SYMBOL_GLOBAL) {
-                        TB_Global* target_global = (TB_Global*) target;
-                        bool is_tls = sections[target_global->parent].flags & TB_MODULE_SECTION_TLS;
-                        *relocs++ = (COFF_ImageReloc){
-                            .Type = is_tls ? IMAGE_REL_AMD64_SECREL : IMAGE_REL_AMD64_REL32,
-                            .SymbolTableIndex = symbol_id,
-                            .VirtualAddress = actual_pos
-                        };
-                    } else {
-                        tb_todo();
+                    COFF_ImageReloc* r = relocs++;
+                    switch (p->type) {
+                        case TB_OBJECT_RELOC_REL32: r->Type = IMAGE_REL_AMD64_REL32;   break;
+                        case TB_OBJECT_RELOC_SECREL: r->Type = IMAGE_REL_AMD64_SECREL; break;
+                        default: tb_todo();
                     }
+                    r->SymbolTableIndex = symbol_id;
+                    r->VirtualAddress   = actual_pos;
                 }
             }
 

@@ -170,6 +170,10 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
         }
 
         if (true_imm && false_imm && on_true == 1 && on_false == 0) {
+            if (n->dt.type == TB_TAG_BOOL) {
+                return src;
+            }
+
             TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
             set_input(f, ext_node, src, 1);
             mark_node(f, ext_node);
@@ -286,24 +290,25 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
                 return n->inputs[1];
             }
         }
-    } else if (n->type == TB_CMP_NE) {
-        if (n->inputs[1] == n->inputs[2]) {
-            return make_int_node(f, TB_TYPE_BOOL, 0);
-        }
-    } else if (n->type == TB_CMP_EQ) {
-        if (n->inputs[1] == n->inputs[2]) {
-            return make_int_node(f, TB_TYPE_BOOL, 1);
-        }
     }
 
-    uint64_t b;
-    if (!get_int_const(n->inputs[2], &b)) {
+    Lattice* bb = latuni_get(f, n->inputs[2]);
+    if (!lattice_is_iconst(bb)) {
         return n;
     }
 
-    if (n->type == TB_MUL && b == 1) {
+    // better not be a cyclic phi, those need special treatment
+    if (n->inputs[1]->type == TB_PHI) {
+        FOR_N(i, 1, n->inputs[1]->input_count) {
+            if (n->inputs[1]->inputs[i] == n) {
+                return n;
+            }
+        }
+    }
+
+    if (n->type == TB_MUL && bb->_int.min == 1) {
         return n->inputs[1];
-    } else if (b == 0) {
+    } else if (bb->_int.min == 0) {
         switch (n->type) {
             default: return n;
 
@@ -315,23 +320,10 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
             case TB_PTR_OFFSET:
             return n->inputs[1];
 
-            case TB_MUL:
-            return make_int_node(f, n->dt, 0);
-
-            case TB_UDIV:
-            case TB_SDIV:
-            case TB_UMOD:
-            case TB_SMOD:
-            return make_poison(f, n->dt);
-
             // (cmp.ne a 0) => a
             case TB_CMP_NE: {
                 // walk up extension
                 TB_Node* src = n->inputs[1];
-                if (src->type == TB_ZERO_EXT || src->type == TB_SIGN_EXT) {
-                    src = src->inputs[1];
-                }
-
                 if (src->dt.type == TB_TAG_BOOL) {
                     return src;
                 }

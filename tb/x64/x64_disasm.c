@@ -16,6 +16,7 @@
 bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data) {
     size_t current = 0;
     uint8_t rex = 0;
+    uint32_t vex = 0;
 
     inst->dt = TB_X86_DWORD;
 
@@ -42,26 +43,58 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 
     // rex/vex
     done_prefixing:;
-    if ((b & 0xF0) == 0x40) {
-        rex = b;
-        b = data[current++];
-    }
+    uint32_t op = 0;
+    uint32_t regs = 0;
 
     // opcode translation (from 1-3 bytes to 10bits):
     //   op       => 00________
     //   0F op    => 01________
     //   0F 38 op => 10________
     //   0F 3A op => 11________
-    uint32_t op = 0;
-    if (b == 0x0F) {
-        b = data[current++];
-        switch (b) {
-            case 0x38: b = data[current++], op = 0x200 | b; break;
-            case 0x3A: b = data[current++], op = 0x300 | b; break;
-            default:   op = 0x100 | b; break;
+    if (b == 0xC4 || b == 0xC5) {
+        rex = 0x40;
+
+        uint8_t m = 0;
+        if (b == 0xC4) { // VEX3
+            b = data[current++];
+            op  |= (b & 0b11111) << 8;
+            rex |= ~(b >> 5) & 0b111; // RXB
+
+            b = data[current++];
+            rex |= ((b >> 7) << 3); // W field
+        } else if (b == 0xC5) { // VEX2
+            b  = data[current++];
         }
-    } else {
+
+        // extra destination reg
+        regs |= (~(b >> 3) & 15) << 24;
+        flags |= TB_X86_INSTR_EXTRA;
+        flags |= TB_X86_INSTR_DIRECTION;
+
+        switch (b & 3) { // pp field
+            case 1: inst->dt = TB_X86_WORD;            break; // 66
+            case 2: flags |= TB_X86_INSTR_REP;         break; // F3
+            case 3: flags |= TB_X86_INSTR_REPNE;       break; // F2
+        }
+
+        b = data[current++];
         op |= b;
+    } else {
+        if ((b & 0xF0) == 0x40) {
+            rex = b;
+            b = data[current++];
+        }
+
+        if (b == 0x0F) {
+            b = data[current++];
+            switch (b) {
+                case 0x38: b = data[current++], op = 0x200 | b; break;
+                case 0x3A: b = data[current++], op = 0x300 | b; break;
+                default:   op = 0x100 | b; break;
+            }
+        } else {
+            op |= b;
+        }
     }
 
     enum {
@@ -92,6 +125,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // vector op
         OP_SSE    = 4096,
         OP_SCALAR = 8192,
+        OP_SSEI   = 16384,
     };
 
     #define NORMIE_BINOP(op) [op+0] = OP_MODRM | OP_8BIT, [op+1] = OP_MODRM, [op+2] = OP_MODRM | OP_DIR | OP_8BIT, [op+3] = OP_MODRM | OP_DIR, [op+4] = OP_RAX | OP_IMM8, [op+5] = OP_RAX | OP_IMM
@@ -205,6 +239,15 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         _0F(0xA3)        = OP_MODRM,
         // imul reg, r/m
         _0F(0xAF)        = OP_MODRM,
+        // movdqa/movdqu reg, r/m
+        _0F(0x6E)        = OP_MODRM | OP_DIR | OP_SSE | OP_2DT,
+        _0F(0x7E)        = OP_MODRM | OP_SSE | OP_2DT,
+        _0F(0x6F)        = OP_MODRM | OP_DIR | OP_SSEI,
+        _0F(0x7F)        = OP_MODRM | OP_SSEI,
+        // shlx/shrx/sarx
+        [0x1F7]           = OP_MODRM, // shrx
+        [0x2F7]           = OP_MODRM, // shlx
+        [0x3F7]           = OP_MODRM, // sarx
         // bswap r+
         _0F2(0xC8, 0xCF) = OP_PLUSR,
         // cmovcc reg, r/m
@@ -230,7 +273,6 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         return false;
     }
 
-    uint32_t regs = 0;
     int32_t  disp = 0;
     uint8_t  scale = 0;
 
@@ -252,11 +294,19 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         }
 
         flags &= ~(TB_X86_INSTR_REP | TB_X86_INSTR_REPNE);
+    } else if (props & OP_SSEI) {
+        // TODO(NeGate): classify types
+        inst->dt = TB_X86_PDWORD;
+        flags &= ~(TB_X86_INSTR_REP | TB_X86_INSTR_REPNE);
     } else if (props & OP_64BIT) {
         inst->dt = TB_X86_QWORD;
     } else if (props & OP_8BIT) {
         inst->dt = TB_X86_BYTE;
     } else {
+        if (op == 0x1F7 || op == 0x2F7 || op == 0x3F7) {
+            inst->dt = TB_X86_DWORD;
+        }
+
         if (rex & 8) inst->dt = TB_X86_QWORD;
     }
 
@@ -363,6 +413,9 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     if (props & OP_2DT) {
         if (op == 0x1B6 || op == 0x1B7 || op == 0x1BE || op == 0x1BF) {
             inst->dt2 = (op == 0x1B6 || op == 0x1BE) ? TB_X86_BYTE : TB_X86_WORD;
+        } else if (op == 0x16E || op == 0x17E) {
+            inst->dt2 = inst->dt;
+            inst->dt = (rex & 8) ? TB_X86_QWORD : TB_X86_DWORD;
         } else {
             inst->dt2 = TB_X86_DWORD;
         }
@@ -391,6 +444,10 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         if (inst->dt == TB_X86_DWORD) return "cwde";
         if (inst->dt == TB_X86_QWORD) return "cdqe";
         return "??";
+    } else if (inst->opcode == 0x16E) {
+        return inst->dt2 == TB_X86_QWORD ? "movq" : "movd";
+    } else if (inst->opcode == 0x17E) {
+        return inst->dt == TB_X86_QWORD ? "movq" : "movd";
     }
 
     #define _0F(op)      0x100+op
@@ -434,6 +491,8 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x00F6: case 0x00F7: return "test";
         case 0x20F6: case 0x20F7: return "not";
         case 0x30F6: case 0x30F7: return "neg";
+        case 0x40F6: case 0x40F7: return "mul";
+        case 0x50F6: case 0x50F7: return "imul";
         case 0x60F6: case 0x60F7: return "div";
         case 0x70F6: case 0x70F7: return "idiv";
 
@@ -456,6 +515,11 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case _0F(0x54): return "and";
         case _0F(0x56): return "or";
         case _0F(0x57): return "xor";
+        case _0F(0x6F): case _0F(0x7F): return "movdqu";
+
+        case 0x1F7: return "shrx";
+        case 0x2F7: return "shlx";
+        case 0x3F7: return "sarx";
 
         case 0xB0 ... 0xBF: return "mov";
         case _0F(0xB6): case _0F(0xB7): return "movzx";
@@ -550,7 +614,7 @@ const char* tb_x86_reg_name(int8_t reg, TB_X86_DataType dt) {
 
     if (dt >= TB_X86_BYTE && dt <= TB_X86_QWORD) {
         return X86__GPR_NAMES[dt - TB_X86_BYTE][reg];
-    } else if (dt >= TB_X86_F32x1 && dt <= TB_X86_F64x2) {
+    } else if (dt >= TB_X86_F32x1 && dt <= TB_X86_PQWORD) {
         static const char* X86__XMM_NAMES[] = {
             "xmm0", "xmm1", "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
             "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
@@ -572,6 +636,12 @@ const char* tb_x86_type_name(TB_X86_DataType dt) {
         case TB_X86_F64x1: return "qword";
         case TB_X86_F32x4: return "xmmword";
         case TB_X86_F64x2: return "xmmword";
+
+        // idk if these should be labelled as such
+        case TB_X86_PBYTE: return "xmmword";
+        case TB_X86_PWORD: return "xmmword";
+        case TB_X86_PDWORD: return "xmmword";
+        case TB_X86_PQWORD: return "xmmword";
 
         default: return "??";
     }
@@ -638,16 +708,15 @@ size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs) 
     if (inst->dt >= TB_X86_F32x1 && inst->dt <= TB_X86_F64x2) {
         static const char* strs[] = { "ss", "sd", "ps", "pd" };
         tb_disasm_outf(disasm, "%s", mnemonic);
-        tb_disasm_outf(disasm, "%*s", -(8 - strlen(mnemonic)), strs[inst->dt - TB_X86_F32x1]);
+        tb_disasm_outf(disasm, "%*s ", -(8 - strlen(mnemonic)), strs[inst->dt - TB_X86_F32x1]);
     } else {
-        tb_disasm_outf(disasm, "%-8s", mnemonic);
+        tb_disasm_outf(disasm, "%-8s ", mnemonic);
     }
 
     uint8_t rx = (inst->regs >> 16) & 0xFF;
     if (inst->flags & TB_X86_INSTR_DIRECTION) {
         if (rx != 255) {
-            tb_disasm_outf(disasm, "%s", tb_x86_reg_name(rx, inst->dt));
-            tb_disasm_outf(disasm, ", ");
+            tb_disasm_outf(disasm, "%s, ", tb_x86_reg_name(rx, inst->dt));
         }
         print_memory_operand(disasm, inst, inst->dt2);
     } else {
@@ -672,6 +741,10 @@ size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs) 
         if (!disasm->symbol_handler(disasm, inst->length, inst->imm, inst->length*8 - 32, 32, is_offset)) {
             tb_disasm_outf(disasm, x86_fmts[2], inst->imm);
         }
+    }
+
+    if (inst->flags & TB_X86_INSTR_EXTRA) {
+        tb_disasm_outf(disasm, ", %s", tb_x86_reg_name((inst->regs >> 24) & 0xFF, inst->dt));
     }
 
     return disasm->out_curr - old;

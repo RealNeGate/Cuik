@@ -28,24 +28,7 @@
 #include <stddef.h>
 #include <stdatomic.h>
 
-// Virtual memory allocation (since the tables are generally nicely page-size friendly)
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
-#define NBHS_VIRTUAL_ALLOC(size)     VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
-#define NBHS_VIRTUAL_FREE(ptr, size) VirtualFree(ptr, size, MEM_RELEASE)
-#else
-#include <sys/mman.h>
-
-#define NBHS_VIRTUAL_ALLOC(size)     mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
-#define NBHS_VIRTUAL_FREE(ptr, size) munmap(ptr, size)
-#endif
-
-// traditional heap ops
-#ifndef NBHS_REALLOC
-#define NBHS_REALLOC(ptr, size) realloc(ptr, size)
-#endif // NBHS_REALLOC
+#include "ebr.h"
 
 // personal debooging stuff
 #define NBHS__DEBOOGING 0
@@ -58,21 +41,10 @@
 #define NBHS__END()
 #endif
 
-// for the time in the ebr entry
-#define NBHS_PINNED_BIT (1ull << 63ull)
-
 enum {
     NBHS_LOAD_FACTOR = 75,
     NBHS_MOVE_AMOUNT = 128,
 };
-
-typedef struct NBHS_EBREntry {
-    _Atomic(struct NBHS_EBREntry*) next;
-    _Atomic(uint64_t) time;
-
-    // keep on a separate cacheline to avoid false sharing
-    _Alignas(64) int id;
-} NBHS_EBREntry;
 
 typedef struct NBHS_Table NBHS_Table;
 struct NBHS_Table {
@@ -108,6 +80,71 @@ static size_t nbhs_compute_cap(size_t y) {
     return cap - (sizeof(NBHS_Table) / sizeof(void*));
 }
 
+#ifndef NEGATE__DIV128_IMPL
+#define NEGATE__DIV128_IMPL
+// (X + Y) / Z = int(X/Z) + int(Y/Z) + (mod(X,Z) + mod(Y,Z)/Z
+static uint64_t negate__div128(uint64_t numhi, uint64_t numlo, uint64_t den, uint64_t* out_rem) {
+    // https://github.com/ridiculousfish/libdivide/blob/master/libdivide.h (libdivide_128_div_64_to_64)
+    //
+    // We work in base 2**32.
+    // A uint32 holds a single digit. A uint64 holds two digits.
+    // Our numerator is conceptually [num3, num2, num1, num0].
+    // Our denominator is [den1, den0].
+    const uint64_t b = ((uint64_t)1 << 32);
+
+    // Check for overflow and divide by 0.
+    if (numhi >= den) {
+        if (out_rem) *out_rem = ~0ull;
+        return ~0ull;
+    }
+
+    // Determine the normalization factor. We multiply den by this, so that its leading digit is at
+    // least half b. In binary this means just shifting left by the number of leading zeros, so that
+    // there's a 1 in the MSB.
+    // We also shift numer by the same amount. This cannot overflow because numhi < den.
+    // The expression (-shift & 63) is the same as (64 - shift), except it avoids the UB of shifting
+    // by 64. The funny bitwise 'and' ensures that numlo does not get shifted into numhi if shift is
+    // 0. clang 11 has an x86 codegen bug here: see LLVM bug 50118. The sequence below avoids it.
+    int shift = __builtin_clzll(den) - 1;
+    den <<= shift;
+    numhi <<= shift;
+    numhi |= (numlo >> (-shift & 63)) & (uint64_t)(-(int64_t)shift >> 63);
+    numlo <<= shift;
+
+    // Extract the low digits of the numerator and both digits of the denominator.
+    uint32_t num1 = (uint32_t)(numlo >> 32);
+    uint32_t num0 = (uint32_t)(numlo & 0xFFFFFFFFu);
+    uint32_t den1 = (uint32_t)(den >> 32);
+    uint32_t den0 = (uint32_t)(den & 0xFFFFFFFFu);
+
+    // We wish to compute q1 = [n3 n2 n1] / [d1 d0].
+    // Estimate q1 as [n3 n2] / [d1], and then correct it.
+    // Note while qhat may be 2 digits, q1 is always 1 digit.
+    uint64_t qhat = numhi / den1;
+    uint64_t rhat = numhi % den1;
+    uint64_t c1 = qhat * den0;
+    uint64_t c2 = rhat * b + num1;
+    if (c1 > c2) qhat -= (c1 - c2 > den) ? 2 : 1;
+    uint32_t q1 = (uint32_t)qhat;
+
+    // Compute the true (partial) remainder.
+    uint64_t rem = numhi * b + num1 - q1 * den;
+
+    // We wish to compute q0 = [rem1 rem0 n0] / [d1 d0].
+    // Estimate q0 as [rem1 rem0] / [d1] and correct it.
+    qhat = rem / den1;
+    rhat = rem % den1;
+    c1 = qhat * den0;
+    c2 = rhat * b + num0;
+    if (c1 > c2) qhat -= (c1 - c2 > den) ? 2 : 1;
+    uint32_t q0 = (uint32_t)qhat;
+
+    // Return remainder if requested.
+    if (out_rem) *out_rem = (rem * b + num0 - q0 * den) >> shift;
+    return ((uint64_t)q1 << 32) | q0;
+}
+#endif /* NEGATE__DIV128_IMPL */
+
 static void nbhs_compute_size(NBHS_Table* table, size_t cap) {
     // reciprocals to compute modulo
     #if defined(__GNUC__) || defined(__clang__)
@@ -119,24 +156,22 @@ static void nbhs_compute_size(NBHS_Table* table, size_t cap) {
     #endif
 
     table->sh += 63 - 64;
+    table->a = negate__div128(1ull << table->sh, cap - 1, cap, NULL);
 
     #if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
     uint64_t d,e;
     __asm__("divq %[v]" : "=a"(d), "=d"(e) : [v] "r"(cap), "a"(cap - 1), "d"(1ull << table->sh));
-    table->a = d;
-    #elif defined(_MSC_VER)
-    uint64_t rem;
-    table->a = _udiv128(1ull << table->sh, cap - 1, cap, &rem);
-    #else
-    #error "Unsupported target"
+    assert(d == table->a);
     #endif
 
     table->cap = cap;
 }
 
 static NBHS nbhs_alloc(size_t initial_cap) {
+    ebr_init();
+
     size_t cap = nbhs_compute_cap(initial_cap);
-    NBHS_Table* table = NBHS_VIRTUAL_ALLOC(sizeof(NBHS_Table) + cap*sizeof(void*));
+    NBHS_Table* table = EBR_VIRTUAL_ALLOC(sizeof(NBHS_Table) + cap*sizeof(void*));
     nbhs_compute_size(table, cap);
     return (NBHS){ .latest = table };
 }
@@ -145,7 +180,7 @@ static void nbhs_free(NBHS* hs) {
     NBHS_Table* curr = hs->latest;
     while (curr) {
         NBHS_Table* next = curr->prev;
-        NBHS_VIRTUAL_FREE(curr, sizeof(NBHS_Table) + curr->cap*sizeof(void*));
+        EBR_VIRTUAL_FREE(curr, sizeof(NBHS_Table) + curr->cap*sizeof(void*));
         curr = next;
     }
 }
@@ -159,36 +194,29 @@ static size_t nbhs_capacity(NBHS* hs) { return hs->latest->cap; }
 #endif // NBHS_H
 
 #ifdef NBHS_IMPL
-_Thread_local bool nbhs_ebr_init;
-_Thread_local NBHS_EBREntry nbhs_ebr;
-_Atomic(int) nbhs_ebr_count;
-_Atomic(NBHS_EBREntry*) nbhs_ebr_list;
 #endif // NBHS_IMPL
 
 // Templated implementation
 #ifdef NBHS_FN
-extern _Thread_local bool nbhs_ebr_init;
-extern _Thread_local NBHS_EBREntry nbhs_ebr;
-extern _Atomic(int) nbhs_ebr_count;
-extern _Atomic(NBHS_EBREntry*) nbhs_ebr_list;
 
-extern int nbhs_thread_fn(void*);
+static size_t NBHS_FN(hash2index)(NBHS_Table* table, uint64_t u) {
+    uint64_t v = table->a;
 
-static size_t NBHS_FN(hash2index)(NBHS_Table* table, uint64_t h) {
-    // MulHi(h, table->a)
-    #if defined(__GNUC__) || defined(__clang__)
-    uint64_t hi = (uint64_t) (((unsigned __int128)h * table->a) >> 64);
-    #elif defined(_MSC_VER)
-    uint64_t hi;
-    _umul128(a, b, &hi);
-    #else
-    #error "Unsupported target"
-    #endif
-
+    // Multiply high 64: Ripped, straight, from, Hacker's delight... mmm delight
+    uint64_t u0 = u & 0xFFFFFFFF;
+    uint64_t u1 = u >> 32;
+    uint64_t v0 = v & 0xFFFFFFFF;
+    uint64_t v1 = v >> 32;
+    uint64_t w0 = u0*v0;
+    uint64_t t = u1*v0 + (w0 >> 32);
+    uint64_t w1 = (u0*v1) + (t & 0xFFFFFFFF);
+    uint64_t w2 = (u1*v1) + (t >> 32);
+    uint64_t hi = w2 + (w1 >> 32);
+    // Modulo from quotient
     uint64_t q  = hi >> table->sh;
-    uint64_t q2 = h - (q * table->cap);
+    uint64_t q2 = u - (q * table->cap);
 
-    assert(q2 == h % table->cap);
+    assert(q2 == u % table->cap);
     return q2;
 }
 
@@ -221,13 +249,13 @@ static void* NBHS_FN(raw_intern)(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev,
             // make resized table, we'll amortize the moves upward
             size_t new_cap = nbhs_compute_cap(limit*2);
 
-            NBHS_Table* new_top = NBHS_VIRTUAL_ALLOC(sizeof(NBHS_Table) + new_cap*sizeof(void*));
+            NBHS_Table* new_top = EBR_VIRTUAL_ALLOC(sizeof(NBHS_Table) + new_cap*sizeof(void*));
             nbhs_compute_size(new_top, new_cap);
 
             // CAS latest -> new_table, if another thread wins the race we'll use its table
             new_top->prev = latest;
             if (!atomic_compare_exchange_strong(&hs->latest, &latest, new_top)) {
-                NBHS_VIRTUAL_FREE(new_top, sizeof(NBHS_Table) + new_cap*sizeof(void*));
+                EBR_VIRTUAL_FREE(new_top, sizeof(NBHS_Table) + new_cap*sizeof(void*));
                 prev = atomic_load(&latest->prev);
             } else {
                 prev   = latest;
@@ -305,18 +333,6 @@ void NBHS_FN(raw_insert)(NBHS* hs, void* val) {
     abort();
 }
 
-// flips the top bit on
-static void NBHS_FN(enter_pinned)(void) {
-    uint64_t t = atomic_load_explicit(&nbhs_ebr.time, memory_order_relaxed);
-    atomic_store_explicit(&nbhs_ebr.time, t + NBHS_PINNED_BIT, memory_order_release);
-}
-
-// flips the top bit off AND increments time by one
-static void NBHS_FN(exit_pinned)(void) {
-    uint64_t t = atomic_load_explicit(&nbhs_ebr.time, memory_order_relaxed);
-    atomic_store_explicit(&nbhs_ebr.time, t + NBHS_PINNED_BIT + 1, memory_order_release);
-}
-
 NBHS_Table* NBHS_FN(move_items)(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, int items_to_move) {
     assert(prev);
     size_t cap = prev->cap;
@@ -354,91 +370,24 @@ NBHS_Table* NBHS_FN(move_items)(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, 
         // dettach now
         NBHS__BEGIN("detach");
         latest->prev = NULL;
-        NBHS_FN(exit_pinned)();
+        ebr_exit_cs();
 
-        int state_count = nbhs_ebr_count;
-        uint64_t* states = NBHS_REALLOC(NULL, state_count * sizeof(uint64_t));
+        ebr_free(prev, sizeof(NBHS_Table) + prev->cap*sizeof(void*));
 
-        NBHS__BEGIN("scan");
-        NBHS_EBREntry* us = &nbhs_ebr;
-        // "snapshot" the current statuses, once the other threads either advance or aren't in the
-        // hashset functions we know we can free.
-        for (NBHS_EBREntry* list = atomic_load(&nbhs_ebr_list); list; list = list->next) {
-            // mark sure no ptrs refer to prev
-            if (list != us && list->id < state_count) {
-                states[list->id] = list->time;
-            }
-        }
-
-        // important bit is that pointers can't be held across the critical sections, they'd need
-        // to reload from `NBHS.latest`.
-        //
-        // Here's the states of our "epoch" critical section thingy:
-        //
-        // UNPINNED(id) -> PINNED(id) -> UNPINNED(id + 1) -> UNPINNED(id + 1) -> ...
-        //
-        // survey on if we can free the pointer if the status changed from X -> Y:
-        //
-        //   # YES: if we started unlocked then we weren't holding pointers in the first place.
-        //   UNPINNED(A) -> PINNED(A)
-        //   UNPINNED(A) -> UNPINNED(A)
-        //   UNPINNED(A) -> UNPINNED(B)
-        //
-        //   # YES: if we're locked we need to wait until we've stopped holding pointers.
-        //   PINNED(A)   -> PINNED(B)     we're a different call so we've let it go by now.
-        //   PINNED(A)   -> UNPINNED(B)   we've stopped caring about the state of the pointer at this point.
-        //
-        //   # NO: we're still doing shit, wait a sec.
-        //   PINNED(A)   -> PINNED(A)
-        //
-        // these aren't quite blocking the other threads, we're simply checking what their progress is concurrently.
-        for (NBHS_EBREntry* list = atomic_load(&nbhs_ebr_list); list; list = list->next) {
-            if (list != us && list->id < state_count && (states[list->id] & NBHS_PINNED_BIT)) {
-                uint64_t before_t = states[list->id], now_t;
-                do {
-                    // idk, maybe this should be a better spinlock
-                    now_t = atomic_load(&list->time);
-                } while (before_t == now_t);
-            }
-        }
-        NBHS__END();
-
-        // no more refs, we can immediately free
-        NBHS_VIRTUAL_FREE(prev, sizeof(NBHS_Table) + prev->cap*sizeof(void*));
-        NBHS_REALLOC(states, 0);
-
-        NBHS_FN(enter_pinned)();
+        ebr_enter_cs();
         prev = NULL;
         NBHS__END();
     }
     return prev;
 }
 
-static void NBHS_FN(ebr_try_init)(void) {
-    if (!nbhs_ebr_init) {
-        NBHS__BEGIN("init");
-        nbhs_ebr_init = true;
-        nbhs_ebr.id = nbhs_ebr_count++;
-
-        // add to ebr list, we never free this because i don't care
-        // TODO(NeGate): i do care, this is a nightmare when threads die figure it out
-        NBHS_EBREntry* old;
-        do {
-            old = atomic_load_explicit(&nbhs_ebr_list, memory_order_relaxed);
-            nbhs_ebr.next = old;
-        } while (!atomic_compare_exchange_strong(&nbhs_ebr_list, &old, &nbhs_ebr));
-        NBHS__END();
-    }
-}
-
 void* NBHS_FN(get)(NBHS* hs, void* val) {
     NBHS__BEGIN("intern");
 
     assert(val);
-    NBHS_FN(ebr_try_init)();
 
     // modifying the tables is possible now.
-    NBHS_FN(enter_pinned)();
+    ebr_enter_cs();
     NBHS_Table* latest = atomic_load(&hs->latest);
 
     // if there's earlier versions of the table we can move up entries as we go along.
@@ -476,7 +425,7 @@ void* NBHS_FN(get)(NBHS* hs, void* val) {
         i = (i == cap-1) ? 0 : i + 1;
     } while (i != first);
 
-    NBHS_FN(exit_pinned)();
+    ebr_exit_cs();
     NBHS__END();
     return result;
 }
@@ -485,9 +434,7 @@ void* NBHS_FN(intern)(NBHS* hs, void* val) {
     NBHS__BEGIN("intern");
 
     assert(val);
-    NBHS_FN(ebr_try_init)();
-
-    NBHS_FN(enter_pinned)();
+    ebr_enter_cs();
     NBHS_Table* latest = atomic_load(&hs->latest);
 
     // if there's earlier versions of the table we can move up entries as we go along.
@@ -501,7 +448,7 @@ void* NBHS_FN(intern)(NBHS* hs, void* val) {
 
     void* result = NBHS_FN(raw_intern)(hs, latest, prev, val);
 
-    NBHS_FN(exit_pinned)();
+    ebr_exit_cs();
     NBHS__END();
     return result;
 }
@@ -509,15 +456,12 @@ void* NBHS_FN(intern)(NBHS* hs, void* val) {
 // waits for all items to be moved up before continuing
 void NBHS_FN(resize_barrier)(NBHS* hs) {
     NBHS__BEGIN("intern");
-    NBHS_FN(ebr_try_init)();
-
-    NBHS_FN(enter_pinned)();
+    ebr_enter_cs();
     NBHS_Table *prev, *latest = atomic_load(&hs->latest);
     while (prev = atomic_load(&latest->prev), prev != NULL) {
         NBHS_FN(move_items)(hs, latest, prev, prev->cap);
     }
-
-    NBHS_FN(exit_pinned)();
+    ebr_exit_cs();
     NBHS__END();
 }
 

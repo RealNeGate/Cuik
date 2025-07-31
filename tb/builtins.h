@@ -45,12 +45,6 @@ static bool tb_sub_overflow(uint64_t a, uint64_t b, uint64_t* result) {
     return c > a;
 }
 
-#pragma intrinsic(_udiv128)
-static uint64_t tb_div128(uint64_t ahi, uint64_t alo, uint64_t b) {
-    uint64_t rem;
-    return _udiv128(ahi, alo, b, &rem);
-}
-
 #pragma intrinsic(_umul128)
 static TB_MultiplyResult tb_mul64x128(uint64_t a, uint64_t b) {
     uint64_t hi;
@@ -94,15 +88,5 @@ static TB_MultiplyResult tb_mul64x128(uint64_t a, uint64_t b) {
     __uint128_t product = (__uint128_t)a * (__uint128_t)b;
 
     return (TB_MultiplyResult) { (uint64_t)(product & 0xFFFFFFFFFFFFFFFF), (uint64_t)(product >> 64) };
-}
-
-static uint64_t tb_div128(uint64_t ahi, uint64_t alo, uint64_t b) {
-    // We don't want 128 bit software division
-    uint64_t d, e;
-    __asm__("divq %[b]"
-        : "=a"(d), "=d"(e)
-        : [b] "r"(b), "a"(alo), "d"(ahi)
-    );
-    return d;
 }
 #endif

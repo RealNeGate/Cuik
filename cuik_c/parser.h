@@ -91,6 +91,7 @@ struct TranslationUnit {
 
     #ifdef CONFIG_HAS_TB
     TB_Module* ir_mod;
+    TB_FeatureSet features;
     #endif
 
     Cuik_Version version;

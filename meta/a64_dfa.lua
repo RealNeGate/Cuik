@@ -1,3 +1,6 @@
+buffer  = require "string.buffer"
+bit = require "bit"
+
 local jason = require('jason')
 local inspect = require('inspect')
 
@@ -231,7 +234,7 @@ case studies
 	(that these aren't documented as separate fields is dumb)
 	op1 is just 00=prologue, 01=main, 10=epilogue
 		and 11=set (this is special)
-	op0 (actually called o0 why) is just "forward only or not" 
+	op0 (actually called o0 why) is just "forward only or not"
 	set is the same pattern but using different bits because...
 		op0 is "with tags or not"
 		op2 is AABB
@@ -335,7 +338,9 @@ local function parse_encoding(encodings, name)
 	return pattern, fields
 end
 
-local function walk_A64(list, instructions, parents, encodings)
+decision_tree = {}
+
+local function walk_A64(list, instructions, parents, encodings, n, depth)
 	--[[ i want to track the path through the tree
 		this gives me families of instructions (SVE/SME/etc.)
 		also build a list of each level's encoding ]]
@@ -354,20 +359,32 @@ local function walk_A64(list, instructions, parents, encodings)
 		local pattern, fields = parse_encoding(encodings, item.name)
 		--[[ continue traversing until all bits have been
 			accounted for by all the encodings ]]
+
+        -- local str = ""
+        -- for i=1,depth+1 do
+        -- str = str.."    "
+        -- end
+        -- print(str..pattern, item.name)
+
 		if pattern:find('-') then
-			table.insert(parent, item.name)
-			walk_A64(item.children, instructions, parent, encodings)
-			table.remove(parent)
+            local kid = {}
+
+			table.insert(parents, item.name)
+			walk_A64(item.children, instructions, parents, encodings, kid, depth + 1)
+			table.remove(parents)
+
+            n[pattern] = kid
 		else
 			--!! also parse constraints & children for decoding
 			table.insert(instructions, {
 				name = item.name,
-				path = table.concat(parent, '/'),
+				path = table.concat(parents, '/'),
 				pattern = pattern,
 				fields = fields,
 				original = item,
 			})
 			instructions[item.name] = #instructions
+            n[pattern] = item.name
 		end
 		table.remove(encodings)
 	end
@@ -382,8 +399,58 @@ local data = jason.decode(content)
 timer('decode')
 
 local instructions = {} -- list
-walk_A64(data.instructions, instructions)
+local decision_tree = {}
+walk_A64(data.instructions, instructions, nil, nil, decision_tree, 0)
 timer('walk')
+
+local pat = "-__100____----------------------"
+local dp1 = decision_tree["_--____-------------------------"][pat]
+print(inspect(dp1))
+
+local out = buffer.new(1000)
+function trailing_zeros(k)
+    -- don't check the trailing zeros
+    local shift = 0
+    for i=1,32 do
+        if string.byte(k, 33 - i) ~= string.byte("0") then
+            shift = i - 1
+            break
+        end
+    end
+    return shift
+end
+
+function compile_decision(out, pat, kids)
+    -- bucket the different kinds of queries, we can
+    -- insert switch statements for each
+    local query = {}
+    for k,v in pairs(kids) do
+        local mask = string.gsub(string.gsub(k, "[01]", "1"), "[_]", "0")
+        if not query[mask] then
+            query[mask] = {}
+        end
+
+        local l = query[mask]
+        l[#l + 1] = k
+    end
+
+    for k,v in pairs(query) do
+        print(k, inspect(v))
+        local shift = trailing_zeros(k)
+
+        out:put(string.format("switch ((inst & 0b%s) >> %d) {\n", string.sub(k, 1, -(shift + 1)), shift))
+        for i=1,#v do
+            local match = string.gsub(v[i], "[_]", "0")
+            out:put(string.format("  case 0b%s: // %s\n", string.sub(match, 1, -(shift + 1)), kids[v[i]]))
+        end
+        out:put("}\n")
+    end
+end
+
+compile_decision(out, pat, dp1)
+print(out:tostring())
+
+os.exit(1)
 
 if options.listing then
 	print(jason.encode(instructions))
@@ -522,7 +589,7 @@ while #worklist > 0 do
 					break
 				end
 			end
-			
+
 			-- if new, assign a new id
 			if not cached then
 				delta_id = delta_id + 1
@@ -748,7 +815,9 @@ cgen(string.format([[
 // provides mask of N bits
 #define BIT_MASK(N) ((1 << N) - 1)
 // get N bits from value V at offset O
-#define GET_BITS(N, V, O) ((V >> O) & BIT_MASK(N))
+#ifndef GET_BITS
+#define GET_BITS(O, N, V) (((V) >> O) & MASK(N))
+#endif
 #define ALPHABET_RANK %d]], alphabet_rank))
 
 -- decode functions
@@ -758,10 +827,10 @@ for _, group in ipairs(instructions) do
 	cgen(string.format('\tchar* name = "%s";', group.name))
 	-- group fields
 	for _, f in ipairs(group.fields) do
-		cgen(string.format('\tuint32_t %s = GET_BITS(%d, inst, %d);', f.name, f.len, f.bit))
+		cgen(string.format('\tuint32_t %s = GET_BITS(%d, %d, inst);', f.name, f.bit, f.len))
 	end
 	-- separate instructions
-	print(group.name)
+	-- print(group.name)
 	for _, inst in ipairs(group.original.children) do
 		local str = {}
 		table.insert(str, string.format('\t%s', inst.name))
@@ -782,76 +851,109 @@ for _, group in ipairs(instructions) do
 				end
 			end
 		end
-		--print(table.concat(str, ', '))
+		-- print(table.concat(str, ', '))
 	end
 	-- print test
-	cgen('\tprintf(\n\t\t"name = %s"')
+	local str = {}
+    str[#str + 1] = "    printf(\"";
+    str[#str + 1] = "name = %s";
+
 	for _, f in ipairs(group.fields) do
-		cgen(string.format('\t\t"\\t%s = %%d"', f.name))
+	    str[#str + 1] = string.format("\\t%s = %%d", f.name)
 	end
-	cgen('\t\t"\\n"\n\t\t, name')
+    str[#str + 1] = "\", name";
 	for _, f in ipairs(group.fields) do
-		cgen(string.format('\t\t, %s', f.name))
+	    str[#str + 1] = string.format(", %s", f.name)
 	end
-	cgen('\t);')
-	cgen('\n}')
+    str[#str + 1] = ");";
+	cgen(table.concat(str, ""))
+	cgen('}')
 end
 
 -- decode table
-cgen(string.format('void (*names[%d])(uint32_t) = {', delta_id + 1))
+cgen(string.format('static void (*names[%d])(uint32_t) = {', delta_id + 1))
 -- cgen(string.format('char* names[%d] = {', delta_id + 1))
 for i, n in pairs(dfa.F) do
 	cgen(string.format('\t[%d] = %s,', i, n[1]))
 end
 cgen('};')
 
+cgen([[
+typedef struct {
+    uint32_t lsb;
+    uint8_t edges[16];
+} DFAEdge;
+]])
+
 -- delta table
-local delta_def = string.format('int16_t delta[%d][%d] = {', delta_id + 1, 2^alphabet_rank)
+local delta_def = string.format('DFAState delta[%d] = {', delta_id + 1)
 local delta_part = function (a, i, b) return string.format('\t[%d][0b%s] = %d,', a, i, b) end
-if options.transpose then
-	delta_def = string.format('int16_t delta[%d][%d] = {', 2^alphabet_rank, delta_id + 1)
-	delta_part = function (a, i, b) return string.format('\t[0b%s][%d] = %d,', i, a, b) end
-end
+
 cgen(string.format(delta_def, delta_id + 1))
 for a, _ in pairs(dfa.Q) do
 	if dfa.delta[a] then
-		for i, b in pairs(dfa.delta[a]) do
-			cgen(delta_part(a, i, b))
+	    local lsb = "0"
+		for _,S in pairs(dfa.Sigma) do
+			local b = dfa.delta[a][S]
+			if b then
+				local z = tonumber(S, 2)
+				local dt = (b - a) + 1024
+				assert(dt >= 0)
+
+				local x = bit.band(dt, 3)
+				-- if a == 4 then print(i, a, b, x) end
+				lsb = lsb..string.format(" | (%du << %du)", x, z*2)
+			end
 		end
+
+		cgen(string.format("    [%d] = { .lsb = %s, .edges = { ", a, lsb))
+		for _,S in pairs(dfa.Sigma) do
+			local b = dfa.delta[a][S]
+			if b then
+    			local dt = (b - a) + 1024
+    			-- assert(dt >= 0)
+
+    			local x = bit.rshift(dt, 2)
+    			local y = bit.band(dt, 3)
+    			cgen(string.format("        [0b%s] = %d, // %d (%d)", S, x, b, y))
+            else
+    			cgen(string.format("        [0b%s] = 128,", S))
+            end
+		end
+		cgen(string.format("    }},"))
 	else
-		for _, i in ipairs(dfa.Sigma) do
-			cgen(delta_part(a, i, a))
+		cgen(string.format("    [%d] = { .edges = { ", a))
+		for _,S in pairs(dfa.Sigma) do
+			local x = bit.rshift(1024, 2)
+			cgen(string.format("        [0b%s] = %d,", S, x))
 		end
+		cgen(string.format("    }},"))
 	end
 end
 cgen('};')
 
 -- walk function
 cgen([[
-uint16_t walk(uint32_t inst) {
-	int16_t state = 1;]])
--- calculate the shift amounts for manual unrolling
-local input_steps = {}
-for i = 32 - alphabet_rank, 1 - alphabet_rank, -alphabet_rank do
-	table.insert(input_steps, i)
-end
--- transposing requires a different order
-local delta_str = '\tstate = delta[state][(%s) & BIT_MASK(ALPHABET_RANK)];'
-if options.transpose then
-	delta_str = '\tstate = delta[(%s) & BIT_MASK(ALPHABET_RANK)][state];'
-end
-for _, i in ipairs(input_steps) do
-	-- negative requires a different shift
-	local shift = string.format('inst >> %d', i)
-	if i < 0 then
-		shift = string.format('inst << %d', -i)
-	end
-	cgen(string.format(delta_str, shift))
-end
+uint32_t walk(uint32_t inst) {
+	uint32_t state = 1, key;
+    int32_t dt;
+    DFAState* curr;
 
-cgen([[
-	return state;
-}]])
+    int shift = 32;
+    while (shift > 0) {
+        shift -= ALPHABET_RANK;
+        curr = &delta[state];
+        // unpack 10bit edge
+        key  = (inst >> shift) & BIT_MASK(ALPHABET_RANK);
+        dt   = (((uint32_t) curr->edges[key] << 2) | ((curr->lsb >> (key*2)) & 3)) - 512;
+        // early out
+        if (dt == 0) { return state; }
+        state += dt;
+    }
+    return state;
+}
+
+]])
 
 -- write it
 local file = assert(io.open('a64dfa.h', 'w'))
@@ -880,7 +982,7 @@ if options.graphviz then
 			else
 				labels[b] = labels[b] .. ',' .. i
 			end
-		end 
+		end
 		for b, l in pairs(labels) do
 			table.insert(strings, '\t' .. a .. ' -> ' .. b .. ' [label="' .. l .. '"]')
 		end
@@ -1013,8 +1115,9 @@ if options.analysis then
 			local edge_count = 0
 			for i, b in pairs(ib) do
 				edge_count = edge_count + 1
-				if b - a > max_delta then
-					max_delta = b - a
+				local dt = math.abs(b - a)
+				if dt > max_delta then
+					max_delta = dt
 				end
 			end
 			edges = edges + edge_count

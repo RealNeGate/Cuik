@@ -8,6 +8,7 @@
 //   CFG  - Control Flow Graph
 //   DSE  - Dead Store Elimination
 //   GCM  - Global Code Motion
+//   GCF  - Global Congruence Finding
 //   SROA - Scalar Replacement Of Aggregates
 //   CCP  - Conditional Constant Propagation
 //   SCCP - Sparse Conditional Constant Propagation
@@ -174,6 +175,7 @@ static_assert(sizeof(TB_DataType) == 1, "im expecting this to be a byte");
 #define TB_IS_POINTER_TYPE(x)  ((x).type == TB_TAG_PTR)
 #define TB_IS_SCALAR_TYPE(x)   ((x).type <= TB_TAG_F64)
 #define TB_IS_INT_OR_PTR(x)    ((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_PTR)
+#define TB_IS_BOOL_INT_PTR(x)  ((x).type >= TB_TAG_BOOL && (x).type <= TB_TAG_PTR)
 
 // accessors
 #define TB_GET_INT_BITWIDTH(x) ((x).data)
@@ -284,6 +286,8 @@ typedef enum TB_NodeTypeEnum {
     TB_UNREACHABLE, // (Control, Memory) -> (Control)
     //   all dead paths are stitched here
     TB_DEAD,        // (Control) -> (Control)
+    //   bookkeeping node for dead stores
+    TB_DEAD_STORE,  // (Control, Memory) -> (Memory)
 
     ////////////////////////////////
     // CONTROL + MEMORY
@@ -333,9 +337,6 @@ typedef enum TB_NodeTypeEnum {
     TB_ATOMIC_CAS,    // (Control, Memory, Data, Data) -> (Memory, Data, Bool)
     //   volatile memory barrier
     TB_HARD_BARRIER,  // (Control, Memory, MemOp) -> Memory
-
-    // like a multi-way branch but without the control flow aspect, but for data.
-    TB_LOOKUP,
 
     ////////////////////////////////
     // POINTERS
@@ -409,10 +410,14 @@ typedef enum TB_NodeTypeEnum {
 
     TB_FRAME_PTR,
 
+    // Consumes a value to force it to stay alive
+    TB_BLACKHOLE, // (Control) -> (Control)
+
     // Special ops
     //   does full multiplication (64x64=128 and so on) returning
     //   the low and high values in separate projections
-    TB_MULPAIR,
+    TB_SMULPAIR,
+    TB_UMULPAIR,
 
     // Vector ops
     TB_VBROADCAST,
@@ -508,6 +513,7 @@ typedef enum {
     TB_SYMBOL_EXTERNAL,
     TB_SYMBOL_GLOBAL,
     TB_SYMBOL_FUNCTION,
+    TB_SYMBOL_DEAD,
     TB_SYMBOL_MAX,
 } TB_SymbolTag;
 
@@ -635,7 +641,7 @@ typedef struct { // any integer binary operator
 
 typedef struct {
     TB_CharUnits align;
-    bool is_volatile;
+    uint32_t is_volatile;
 } TB_NodeMemAccess;
 
 typedef struct { // TB_DEBUG_LOCATION
@@ -706,16 +712,6 @@ typedef struct {
     TB_Node *mem_in;
 } TB_NodeRegion;
 
-typedef struct {
-    int64_t key;
-    uint64_t val;
-} TB_LookupEntry;
-
-typedef struct {
-    size_t entry_count;
-    TB_LookupEntry entries[];
-} TB_NodeLookup;
-
 typedef struct TB_MultiOutput {
     size_t count;
     union {
@@ -733,9 +729,11 @@ typedef struct {
 } TB_SwitchEntry;
 
 typedef struct TB_Safepoint {
+    TB_Function* func;
     TB_Node* node; // type == TB_SAFEPOINT
     void* userdata;
 
+    uint32_t target;// relative to the function body.
     uint32_t ip;    // relative to the function body.
     uint32_t count; // same as node->input_count
     uint32_t values[];
@@ -1102,6 +1100,7 @@ TB_API TB_Global* tb_symbol_as_global(TB_Symbol* s);
 ////////////////////////////////
 // Function IR Generation
 ////////////////////////////////
+TB_API TB_DataType tb_data_type_ptr_int(TB_Module* m);
 TB_API void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t* align);
 
 TB_API void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column);
@@ -1112,7 +1111,9 @@ TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int l
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage);
 TB_API void tb_function_set_features(TB_Function* f, const TB_FeatureSet* features);
+TB_API void tb_function_destroy(TB_Function* f);
 
+TB_API TB_FeatureSet tb_features_from_profile_str(TB_Module* m, const char* name);
 TB_API TB_Arena* tb_function_get_arena(TB_Function* f, int i);
 
 // if len is -1, it's null terminated
@@ -1372,7 +1373,8 @@ typedef enum {
 TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_CodegenRA ra, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm);
 
 // interprocedural optimizer iter
-TB_API bool tb_module_ipo(TB_Module* m);
+typedef struct TPool TPool;
+TB_API bool tb_module_ipo(TB_Module* m, TPool* pool);
 
 ////////////////////////////////
 // Cooler IR building
@@ -1408,6 +1410,7 @@ TB_API TB_Node* tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type, TB
 
 // ( a -- b )
 TB_API TB_Node* tb_builder_unary(TB_GraphBuilder* g, int type, TB_Node* src);
+TB_API TB_Node* tb_builder_va_start(TB_GraphBuilder* g, TB_Node* src);
 
 TB_API TB_Node* tb_builder_neg(TB_GraphBuilder* g, TB_Node* src);
 TB_API TB_Node* tb_builder_not(TB_GraphBuilder* g, TB_Node* src);
@@ -1503,6 +1506,8 @@ TB_API void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int arg_count, TB_No
 TB_API void tb_builder_unreachable(TB_GraphBuilder* g, int mem_var);
 TB_API void tb_builder_trap(TB_GraphBuilder* g, int mem_var);
 TB_API void tb_builder_debugbreak(TB_GraphBuilder* g, int mem_var);
+//   every arg has their lifetime stretched to this point.
+TB_API void tb_builder_blackhole(TB_GraphBuilder* g, int arg_count, TB_Node** args);
 
 // allows you to define multiple entry points
 TB_API void tb_builder_entry_fork(TB_GraphBuilder* g, int count, TB_Node* paths[]);

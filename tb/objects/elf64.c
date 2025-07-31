@@ -137,7 +137,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
         put_symbol(&local_symtab, sections[i].name_pos - 5, TB_ELF64_ST_INFO(TB_ELF64_STB_LOCAL, TB_ELF64_STT_SECTION), 1 + i, 0, 0);
     }
 
-    assert(dbg_section_count == 0);
+    TB_ASSERT(dbg_section_count == 0);
 
     put_section_symbols(sections, &strtbl, &local_symtab, TB_ELF64_STB_LOCAL);
     put_section_symbols(sections, &strtbl, &global_symtab, TB_ELF64_STB_GLOBAL);
@@ -196,7 +196,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
     size_t local_sym_count = local_symtab.count / sizeof(TB_Elf64_Sym);
     dyn_array_for(i, sections) if (sections[i].reloc_count > 0) {
         assert(sections[i].reloc_pos == write_pos);
-        TB_Elf64_Rela* rels = (TB_Elf64_Rela*) &output[write_pos];
+        TB_Elf64_Rela* relocs = (TB_Elf64_Rela*) &output[write_pos];
         DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
         DynArray(TB_Global*) globals = sections[i].globals;
 
@@ -212,13 +212,19 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
                 if (p->target->linkage == TB_LINKAGE_PUBLIC) {
                     symbol_id += local_sym_count;
                 }
-                assert(symbol_id != 0);
+                TB_ASSERT(symbol_id != 0);
 
                 int32_t addend;
                 memcpy(&addend, &func_out->code[p->pos], sizeof(addend));
 
-                TB_ELF_RelocType type = p->target->tag == TB_SYMBOL_GLOBAL ? TB_ELF_X86_64_PC32 : TB_ELF_X86_64_PLT32;
-                *rels++ = (TB_Elf64_Rela){
+                TB_ELF_RelocType type;
+                switch (p->type) {
+                    case TB_OBJECT_RELOC_REL32: type = TB_ELF_X86_64_PC32;  break;
+                    case TB_OBJECT_RELOC_PLT32: type = TB_ELF_X86_64_PLT32; break;
+                    default: tb_todo();
+                }
+
+                *relocs++ = (TB_Elf64_Rela){
                     .offset = actual_pos,
                     // check when we should prefer R_X86_64_GOTPCREL
                     .info   = TB_ELF64_R_INFO(symbol_id, type),

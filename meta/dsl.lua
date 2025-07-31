@@ -25,13 +25,18 @@ for i=97,122 do ch_class[i] = "ident" end
 ch_class[36] = "ident"
 ch_class[95] = "ident"
 
+local line_num = 1
+
 local function either(a, b, c) return a == b or a == c end
 local function lexer(str)
     local i = 1
     return function()
         -- skip whitespace
         while ch_class[str:byte(i)] == "ws" or str:byte(i) == 35 do
-            if ch_class[str:byte(i)] == "ws" then
+            if str:byte(i) == 10 then
+                i = i + 1
+                line_num = line_num + 1
+            elseif ch_class[str:byte(i)] == "ws" then
                 i = i + 1
             elseif str:byte(i) == 35 then -- hash are comments
                 while str:byte(i) ~= 10 do
@@ -330,7 +335,11 @@ function write_node(strs, ids, n)
             -- copy all the extra data
             potentially_dynamic_count = true
             -- copy inputs
-            strs[#strs + 1] = string.format("    FOR_N(i, 0, %s->input_count) { set_input(f, k%d, %s->inputs[i], k%d_i++); }", v, ids[n], v, ids[n])
+            strs[#strs + 1] = string.format("    if (%s->type != %s) {", v, mach_prefix.."MEMORY")
+            strs[#strs + 1] = string.format("        set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
+            strs[#strs + 1] = string.format("    } else {")
+            strs[#strs + 1] = string.format("        FOR_N(i, 0, %s->input_count) { set_input(f, k%d, %s->inputs[i], k%d_i++); }", v, ids[n], v, ids[n])
+            strs[#strs + 1] = string.format("    }")
         elseif v == "$REST" then
             strs[#strs + 1] = string.format("    FOR_N(i, 0, $REST_LEN) { set_input(f, k%d, $REST[i], k%d_i++); }", ids[n], ids[n])
         elseif type(v) == "string" and v:byte(1) == string.byte("$") then
@@ -409,6 +418,7 @@ while true do
     end
 
     mem_capture = nil
+    local start_line = line_num
     if t == "node" or t == "extra" then
         local first = t
 
@@ -478,7 +488,7 @@ while true do
             local ids = {}
             node_cnt = 0
 
-            strs[#strs + 1] = "do {"
+            strs[#strs + 1] = "do { // line: "..start_line
             find_captures(strs, pattern, "n")
             if where then
                 strs[#strs + 1] = "    if (!("..where..")) {"
@@ -653,6 +663,14 @@ else
     out:put("        default: return NULL;\n")
     out:put("    }\n")
     out:put("}\n\n")
+    out:put([[
+static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n) {
+    TB_Node* new_n = tb_alloc_node(f, x86_MEMORY, TB_TYPE_VOID, 1, sizeof(X86MemOp));
+    set_input(f, new_n, n, 0);
+    return new_n;
+}
+
+]])
     out:put("static TB_Node* mach_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) {\n")
     out:put("    switch (state) {\n")
     for k,v in pairs(accept) do

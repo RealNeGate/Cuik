@@ -8,11 +8,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_SYMBOL:   return sizeof(TB_NodeSymbol);
         case TB_LOCAL:    return sizeof(TB_NodeLocal);
 
-        case TB_LOOKUP: {
-            TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
-            return sizeof(TB_NodeLookup) + (l->entry_count * sizeof(TB_LookupEntry));
-        }
-
         case TB_VSHUFFLE: {
             TB_NodeVShuffle* v = TB_NODE_GET_EXTRA(n);
             return sizeof(TB_NodeVShuffle) + (v->width * sizeof(int));
@@ -78,7 +73,8 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_CYCLE_COUNTER:
-        case TB_MULPAIR:
+        case TB_SMULPAIR:
+        case TB_UMULPAIR:
         case TB_HARD_BARRIER:
         case TB_ROOT:
         case TB_TRAP:
@@ -89,6 +85,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_FRAME_PTR:
         case TB_SPLITMEM:
         case TB_VBROADCAST:
+        case TB_BLACKHOLE:
         return 0;
 
         case TB_SYMBOL_TABLE:
@@ -113,6 +110,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_STORE:
         case TB_MEMCPY:
         case TB_MEMSET:
+        case TB_DEAD_STORE:
         return sizeof(TB_NodeMemAccess);
 
         case TB_ATOMIC_LOAD:
@@ -168,7 +166,6 @@ uint32_t gvn_hash(void* a) {
 
     // locals can't be put into the GVN table
     TB_ASSERT(n->type != TB_LOCAL);
-
     FOR_N(i, 0, n->input_count) {
         h += n->inputs[i] ? n->inputs[i]->gvn : 0;
     }
@@ -204,4 +201,27 @@ bool gvn_compare(void* a, void* b) {
 
     size_t extra = extra_bytes(x);
     return extra == 0 || memcmp(x->extra, y->extra, extra) == 0;
+
+    #if 0
+    bool skip_ctrl = x->type == TB_LOAD;
+    if (skip_ctrl) {
+        if (extra && memcmp(x->extra, y->extra, extra) != 0) {
+            return false;
+        }
+
+        // if either ctrl doms the other, these two loads match
+        if (fast_dommy(y->inputs[0], x->inputs[0])) {
+            x->inputs[0] = y->inputs[0];
+            return true;
+        }
+
+        if (fast_dommy(x->inputs[0], y->inputs[0])) {
+            return true;
+        }
+
+        return false;
+    } else {
+        return extra == 0 || memcmp(x->extra, y->extra, extra) == 0;
+    }
+    #endif
 }

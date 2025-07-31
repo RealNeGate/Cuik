@@ -68,7 +68,9 @@ bool worklist_test_n_set(TB_Worklist* restrict ws, TB_Node* n) {
 }
 
 void worklist_push(TB_Worklist* restrict ws, TB_Node* restrict n) {
-    if (!worklist_test_n_set(ws, n)) { dyn_array_put(ws->items, n); }
+    if (!worklist_test_n_set(ws, n)) {
+        dyn_array_put(ws->items, n);
+    }
 }
 
 TB_Node* worklist_pop(TB_Worklist* ws) {

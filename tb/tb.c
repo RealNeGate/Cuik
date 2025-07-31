@@ -72,7 +72,7 @@ static void init_codegen_families(void) {
     }
 }
 
-static ICodeGen* tb_codegen_info(TB_Module* m) { return &tb_codegen_families[m->target_arch]; }
+ICodeGen* tb_codegen_info(TB_Module* m) { return &tb_codegen_families[m->target_arch]; }
 
 TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     static thread_local TB_ThreadInfo* chain;
@@ -126,6 +126,15 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     return info;
 }
 
+TB_DataType tb_data_type_ptr_int(TB_Module* m) {
+    switch (m->codegen->pointer_size) {
+        case 16: return TB_TYPE_I16;
+        case 32: return TB_TYPE_I32;
+        case 64: return TB_TYPE_I64;
+        default: tb_todo();
+    }
+}
+
 int tb_data_type_bit_size(TB_Module* m, uint8_t type) {
     static const int arr[16] = {
         [TB_TAG_BOOL] = 1,
@@ -165,6 +174,39 @@ char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
     memcpy(newstr, src, len);
     newstr[len] = 0;
     return newstr;
+}
+
+TB_FeatureSet tb_features_from_profile_str(TB_Module* m, const char* name) {
+    TB_FeatureSet features = { 0 };
+
+    switch (m->target_arch) {
+        case TB_ARCH_X86_64: {
+            features.x64 |= TB_FEATURE_X64_SSE2;
+            if (name == NULL || strncmp(name, "x86_64-v", 8) != 0) {
+                break;
+            }
+
+            int level = name[8] - '0';
+            if (level >= 2) {
+                features.x64 |= TB_FEATURE_X64_SSE3;
+                features.x64 |= TB_FEATURE_X64_SSE41;
+                features.x64 |= TB_FEATURE_X64_SSE42;
+                features.x64 |= TB_FEATURE_X64_POPCNT;
+            }
+
+            if (level >= 3) {
+                features.x64 |= TB_FEATURE_X64_AVX;
+                features.x64 |= TB_FEATURE_X64_AVX2;
+                features.x64 |= TB_FEATURE_X64_BMI1;
+                features.x64 |= TB_FEATURE_X64_BMI2;
+            }
+        } break;
+
+        default:
+        break;
+    }
+
+    return features;
 }
 
 TB_Module* tb_module_create_for_host(bool is_jit) {
@@ -385,8 +427,7 @@ TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_
 }
 
 TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage) {
-    TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, len, name, sizeof(TB_Function));
-    f->super.linkage = linkage;
+    TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, len, name, linkage, sizeof(TB_Function));
     return f;
 }
 
@@ -404,8 +445,8 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
 
     f->gvn_nodes = nl_hashset_alloc(32);
 
-    tb_arena_create(&f->arena,     "ModulePerm");
-    tb_arena_create(&f->tmp_arena, "ModuleTmp");
+    tb_arena_create(&f->arena,     "FuncPerm");
+    tb_arena_create(&f->tmp_arena, "FuncTmp");
 
     f->section = section;
     f->node_count = 0;
@@ -466,6 +507,13 @@ TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f) {
     return f->prototype;
 }
 
+void tb_function_destroy(TB_Function* f) {
+    f->super.tag = TB_SYMBOL_DEAD;
+    nl_hashset_free(f->gvn_nodes);
+    tb_arena_destroy(&f->tmp_arena);
+    tb_arena_destroy(&f->arena);
+}
+
 void* tb_global_add_region(TB_Module* m, TB_Global* g, size_t offset, size_t size) {
     TB_ASSERT(offset == (uint32_t)offset);
     TB_ASSERT(size == (uint32_t)size);
@@ -487,7 +535,7 @@ void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, TB_Sy
     g->objects[g->obj_count++] = (TB_InitObj) { .type = TB_INIT_OBJ_RELOC, .offset = offset, .reloc = symbol };
 }
 
-TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size) {
+TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, TB_Linkage linkage, size_t size) {
     TB_ASSERT(tag != TB_SYMBOL_NONE);
     cuikperf_region_start("symbol_alloc", NULL);
 
@@ -498,7 +546,7 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const 
 
     TB_Symbol* s = tb_arena_alloc(&info->perm_arena, size);
     s->tag = tag;
-    s->linkage = TB_LINKAGE_PUBLIC;
+    s->linkage = linkage;
     s->name_length = len;
     s->name = tb__arena_strdup(m, len, name);
     s->module = m;
@@ -527,14 +575,13 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const 
 }
 
 TB_Symbol* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
-    TB_External* e = (TB_External*) tb_symbol_alloc(m, TB_SYMBOL_EXTERNAL, len, name, sizeof(TB_External));
+    TB_External* e = (TB_External*) tb_symbol_alloc(m, TB_SYMBOL_EXTERNAL, len, name, TB_LINKAGE_PUBLIC, sizeof(TB_External));
     e->type = type;
     return &e->super;
 }
 
 TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
-    TB_Global* g = (TB_Global*) tb_symbol_alloc(m, TB_SYMBOL_GLOBAL, len, name, sizeof(TB_Global));
-    g->super.linkage = linkage;
+    TB_Global* g = (TB_Global*) tb_symbol_alloc(m, TB_SYMBOL_GLOBAL, len, name, linkage, sizeof(TB_Global));
     g->dbg_type = dbg_type;
     return g;
 }
@@ -624,12 +671,12 @@ TB_ExternalType tb_extern_get_type(TB_External* e) {
     return e->type;
 }
 
-void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos) {
+void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos, TB_ObjectRelocType type) {
     TB_Module* m = func_out->parent->super.module;
     TB_SymbolPatch* p = tb_arena_alloc(get_permanent_arena(m), sizeof(TB_SymbolPatch));
 
     // function local, no need to synchronize
-    *p = (TB_SymbolPatch){ .target = target, .pos = pos };
+    *p = (TB_SymbolPatch){ .target = target, .pos = pos, .type = type };
     if (func_out->first_patch == NULL) {
         func_out->first_patch = func_out->last_patch = p;
     } else {

@@ -269,7 +269,6 @@ void _tpool_wait(TPool_Futex *addr, TPool_Futex val) {
 
 #endif
 
-struct TPool;
 TPool_Thread_Local int tpool_current_thread_idx;
 
 #define GRAB_SUCCESS 0

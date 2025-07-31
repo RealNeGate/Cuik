@@ -51,7 +51,7 @@ static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val*
         EMIT1(e, ((rx & 7) << 3) | RBP);
         EMIT4(e, a->imm);
 
-        tb_emit_symbol_patch(e->output, a->symbol, e->count - 4);
+        tb_emit_symbol_patch(e->output, a->symbol, e->count - 4, TB_OBJECT_RELOC_REL32);
     } else {
         tb_unreachable();
     }
@@ -190,6 +190,59 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
     bool packed    = (dt == TB_X86_F32x4 || dt == TB_X86_F64x2);
     bool is_double = (dt == TB_X86_F64x2 || dt == TB_X86_F64x1);
 
+    if (type == MOV_I2F || type == MOV_F2I || (supports_mem_dst && dir)) {
+        SWAP(const Val*, a, b);
+    }
+
+    uint8_t rx = a->reg;
+    uint8_t base, index;
+    if (b->type == VAL_MEM) {
+        base  = b->reg;
+        index = b->index != GPR_NONE ? b->index : 0;
+    } else if (b->type == VAL_XMM || b->type == VAL_GPR) {
+        base  = b->reg;
+        index = 0;
+    } else if (b->type == VAL_GLOBAL) {
+        base  = 0;
+        index = 0;
+    } else {
+        tb_todo();
+    }
+
+    bool r = (type == FP_CVT64);
+    if (type == MOV_I2F || type == MOV_F2I) {
+        EMIT1(e, 0x66);
+        r = dt == TB_X86_F64x1;
+    } else if (type != FP_XOR && type != FP_AND && type != FP_OR) {
+        if (!packed && type != FP_UCOMI) {
+            EMIT1(e, is_double ? 0xF2 : 0xF3);
+        } else if (is_double) {
+            // packed double
+            EMIT1(e, 0x66);
+        }
+    }
+
+    if (r || rx >= 8 || base >= 8 || index >= 8) {
+        EMIT1(e, rex(r, rx, base, index));
+    }
+
+    // extension prefix
+    EMIT1(e, 0x0F);
+    EMIT1(e, inst->op + (supports_mem_dst ? dir : 0));
+    emit_memory_operand(e, rx, b);
+}
+
+static void inst2sseint(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_X86_DataType dt) {
+    TB_ASSERT(type < COUNTOF(inst_table));
+    const InstDesc* restrict inst = &inst_table[type];
+
+    bool supports_mem_dst = (type == MOVDQU || type == MOVDQA);
+    bool dir = is_value_mem(a);
+
+    bool packed    = (dt == TB_X86_F32x4 || dt == TB_X86_F64x2);
+    bool is_double = (dt == TB_X86_F64x2 || dt == TB_X86_F64x1);
+
+    TB_ASSERT(!dir || supports_mem_dst);
     if (supports_mem_dst && dir) {
         SWAP(const Val*, a, b);
     }
@@ -209,22 +262,19 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
         tb_todo();
     }
 
-    if (type != FP_XOR && type != FP_AND && type != FP_OR) {
-        if (!packed && type != FP_UCOMI) {
-            EMIT1(e, is_double ? 0xF2 : 0xF3);
-        } else if (is_double) {
-            // packed double
-            EMIT1(e, 0x66);
-        }
+    if (type == MOVDQA) {
+        EMIT1(e, 0x66);
+    } else if (type == MOVDQU) {
+        EMIT1(e, 0xF3);
     }
 
-    if (type == FP_CVT64 || rx >= 8 || base >= 8 || index >= 8) {
+    if (rx >= 8 || base >= 8 || index >= 8) {
         EMIT1(e, rex(false, rx, base, index));
     }
 
     // extension prefix
     EMIT1(e, 0x0F);
-    EMIT1(e, inst->op + (supports_mem_dst ? dir : 0));
+    EMIT1(e, inst->op + (dir ? 0x10 : 0x00));
     emit_memory_operand(e, rx, b);
 }
 
@@ -300,7 +350,7 @@ static void asm_inst1(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* 
         }
 
         EMIT4(e, r->imm);
-        tb_emit_symbol_patch(e->output, r->symbol, e->count - 4);
+        tb_emit_symbol_patch(e->output, r->symbol, e->count - 4, TB_OBJECT_RELOC_REL32);
     } else if (r->type == VAL_LABEL) {
         EXT_OP(INST_UNARY_EXT);
         EMIT1(e, inst->op);
@@ -313,8 +363,36 @@ static void asm_inst1(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* 
     }
 }
 
+enum {
+    VEX_0F   = 1,
+    VEX_0F38 = 2,
+    VEX_0F3A = 3,
+};
+
+enum {
+    VEX_NONE,
+    VEX_66,
+    VEX_F3,
+    VEX_F2,
+};
+
+static void emit_vex(TB_CGEmitter* e, bool is_64bit, uint8_t rx, uint8_t base, uint8_t index, uint8_t v, uint8_t m, uint8_t p) {
+    // idk why but the VEX stuff is all complements
+    v     = ~v & 0b1111;
+    base  = ~(base >> 3) & 1;
+    index = ~(index >> 3) & 1;
+    rx    = ~(rx >> 3) & 1;
+
+    // VEX3
+    EMIT1(e, 0xC4);
+    EMIT1(e, (base << 5) | (index << 6) | (rx << 7) | m);
+    EMIT1(e, (is_64bit ? 128 : 0) | (v << 3) | p);
+}
+
 static void asm_inst2(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* a, const Val* b) {
-    if (dt >= TB_X86_F32x1 && dt <= TB_X86_F64x2) {
+    if (dt >= TB_X86_PBYTE && dt <= TB_X86_PQWORD) {
+        inst2sseint(e, type, a, b, dt);
+    } else if (dt >= TB_X86_F32x1 && dt <= TB_X86_F64x2) {
         inst2sse(e, type, a, b, dt);
     } else {
         inst2(e, type, a, b, dt);

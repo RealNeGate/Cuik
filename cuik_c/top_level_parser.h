@@ -209,7 +209,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     type_clone(&parser->types, cuik_canonical_type(n->decl.type), decl.name),
                     cuik_get_quals(n->decl.type)
                 );
-                cuik_canonical_type(n->decl.type)->func.noret = true;
+                cuik_canonical_type(n->decl.type)->clone.noret = true;
             }
         }
 

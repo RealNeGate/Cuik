@@ -113,7 +113,7 @@ int main(int argc, const char** argv) {
         if (strcmp(argv[1], "-bindgen") == 0) return run_bindgen(argc - 2, argv + 2);
     }
 
-    log_set_level(LOG_DEBUG);
+    log_set_level(LOG_INFO);
     // test_diag();
 
     Cuik_DriverArgs args = {

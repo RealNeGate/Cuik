@@ -17,7 +17,7 @@ static void per_func_task(TPool* tp, void** arg) {
         task.func(task.arr[i], task.arg);
     }
 
-    atomic_fetch_sub(task.done, 1);
+    atomic_fetch_add(task.done, 1);
     futex_signal(task.done);
 }
 
@@ -33,7 +33,7 @@ static size_t good_batch_size(size_t n, size_t jobs) {
     // next power of two
     return 1ull << (64ull - __builtin_clzll(batch_size - 1ull));*/
 
-    return 8192;
+    return 50;
 }
 
 void cuiksched_per_function(TPool* tp, CompilationUnit* cu, TB_Module* mod, void* arg, CuikSched_PerFunction func) {

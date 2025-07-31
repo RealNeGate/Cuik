@@ -131,7 +131,9 @@ static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* e
 
             // low contention, don't care
             mtx_lock(&l->lock);
-            dyn_array_put(l->default_libs, path);
+            if (tb__linker_is_library_new(l, path)) {
+                dyn_array_put(l->default_libs, path);
+            }
             mtx_unlock(&l->lock);
         } else if (strprefix((const char*) curr, "/alternatename:", end - curr)) {
             curr += sizeof("/alternatename:")-1;
@@ -176,10 +178,201 @@ FileMap pe_find_lib(TB_Linker* l, const char* file_name, char* path) {
             snprintf(path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
             printf("  searched at %s\n", path);
         }
-        cuikperf_region_end();
         return (FileMap){ 0 };
     }
     return fm;
+}
+
+// insert into global symbol table
+static TB_LinkerSymbol* insert_global_symbol(TB_Linker* l, TB_LinkerSymbol* s, bool is_static) {
+    if (s != NULL && !is_static) {
+        TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
+        if (new_s != s) {
+            tb_arena_free(&linker_perm_arena, s, sizeof(TB_LinkerSymbol));
+            return new_s;
+        }
+    }
+
+    return s;
+}
+
+static TB_Slice cstr_into_slice(const char* str) {
+    size_t len = strlen(str);
+    return (TB_Slice){ (const uint8_t*) str, len };
+}
+
+void pe_append_module(TPool* pool, void** args) {
+    TB_LinkerObject* obj = args[0];
+    TB_Linker* l = obj->linker;
+
+    cuikperf_region_start("module", NULL);
+
+    if (!linker_thread_init) {
+        linker_thread_init = true;
+        tb_arena_create(&linker_perm_arena, "LinkerPerm");
+        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
+    }
+
+    TB_Module* m = obj->module;
+    ExportList exports;
+    CUIK_TIMED_BLOCK("layout section") {
+        exports = tb_module_layout_sections(m);
+    }
+
+    // accumulate all sections
+    DynArray(TB_ModuleSection) sections = m->sections;
+
+    const ICodeGen* restrict code_gen = tb_codegen_info(m);
+    tb__layout_relocations(m, sections, code_gen, 0, sizeof(TB_LinkerReloc));
+
+    size_t reloc_cap = 0;
+    dyn_array_for(i, sections) {
+        reloc_cap += sections[i].reloc_count;
+    }
+
+    TB_LinkerReloc* relocs = tb_arena_alloc(&linker_perm_arena, reloc_cap * sizeof(TB_LinkerReloc));
+
+    // mark correct flags on sections
+    #define ON(mask, a, b) flags |= (sections[i].flags & mask ? (a) : (b))
+    size_t reloc_count = 0;
+    dyn_array_for(i, sections) {
+        uint32_t flags = 0;
+
+        // fill out the section data
+        unsigned char* raw_data = tb_arena_alloc(&linker_perm_arena, sections[i].total_size);
+        tb_helper_write_section(m, 0, &sections[i], raw_data, 0);
+
+        // add to global pool of sections
+        TB_LinkerSection* ls = tb_linker_find_or_create_section(l, strlen(sections[i].name), sections[i].name, flags & ~0x00F00000);
+
+        TB_LinkerSectionPiece* p;
+        p = tb_linker_append_piece(ls, PIECE_BUFFER, sections[i].total_size, obj);
+        p->buffer = raw_data;
+        p->buffer_size = sections[i].total_size;
+        if (sections[i].comdat.type != 0) {
+            p->flags |= TB_LINKER_PIECE_COMDAT;
+        }
+        if (sections[i].flags & TB_MODULE_SECTION_EXEC) {
+            p->flags |= TB_LINKER_PIECE_CODE;
+        }
+        sections[i].piece = p;
+
+        // convert relocations into the linker-friendly format
+        p->reloc_count = sections[i].reloc_count;
+        p->relocs = &relocs[reloc_count];
+        reloc_count += sections[i].reloc_count;
+
+        /*uint32_t flags = TB_COFF_SECTION_READ;
+        ON(TB_MODULE_SECTION_WRITE, TB_COFF_SECTION_WRITE, 0);
+        ON(TB_MODULE_SECTION_EXEC,  TB_COFF_SECTION_EXECUTE | TB_COFF_SECTION_CODE, TB_COFF_SECTION_INIT);
+        if (sections[i].comdat.type != 0) flags |= TB_COFF_SECTION_COMDAT;
+        sections[i].export_flags = flags;*/
+    }
+    #undef ON
+
+    // import symbols
+    FOR_N(i, 0, exports.count) {
+        TB_External* e = exports.data[i];
+
+        TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+        *s = (TB_LinkerSymbol){
+            .name   = cstr_into_slice(e->super.name),
+            .tag    = TB_LINKER_SYMBOL_UNKNOWN,
+        };
+        e->super.address = insert_global_symbol(l, s, e->super.linkage == TB_LINKAGE_PRIVATE);
+    }
+
+    // populate symbols
+    dyn_array_for(i, sections) {
+        TB_LinkerSectionPiece* p = sections[i].piece;
+        if (p == NULL) { continue; }
+
+        DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
+        DynArray(TB_Global*) globals = sections[i].globals;
+
+        dyn_array_for(j, funcs) {
+            TB_FunctionOutput* func_out = funcs[j];
+            size_t source_offset = func_out->code_pos;
+
+            TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+            *s = (TB_LinkerSymbol){
+                .name   = cstr_into_slice(func_out->parent->super.name),
+                .tag    = TB_LINKER_SYMBOL_NORMAL,
+                .normal = { p, source_offset }
+            };
+
+            if (p->flags & TB_LINKER_PIECE_COMDAT) {
+                s->comdat = TB_LINKER_COMDAT_ANY;
+            }
+            func_out->parent->super.address = insert_global_symbol(l, s, func_out->parent->super.linkage == TB_LINKAGE_PRIVATE);
+        }
+
+        dyn_array_for(j, globals) {
+            TB_Global* global = globals[j];
+            size_t source_offset = global->pos;
+
+            TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+            *s = (TB_LinkerSymbol){
+                .name   = cstr_into_slice(global->super.name),
+                .tag    = TB_LINKER_SYMBOL_NORMAL,
+                .normal = { p, source_offset }
+            };
+            global->super.address = insert_global_symbol(l, s, global->super.linkage == TB_LINKAGE_PRIVATE);
+        }
+    }
+
+    // populate relocations
+    reloc_count = 0;
+    dyn_array_for(i, sections) {
+        DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
+        DynArray(TB_Global*) globals = sections[i].globals;
+
+        dyn_array_for(j, funcs) {
+            TB_FunctionOutput* func_out = funcs[j];
+            size_t source_offset = func_out->code_pos;
+
+            for (TB_SymbolPatch* p = func_out->first_patch; p; p = p->next) {
+                if (p->internal) continue;
+
+                size_t actual_pos = source_offset + p->pos;
+
+                TB_Symbol* target = p->target;
+                if (target->tag == TB_SYMBOL_EXTERNAL) {
+                    TB_Symbol* resolved = atomic_load_explicit(&((TB_External*) target)->resolved, memory_order_relaxed);
+                    if (resolved) target = resolved;
+                }
+
+                relocs[reloc_count++] = (TB_LinkerReloc){
+                    .src_offset = actual_pos,
+                    .type = p->type,
+                    .target = target->address
+                };
+            }
+        }
+
+        dyn_array_for(j, globals) {
+            TB_Global* g = globals[j];
+
+            FOR_N(k, 0, g->obj_count) {
+                size_t actual_pos = g->pos + g->objects[k].offset;
+                if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
+                    const TB_Symbol* s = g->objects[k].reloc;
+                    relocs[reloc_count++] = (TB_LinkerReloc){
+                        .src_offset = actual_pos,
+                        .type = TB_OBJECT_RELOC_ADDR64,
+                        .target = s->address
+                    };
+                }
+            }
+        }
+    }
+
+    if (l->jobs.pool != NULL) {
+        l->jobs.done += 1;
+        futex_signal(&l->jobs.done);
+    }
+
+    cuikperf_region_end();
 }
 
 void pe_append_object(TPool* pool, void** args) {
@@ -863,8 +1056,8 @@ static void pe_init(TB_Linker* l) {
     //   https://github.com/llvm/llvm-project/blob/3d0a5bf7dea509f130c51868361a38daeee7816a/lld/COFF/Driver.cpp#L2192
     symbol("__AbsoluteZero");
     symbol("__volatile_metadata");
-    // add_abs("__volatile_metadata");
-    // add_abs("__guard_memcpy_fptr");
+    symbol("__volatile_metadata");
+    symbol("__guard_memcpy_fptr");
     symbol("__guard_fids_count");
     symbol("__guard_fids_table");
     symbol("__guard_flags");
@@ -898,9 +1091,15 @@ static DynArray(PE_BaseReloc) find_base_relocs(TB_Linker* l) {
             TB_LinkerSectionPiece* p = section->pieces[j];
             TB_ASSERT(p->flags & TB_LINKER_PIECE_LIVE);
 
+            #ifdef CONFIG_HAS_TB
+            RelocParser parse_reloc = p->obj && p->obj->module ? tb__linker_module_parse_reloc : pe_parse_reloc;
+            #else
+            RelocParser parse_reloc = pe_parse_reloc;
+            #endif
+
             FOR_N(k, 0, p->reloc_count) {
                 TB_LinkerReloc rel;
-                pe_parse_reloc(l, p, k, &rel);
+                parse_reloc(l, p, k, &rel);
                 if (rel.type == TB_OBJECT_RELOC_ADDR64) {
                     PE_BaseReloc br = { section->offset + p->offset + rel.src_offset, section->segment };
                     dyn_array_put(base_relocs, br);
@@ -963,6 +1162,10 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             dyn_array_clear(l->default_libs);
             mtx_unlock(&l->lock);
         } while (repeat);
+    } else {
+        for (size_t i = 0; i < dyn_array_length(l->default_libs); i++) {
+            tb_linker_append_library(l, l->default_libs[i]);
+        }
     }
 
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
@@ -1086,7 +1289,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         }
     }
 
-    if (1) {
+    if (0) {
         tb_linker_print_map(l);
     }
 
@@ -1312,6 +1515,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 TB_LinkerVtbl tb__linker_pe = {
     .init           = pe_init,
     .find_lib       = pe_find_lib,
+    .append_module  = pe_append_module,
     .append_object  = pe_append_object,
     .append_library = pe_append_library,
     .parse_reloc    = pe_parse_reloc,

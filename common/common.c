@@ -17,8 +17,14 @@
 #define NL_HASH_SET_IMPL
 #include <new_hash_map.h>
 
+#define EBR_IMPL
+#include <ebr.h>
+
 #define NBHS_IMPL
 #include <nbhs.h>
+
+#define NBHM_IMPL
+#include <nbhm.h>
 
 #define NL_BUFFER_IMPL
 #include <buffer.h>
