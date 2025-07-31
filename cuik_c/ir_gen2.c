@@ -1679,6 +1679,9 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
                 if (strcmp(s->decl.name, "main") == 0) {
                     TB_Node* exit_status = tb_builder_uint(g, TB_TYPE_I32, 0);
                     tb_builder_ret(g, 0, 1, &exit_status);
+                } else if (func_return_rule == TB_PASSING_INDIRECT) {
+                    TB_Node* ret = tb_builder_get_var(g, 1);
+                    tb_builder_ret(g, 0, 1, &ret);
                 } else {
                     tb_builder_ret(g, 0, 0, NULL);
                 }

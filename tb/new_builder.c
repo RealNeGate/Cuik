@@ -1046,7 +1046,7 @@ void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int count, TB_Node** args) 
         log_warn("%s: ir: generated poison due to inconsistent number of returned values", f->super.name);
 
         TB_Node* poison = tb_alloc_node(f, TB_POISON, ret->inputs[i]->dt, 1, 0);
-        set_input(f, poison, ret, 0);
+        set_input(f, poison, f->root_node, 0);
 
         poison = tb__gvn(f, poison, 0);
         add_input_late(f, ret->inputs[i], poison);
