@@ -300,6 +300,10 @@ void pe_append_module(TPool* pool, void** args) {
                 .tag    = TB_LINKER_SYMBOL_NORMAL,
                 .normal = { p, source_offset }
             };
+
+            if (p->flags & TB_LINKER_PIECE_COMDAT) {
+                s->comdat = TB_LINKER_COMDAT_ANY;
+            }
             func_out->parent->super.address = insert_global_symbol(l, s, func_out->parent->super.linkage == TB_LINKAGE_PRIVATE);
         }
 

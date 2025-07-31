@@ -90,3 +90,7 @@ tests/gold/clang.txt
 meta/a64dfa.c
 meta/Instructions.json
 tb/tb_config.h
+
+tests/suite/cuik2.txt
+tests/suite/clang.txt
+tests/suite/cuik.txt

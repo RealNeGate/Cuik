@@ -1285,6 +1285,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     func_out->code = ctx.emit.data;
     func_out->code_size = ctx.emit.count;
     func_out->locations = ctx.locations;
+    func_out->base_locals = ctx.call_usage*8;
     func_out->stack_slots = ctx.debug_stack_slots;
     func_out->stack_header = ctx.stack_header;
     func_out->stack_usage = ctx.stack_usage;
