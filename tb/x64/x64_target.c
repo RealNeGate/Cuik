@@ -1374,6 +1374,20 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
         return ctx->normie_mask[REG_CLASS_GPR];
 
+        case TB_UINT2FLOAT:
+        case TB_INT2FLOAT:
+        if (ins) {
+            ins[1] = ctx->normie_mask[REG_CLASS_GPR];
+        }
+        return ctx->normie_mask[REG_CLASS_XMM];
+
+        case TB_FLOAT2INT:
+        case TB_FLOAT2UINT:
+        if (ins) {
+            ins[1] = ctx->normie_mask[REG_CLASS_XMM];
+        }
+        return ctx->normie_mask[REG_CLASS_GPR];
+
         case x86_shl: case x86_shr: case x86_rol: case x86_ror: case x86_sar:
         {
             if (ins) {
@@ -1959,7 +1973,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        #if 0
         case TB_UINT2FLOAT:
         case TB_INT2FLOAT: {
             TB_DataType src_dt = n->inputs[1]->dt;
@@ -1997,7 +2010,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             // don't do quite yet, go fiddle with godbolt later.
             break;
         }
-        #endif
 
         case x86_idiv: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);

@@ -445,8 +445,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     CUIK_TIMED_BLOCK("insert legalizing moves") {
         FOR_N(i, 0, ctx->bb_count) {
             TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-            size_t j = 0; // we do insert things while iterating
-            for (; j < aarray_length(bb->items); j++) {
+            FOR_N(j, 0, aarray_length(bb->items)) {
                 TB_Node* n = bb->items[j];
 
                 RegMask** ins = ctx->ins;
@@ -606,8 +605,8 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             TB_ASSERT(n->type == TB_PHI);
 
             // join all these into one lifetime, make n the leader
-            RegMask* rm = ctx->constraint(ctx, n, NULL);
             int x = uf_find(ra.uf, ra.uf_len, n->gvn);
+            RegMask* rm = ctx->vregs[ctx->vreg_map[x]].mask;
             FOR_N(k, 1, n->input_count) {
                 // interfere against everything in the set
                 TB_Node* in = n->inputs[k];
