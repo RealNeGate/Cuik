@@ -263,12 +263,14 @@ void* tb_jit_place_function(TB_JIT* jit, TB_Function* f) {
 
     log_debug("jit: apply function %s (%p)", f->super.name, dst);
 
-    mtx_lock(&jit->lock);
-    aarray_for(i, func_out->safepoints) {
-        void* pc = dst + func_out->safepoints[i]->ip;
-        nl_table_put(&jit->safepoints, (void*) pc, func_out->safepoints[i]);
+    if (func_out->safepoints) {
+        mtx_lock(&jit->lock);
+        aarray_for(i, func_out->safepoints) {
+            void* pc = dst + func_out->safepoints[i]->ip;
+            nl_table_put(&jit->safepoints, (void*) pc, func_out->safepoints[i]);
+        }
+        mtx_unlock(&jit->lock);
     }
-    mtx_unlock(&jit->lock);
 
     // apply relocations, any leftovers are mapped to thunks
     for (TB_SymbolPatch* p = func_out->first_patch; p; p = p->next) {
