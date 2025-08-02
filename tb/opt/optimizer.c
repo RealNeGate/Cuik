@@ -33,7 +33,6 @@ static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int6
 // node creation helpers
 TB_Node* make_poison(TB_Function* f, TB_DataType dt);
 TB_Node* dead_node(TB_Function* f);
-TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_Node* rhs);
 TB_Node* make_ptr_offset(TB_Function* f, TB_Node* lhs, TB_Node* rhs);
@@ -705,8 +704,9 @@ TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x) {
     i->value = x;
 
     set_input(f, n, f->root_node, 0);
-
-    latuni_set(f, n, value_int(f, n));
+    if (f->types) {
+        latuni_set(f, n, value_int(f, n));
+    }
     return tb__gvn(f, n, sizeof(TB_NodeInt));
 }
 
@@ -761,6 +761,13 @@ TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i) {
     TB_Node* n = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
     set_input(f, n, src, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = i);
+    return n;
+}
+
+TB_Node* make_branch_proj_node(TB_Function* f, TB_Node* src, int i, uint64_t key) {
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeBranchProj));
+    set_input(f, n, src, 0);
+    TB_NODE_SET_EXTRA(n, TB_NodeBranchProj, .index = i, .key = key);
     return n;
 }
 
@@ -1429,7 +1436,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_MEMORY
-    if (strcmp(f->super.name, "main") == 0) {
+    if (strcmp(f->super.name, "pcg32_pie") == 0) {
         f->enable_log = true;
     }
     #endif
@@ -1528,9 +1535,11 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
         if (dead_factor > 0.2f) {
             TB_OPTLOG(PEEP, printf("=== COMPACT ===\n"));
+            STATS_ENTER(COMPACT);
             size_t old = tb_arena_current_size(&f->arena);
             tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
+            STATS_EXIT(COMPACT);
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
 
             TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Compact"));

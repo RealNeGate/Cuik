@@ -691,7 +691,7 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
                     // SUB and COMPARE have congruence based folding rules, to trigger those
                     // we need visit the main node in CPROP when one of its inputs is visited
                     // here in SPLIT.
-                    if (y->type == TB_SUB || (y->type >= TB_CMP_EQ && y->type <= TB_CMP_FLE)) {
+                    if (y->type == TB_AND || y->type == TB_OR || y->type == TB_XOR || y->type == TB_SUB || (y->type >= TB_CMP_EQ && y->type <= TB_CMP_FLE)) {
                         push_cprop(f, cprop, y);
                     }
                 } else if (y->type == TB_PHI && i > 0) {

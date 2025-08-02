@@ -50,7 +50,25 @@ static void dfa_dump(void) {
     }
 }
 
+float minf(float x, float y) {
+    return x < y ? x : y;
+}
+
+int is_space(int key) {
+    switch (key) {
+        case ' ':  return true;
+        case '\t': return true;
+        case '\r': return true;
+        case '\v': return true;
+        default:   return false;
+    }
+}
+
 int main() {
+    for (int i = 0; i < 256; i++) {
+        printf("%d %d\n", i, is_space(i));
+    }
+
     dfa_range(0, 0,   255, 4);
     dfa_range(4, 0,   255, 4);
     dfa_dump();
@@ -110,19 +128,3 @@ static int count_newlines(int* arr, int n) {
 
     return c;
 }
-
-/*static int exists(int key) {
-    switch (key) {
-        case '\n': return false;
-        case 'a': return true;
-        case 'b': return true;
-        case 'c': return true;
-        case 'd': return true;
-        case 'z': return true;
-        case '{': return false;
-        case '|': return false;
-        case '}': return false;
-        case '~': return false;
-    }
-}*/
-

@@ -220,7 +220,7 @@ static double rogers_get_spill_cost(Ctx* restrict ctx, Rogers* restrict ra, VReg
     return vreg->spill_cost / vreg->area;
 }
 
-static void rogers_update_mask(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* n) {
+static void rogers_update_mask(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* n, int vreg_id) {
     int leader = uf_find(ra->uf, ra->uf_len, n->gvn);
     ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
 
@@ -231,6 +231,7 @@ static void rogers_update_mask(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
             int y = set[i]->gvn;
             TB_Node* yy = ra->gvn2node[y];
 
+            ctx->vreg_map[y] = vreg_id;
             mask = tb__reg_mask_meet(ctx, mask, ctx->constraint(ctx, yy, NULL));
             FOR_USERS(u, yy) {
                 if (USERI(u) > 0 && USERI(u) < USERN(u)->input_count) {
@@ -240,6 +241,7 @@ static void rogers_update_mask(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
             }
         }
     } else {
+        ctx->vreg_map[n->gvn] = vreg_id;
         mask = ctx->constraint(ctx, n, NULL);
         FOR_USERS(u, n) {
             if (USERI(u) > 0 && USERI(u) < USERN(u)->input_count) {
@@ -250,7 +252,6 @@ static void rogers_update_mask(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
     }
     TB_ASSERT(mask != &TB_REG_EMPTY);
 
-    int vreg_id = ctx->vreg_map[leader];
     VReg* vreg = &ctx->vregs[vreg_id];
     vreg->mask = mask;
     // vreg->reg_width = tb__reg_width_from_dt(mask->class, n->dt);
@@ -726,6 +727,8 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         cuikperf_region_end();
 
         if (done) {
+            TB_OPTDEBUG(REGALLOC3)(rogers_dump_sched(ctx, f->node_count));
+
             tb_arena_restore(arena, sp);
             cuikperf_region_end();
 
@@ -2113,7 +2116,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
                     cpy->def = a_def_mask;
 
                     TB_NODE_SET_EXTRA(new_b, TB_NodeMachCopy, .def = new_b_mask, .use = a_def_mask);
-                    rogers_update_mask(ctx, ra, b);
+                    rogers_update_mask(ctx, ra, b, ctx->vreg_map[b->gvn]);
                 } else {
                     TB_NODE_SET_EXTRA(new_b, TB_NodeMachCopy, .def = new_b_mask, .use = b_def_mask);
                 }
@@ -2506,6 +2509,50 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
             }
         }
 
+        int leader = uf_find(ra->uf, ra->uf_len, a->gvn);
+        ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
+
+        // re-coalesce the necessary nodes, we already know the
+        // new nodes and the old nodes don't interfere since they
+        // were split of the same lifetime.
+        if (set) {
+            // Reset-UF
+            aarray_for(i, set) {
+                TB_Node* member = set[i];
+                // make them all their own roots
+                ra->uf[member->gvn] = member->gvn;
+                ra->uf_size[member->gvn] = 1;
+            }
+            nl_table_remove(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
+
+            aarray_for(i, set) {
+                TB_Node* n = set[i];
+                int x = uf_find(ra->uf, ra->uf_len, n->gvn);
+                RegMask* rm = ctx->constraint(ctx, n, NULL);
+
+                // phi-coalesce
+                if (n->type == TB_PHI) {
+                    FOR_N(k, 1, n->input_count) {
+                        // interfere against everything in the set
+                        TB_Node* in = n->inputs[k];
+                        int y = uf_find(ra->uf, ra->uf_len, in->gvn);
+                        rogers_coalesce(ctx, ra, x, y, n, in);
+                    }
+                }
+
+                // CISC-coalesce
+                int shared_edge = ctx->node_2addr(n);
+                if (n->type != TB_MACH_COPY && shared_edge >= 0 && n->inputs[shared_edge]) {
+                    int y = uf_find(ra->uf, ra->uf_len, n->inputs[shared_edge]->gvn);
+                    rogers_coalesce(ctx, ra, y, x, n->inputs[shared_edge], n);
+                }
+            }
+
+            // in the end we have two sets, original and reloaded
+            rogers_update_mask(ctx, ra, a, ctx->vreg_map[a->gvn]);
+            rogers_update_mask(ctx, ra, reload_a, ctx->vreg_map[reload_a->gvn]);
+        }
+
         // add in-constraints
         /*FOR_USERS() {
             RegMask* in_mask = constraint_in(ctx, use_n, use_i);
@@ -2513,7 +2560,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
         }*/
 
         // coalesce phis
-        int leader = uf_find(ra->uf, ra->uf_len, reload_a->gvn);
+        leader = uf_find(ra->uf, ra->uf_len, reload_a->gvn);
         aarray_for(i, phis) {
             TB_Node* def = phis[i];
             TB_ASSERT(def && def->type == TB_PHI);

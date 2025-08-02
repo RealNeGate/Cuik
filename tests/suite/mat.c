@@ -1,21 +1,12 @@
-
-/* int foo(float a, float b) {
-    return a > b;
-}
-
-int bar(float a) {
-    return foo(a, 2.0f);
-} */
-
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
-int foo(int a, int b) {
+static int foo(int a, int b) {
     return a / b;
 }
 
-uint32_t count(uint64_t bits) {
+static uint32_t count(uint64_t bits) {
     uint32_t used = 0;
     for (uint32_t i = 0; i < 64; i++) {
         if (bits & (1ull << i)) {
@@ -26,14 +17,7 @@ uint32_t count(uint64_t bits) {
     return used;
 }
 
-#if 1
-int main() {
-    printf("H %d\n", count(0b100010010001));
-    printf("F %d\n", foo(16, 3));
-}
-#endif
-
-void matmul(float* dst, float* a, float* b) {
+static void matmul(float* dst, float* a, float* b) {
     if (dst == NULL) {
         return;
     }
@@ -109,3 +93,32 @@ void matmul(float* dst, float* a, float* b) {
     }
 }
 
+uint32_t pcg32_pie(uint64_t *state) {
+    uint64_t old = *state ^ 0xc90fdaa2adf85459ULL;
+    *state = *state * 6364136223846793005ULL + 0xc90fdaa2adf85459ULL;
+    uint32_t xorshifted = ((old >> 18u) ^ old) >> 27u;
+    uint32_t rot = old >> 59u;
+    return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+}
+
+int main() {
+    printf("H %d\n", count(0b100010010001));
+
+    uint64_t seed = 11400714819323198485llu;
+
+    float dst[16], a[16], b[16];
+    for (int i = 0; i < 200; i++) {
+        uint32_t x = pcg32_pie(&seed);
+        printf("F %d %d\n", foo(i, 3), x);
+
+        /*for (int j = 0; j < 16; j++) {
+
+                }
+
+                matmul(dst, a, b);
+
+                // dump results
+                for (int j = 0; j < 16; j++) { printf("%f ", dst[j]); }
+                printf("\n");*/
+    }
+}

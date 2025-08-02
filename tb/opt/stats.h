@@ -2,6 +2,7 @@
 X(PEEPHOLES,       "Peepholes")
 X(MEMORY,          "Memory")
 X(OPTIMISTIC,      "Optimistic")
+X(COMPACT,         "Compact")
 // Loop opts
 X(LOOP_FIND,       "LoopFinding")
 X(LOOP_ROTATE,     "LoopRotation")

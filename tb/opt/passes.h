@@ -382,6 +382,8 @@ static bool succ_iter_next(SuccIter* restrict it) {
     return false;
 }
 
+TB_Node* make_branch_proj_node(TB_Function* f, TB_Node* src, int i, uint64_t key);
+
 bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b);
 TB_Node* gcf_congruent_leader(TB_Function* f, TB_Node* n);
 
@@ -453,3 +455,12 @@ Lattice* latuni_get(TB_Function* f, TB_Node* n);
 
 void tb__print_regmask(RegMask* mask);
 
+TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
+
+static TB_Node* int_binop(TB_Function* f, int type, TB_Node* lhs, TB_Node* rhs) {
+    TB_Node* n = tb_alloc_node(f, type, lhs->dt, 3, sizeof(TB_NodeBinopInt));
+    set_input(f, n, lhs, 1);
+    set_input(f, n, rhs, 2);
+    worklist_push(f->worklist, n);
+    return n;
+}

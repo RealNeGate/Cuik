@@ -316,11 +316,10 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         // prune based on that fact to avoid an ambiguity.
         Lattice* t = lattice_gimme_int2(f, min, max, known[0], known[1], 64);
         if (congruent && type == TB_SUB) {
-            Lattice* zero = &FALSE_IN_THE_SKY; // it's a zero
-
             // we can only drop to zero from TOP and our current approximation
             // is subset of 0 (that way if push comes to shove we can extend
             // from 0 -> t without weird conflicts)
+            Lattice* zero = &FALSE_IN_THE_SKY; // it's a zero
             if (at_top && lattice_meet(f, t, zero) == t) {
                 return zero;
             }
@@ -492,7 +491,15 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     zeros |= ~(mask >> b->_int.min);
                 }
 
-                return lattice_gimme_uint2(f, new_min, new_max, zeros, ones, bits);
+                // convert back to signed
+                min = tb__sxt(new_min, bits, 64);
+                max = tb__sxt(new_max, bits, 64);
+                if (min > max) {
+                    min = lattice_int_min(bits);
+                    max = lattice_int_max(bits);
+                }
+
+                return lattice_gimme_int2(f, min, max, zeros, ones, bits);
             }
 
             case TB_SAR: {
@@ -583,10 +590,6 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    if (n->type == TB_XOR && gcf_is_congruent(f, n->inputs[1], n->inputs[2])) {
-        return lattice_int_const(f, 0);
-    }
-
     int bits = tb_data_type_bit_size(NULL, n->dt.type);
     int64_t min = lattice_int_min(bits);
     int64_t max = lattice_int_max(bits);
@@ -599,13 +602,13 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
             ones  = a->_int.known_ones  & b->_int.known_ones;
 
             // if the range doesn't flip itself around we're safe
-            if (b->_int.min == b->_int.max) {
+            /*if (b->_int.min == b->_int.max) {
                 int64_t mmin = a->_int.min & b->_int.min;
                 int64_t mmax = a->_int.max & b->_int.min;
                 if (mmin < mmax) {
                     min = mmin, max = mmax;
                 }
-            }
+            }*/
             break;
         }
 
@@ -630,7 +633,16 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         return lattice_int_const(f, ones);
     }
 
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    Lattice* t = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    if (n->type == TB_XOR && gcf_is_congruent(f, n->inputs[1], n->inputs[2])) {
+        Lattice* zero = &FALSE_IN_THE_SKY; // it's a zero
+        Lattice* old_type = latuni_get(f, n);
+        if (old_type == &TOP_IN_THE_SKY && lattice_meet(f, t, zero) == t) {
+            return zero;
+        }
+    }
+
+    return t;
 }
 
 static TB_Node* identity_bits(TB_Function* f, TB_Node* n) {
@@ -748,14 +760,6 @@ static void tb_test_int_division(void) {
     }
     printf("Tried: %"PRIu64" cases\n", cases);
     __debugbreak();
-}
-
-static TB_Node* int_binop(TB_Function* f, int type, TB_Node* lhs, TB_Node* rhs) {
-    TB_Node* n = tb_alloc_node(f, type, lhs->dt, 3, sizeof(TB_NodeBinopInt));
-    set_input(f, n, lhs, 1);
-    set_input(f, n, rhs, 2);
-    mark_node(f, n);
-    return n;
 }
 
 static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {

@@ -421,6 +421,15 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
                 return NULL;
             }
 
+            TB_Node* phi = NULL;
+            FOR_USERS(u, region) {
+                if (USERN(u)->type == TB_PHI) {
+                    if (USERN(u)->dt.type == TB_TAG_MEMORY) { return NULL; }
+                    if (phi != NULL) { return NULL; }
+                    phi = USERN(u);
+                }
+            }
+
             // try to make a multi-way lookup:
             //
             //      Branch
@@ -434,17 +443,19 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
             //               Phi
             TB_Node* parent = region->inputs[0]->inputs[0];
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(parent);
-            if (parent->type != TB_BRANCH || br->succ_count != n->input_count - 1) {
+            if (parent->type != TB_BRANCH || br->succ_count != n->input_count - 1 || br->succ_count >= 64) {
                 return NULL;
             }
 
             uint64_t min = 0;
             uint64_t max = 0;
+            uint64_t entropy = 0;
 
             static int used;
-            static int all_entries[65536];
+            static int all_entries[64];
 
-            // verify we have a really clean looking diamond shape
+            // verify we have a really clean looking diamond shape and a short enough range
+            bool bail = false;
             FOR_N(i, 0, n->input_count - 1) {
                 if (region->inputs[i]->type != TB_BRANCH_PROJ || region->inputs[i]->inputs[0] != parent) {
                     return NULL;
@@ -453,75 +464,26 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
                 TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(region->inputs[i]);
                 printf("KEY: %llu\n", p->key);
 
-                if (p->key / 256 >= 256) {
-                    overflow_histo = true;
-                } else {
-                    crude_histo[p->key / 256] += 1;
-
-                    all_entries[p->key] = used++;
-                }
-
-                min = TB_MIN(min, p->key);
-                max = TB_MAX(max, p->key);
-
-                // acceptable values to lower into table constants
-                if (n->inputs[1 + i]->type != TB_SYMBOL && n->inputs[1 + i]->type != TB_ICONST) {
+                if (max - min > 64) {
                     return NULL;
                 }
             }
 
-            int first_empty = -1;
-            FOR_N(i, 0, 256) {
-                if (crude_histo[i] == 0) {
-                    if (first_empty < 0) {
-                        first_empty = i;
-                    }
-                    continue;
-                } else if (first_empty >= 0) {
-                    printf("%3d ... %-3zu :\n", first_empty, i);
-                    first_empty = -1;
-                }
-
-                printf("%3zu         : ", i);
-                FOR_N(j, 0, crude_histo[i]) { printf("X"); }
-                printf("\n");
+            // identify how many kinds of values we might see, if there's only 2
+            // then we could use a bitmap
+            NL_Table dict = nl_table_arena_alloc(&f->tmp_arena, 64);
+            FOR_N(i, 0, n->input_count - 1) {
+                TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(region->inputs[i]);
+                all_entries[p->key - min] = used++;
+                void* k = (void*) (uintptr_t) ((p->key - min) + 1);
+                TB_Node* v = cfg_next_control();
+                void* nl_table_put2(NL_Table* restrict tbl, k, v, NL_HashFunc hash, NL_CompareFunc cmp);
             }
 
             // Make a table representation of this big switch statement.
             tb_print_dumb(f);
             __debugbreak();
 
-            #if 0
-
-            // convert to lookup node
-            TB_Node* lookup = tb_alloc_node(f, TB_LOOKUP, n->dt, 2, sizeof(TB_NodeLookup) + (br->succ_count * sizeof(TB_LookupEntry)));
-            set_input(f, lookup, parent->inputs[1], 1);
-
-            TB_NodeLookup* l = TB_NODE_GET_EXTRA(lookup);
-            l->entry_count = br->succ_count;
-            FOR_N(i, 0, n->input_count - 1) {
-                TB_Node* k = region->inputs[i];
-                assert(k->type == TB_BRANCH_PROJ);
-
-                TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(k);
-                assert(p->index < br->succ_count);
-                if (p->index == 0) {
-                    l->entries[p->index].key = 0; // default value, doesn't matter
-                } else {
-                    l->entries[p->index].key = p->key;
-                }
-
-                TB_NodeInt* v = TB_NODE_GET_EXTRA(n->inputs[1 + i]);
-                l->entries[p->index].val = v->value;
-            }
-
-            // kill branch, we don't really need it anymore
-            TB_Node* before = parent->inputs[0];
-            tb_kill_node(f, parent);
-            subsume_node(f, region, before);
-
-            return lookup;
-            #endif
         }
         #endif
     }

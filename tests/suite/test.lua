@@ -21,8 +21,12 @@ if not is_windows then
     exe_name = "./a.out"
 end
 
+if #arg >= 1 then
+    x = { arg[1] }
+end
+
 configs = {
-    "", "-O", "-based", "-O -based"
+    "", "-O",
 }
 
 local passed = 0

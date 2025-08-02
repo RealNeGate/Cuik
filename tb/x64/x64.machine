@@ -223,6 +223,8 @@ FLOATIE_OP(TB_FADD, vadd)
 FLOATIE_OP(TB_FSUB, vsub)
 FLOATIE_OP(TB_FMUL, vmul)
 FLOATIE_OP(TB_FDIV, vdiv)
+FLOATIE_OP(TB_FMAX, vmax)
+FLOATIE_OP(TB_FMIN, vmin)
 
 // *******************************
 // casting
