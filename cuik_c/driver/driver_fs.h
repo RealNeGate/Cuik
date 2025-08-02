@@ -13,7 +13,7 @@ static bool str_ends_with(const char* cstr, const char* postfix) {
 }
 
 // handles the **.c *.c type stuff
-static void filtered_append(Cuik_DriverArgs* args, const char* path, bool recursive) {
+static void filtered_append(DynArray(Cuik_Path*)* dst, const char* path, bool recursive) {
     const char* slash = path;
     for (const char* p = path; *p; p++) {
         if (*p == '/' || *p == '\\') {
@@ -40,11 +40,7 @@ static void filtered_append(Cuik_DriverArgs* args, const char* path, bool recurs
                 fprintf(stderr, "Invalid filepath! %s\n", tmp);
             }
 
-            if (cuik_path_has_ext(new_path, "a") || cuik_path_has_ext(new_path, "lib")) {
-                dyn_array_put(args->libraries, new_path);
-            } else {
-                dyn_array_put(args->sources, new_path);
-            }
+            dyn_array_put(*dst, new_path);
         } while (FindNextFile(find_handle, &find_data));
     }
     FindClose(find_handle);
@@ -60,7 +56,7 @@ static void filtered_append(Cuik_DriverArgs* args, const char* path, bool recurs
                     char new_pattern[FILENAME_MAX];
                     sprintf_s(new_pattern, sizeof(new_pattern), "%.*s%s%s", (int)(slash - path) + 1, path, find_data.cFileName, slash);
 
-                    filtered_append(args, new_pattern, true);
+                    filtered_append(dst, new_pattern, true);
                 }
             } while (FindNextFile(dir, &find_data));
         }
@@ -72,7 +68,7 @@ static void filtered_append(Cuik_DriverArgs* args, const char* path, bool recurs
     #endif
 }
 
-static void append_input_path(Cuik_DriverArgs* args, const char* path) {
+static void append_input_path(DynArray(Cuik_Path*)* dst, const char* path, bool case_insensitive) {
     // we don't check this very well because we're based
     const char* star = NULL;
     for (const char* p = path; *p; p++) {
@@ -83,15 +79,11 @@ static void append_input_path(Cuik_DriverArgs* args, const char* path) {
     }
 
     if (star != NULL) {
-        filtered_append(args, path, star[1] == '*');
+        filtered_append(dst, path, star[1] == '*');
     } else {
         Cuik_Path* newstr = cuik_malloc(sizeof(Cuik_Path));
-        if (cuikfs_canonicalize(newstr, path, args->toolchain.case_insensitive)) {
-            if (cuik_path_has_ext(newstr, "a") || cuik_path_has_ext(newstr, "lib")) {
-                dyn_array_put(args->libraries, newstr);
-            } else {
-                dyn_array_put(args->sources, newstr);
-            }
+        if (cuikfs_canonicalize(newstr, path, case_insensitive)) {
+            dyn_array_put(*dst, newstr);
         } else {
             fprintf(stderr, "Invalid filepath! %s\n", path);
         }

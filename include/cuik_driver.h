@@ -19,6 +19,14 @@ struct Cuik_Toolchain {
     bool  (*invoke_link)(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker, const char* output, const char* filename);
 };
 
+typedef enum Cuik_Phase {
+    CUIK_PHASE_PREPROCESS,
+    CUIK_PHASE_SYNTAX,
+    CUIK_PHASE_IR_GEN,
+    CUIK_PHASE_OBJECT,
+    CUIK_PHASE_LINKER,
+} Cuik_Phase;
+
 struct Cuik_DriverArgs {
     Cuik_Version version;
 
@@ -28,6 +36,9 @@ struct Cuik_DriverArgs {
 
     Cuik_Target* target;
     Cuik_Toolchain toolchain;
+
+    // phase to stop at
+    Cuik_Phase phase;
 
     int threads;
     const char* output_name;
@@ -42,53 +53,35 @@ struct Cuik_DriverArgs {
     DynArray(Cuik_Path*) libraries;
     DynArray(Cuik_Path*) libpaths;
     DynArray(char*) defines;
+    DynArray(char*) undefs;
 
     TB_WindowsSubsystem subsystem;
 
-    bool emit_ir         : 1;
-    bool assembly        : 1;
-    bool ast             : 1;
-    bool run             : 1;
-    bool bake            : 1;
-    bool nocrt           : 1;
-    bool live            : 1;
-    bool write_deps      : 1;
-    bool optimize        : 1;
-    bool time            : 1;
-    bool time_report     : 1;
-    bool verbose         : 1;
-    bool syntax_only     : 1;
-    bool test_preproc    : 1;
-    bool debug_info      : 1;
-    bool preprocess      : 1;
-    bool think           : 1;
-    bool based           : 1;
-    bool nochkstk        : 1;
-    bool preserve_ast    : 1;
+    // Flags
+    bool emit_ir;
+    bool assembly;
+    bool ast;
+    bool run;
+    bool bake;
+    bool nocrt;
+    bool live;
+    bool write_deps;
+    bool optimize;
+    bool time;
+    bool time_report;
+    bool verbose;
+    bool syntax_only;
+    bool test_preproc;
+    bool debug_info;
+    bool preprocess;
+    bool think;
+    bool based;
+    bool nochkstk;
+    bool preserve_ast;
 };
-
-typedef struct Cuik_Arg Cuik_Arg;
-struct Cuik_Arg {
-    Cuik_Arg* prev;
-    const char* value;
-};
-
-// represented parsed arguments, you can feed these into a Cuik_DriverArgs to
-// use in compilation.
-typedef struct Cuik_Arguments Cuik_Arguments;
-
-CUIK_API Cuik_Arguments* cuik_alloc_args(void);
-CUIK_API void cuik_free_args(Cuik_Arguments* args);
-
-CUIK_API void cuik_parse_args(Cuik_Arguments* restrict args, int argc, const char* argv[]);
-CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* restrict args);
 
 CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const char* argv[]);
 CUIK_API void cuik_free_driver_args(Cuik_DriverArgs* args);
-
-// consumes text argument and fills the relevant values in the Cuik_DriverArgs.
-// unless you need to introduce custom arguments, it's recommended to use cuik_parse_args.
-CUIK_API int cuik_parse_arg(Cuik_DriverArgs* args, int argc, const char* argv[]);
 
 CUIK_API bool cuik_driver_get_output_name(Cuik_DriverArgs* args, int len, char path[]);
 
