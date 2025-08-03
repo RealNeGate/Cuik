@@ -1651,10 +1651,12 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             // loop optimizer will bully the fuck out of the lattice types, so we might
             // as well reconstruct them using the optimistic crap
             cuikperf_region_start("optimistic", NULL);
+            STATS_ENTER(OPTIMISTIC);
             CProp cprop = tb_opt_cprop_init(f);
             tb_opt_cprop_analyze(f, &cprop, false);
             k = tb_opt_cprop_rewrite(f);
             tb_opt_cprop_deinit(f, &cprop);
+            STATS_EXIT(OPTIMISTIC);
             cuikperf_region_end();
 
             TB_OPTDEBUG(SERVER)(dbg_submit_event(f, "Optimistic"));
