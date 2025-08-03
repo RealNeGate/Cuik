@@ -1,3 +1,70 @@
+
+enum { MEM_REF_MAX_INDICES = 2 };
+
+typedef struct {
+    TB_Node* mem;
+    TB_Node* base;
+    int32_t offset;
+    int32_t size;
+
+    int index_count;
+    TB_Node* index[MEM_REF_MAX_INDICES];
+    int32_t stride[MEM_REF_MAX_INDICES];
+} MemRef;
+
+static MemRef compute_mem_ref(TB_Function* f, TB_Node* mem) {
+    MemRef r = { mem, mem->inputs[2] };
+    if (r.base->type == TB_PTR_OFFSET) {
+        TB_Node* curr = r.base->inputs[2];
+        r.base = r.base->inputs[1];
+
+        if (curr->type == TB_ICONST) {
+            r.offset = TB_NODE_GET_EXTRA_T(curr, TB_NodeInt)->value;
+        } else {
+            TB_Node* index = NULL;
+            uint64_t stride = 1;
+            for (;;) {
+                if (curr->type == TB_ADD && curr->inputs[2]->type == TB_ICONST) {
+                    int64_t disp = TB_NODE_GET_EXTRA_T(curr->inputs[2], TB_NodeInt)->value;
+
+                    curr = curr->inputs[1];
+                    r.offset += disp * stride;
+                }
+
+                if (curr->type == TB_SHL && curr->inputs[2]->type == TB_ICONST) {
+                    stride <<= TB_NODE_GET_EXTRA_T(curr->inputs[2], TB_NodeInt)->value;
+                    curr = curr->inputs[1];
+                }
+
+                r.stride[r.index_count] = stride;
+                r.index[r.index_count++] = curr;
+
+                // combining indices (we limit the analysis to 2D because... works :p)
+                if (r.index_count >= MEM_REF_MAX_INDICES || curr->type != TB_ADD) {
+                    break;
+                }
+
+                r.index[r.index_count - 1] = curr->inputs[1];
+                curr = curr->inputs[2];
+            }
+
+            // if there's two indices and one has a bigger stride, it should be placed first
+            _Static_assert(MEM_REF_MAX_INDICES == 2, "this should be a sort if we do grow the max index count");
+            if (r.index_count == MEM_REF_MAX_INDICES && (r.stride[0] < r.stride[1] || (r.stride[0] == r.stride[1] && r.index[0]->gvn > r.index[1]->gvn))) {
+                SWAP(int32_t,  r.stride[0], r.stride[1]);
+                SWAP(TB_Node*, r.index[0], r.index[1]);
+            }
+        }
+    }
+
+    if (mem->type == TB_LOAD) {
+        r.size = tb_data_type_byte_size(f->super.module, mem->dt.type);
+    } else {
+        r.size = tb_data_type_byte_size(f->super.module, mem->inputs[3]->dt.type);
+    }
+    return r;
+}
+
 typedef struct {
     TB_Node* base;
     int64_t offset;
@@ -68,6 +135,72 @@ static TB_Node* ideal_memcpy(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
+static TB_Node* node_lookup(TB_Function* f, TB_Node* n) {
+    return nl_hashset_get2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
+}
+
+static bool partially_redundant(TB_Function* f, TB_Node* n, TB_Node* phi, int phi_i, MemRef addr) {
+    int64_t offset = 0;
+    TB_Node* path = phi->inputs[phi_i];
+
+    // reverse the operation
+    uint64_t amt;
+    if (path->type == TB_ADD && get_int_const(path->inputs[2], &amt)) {
+        if (addr.index_count) {
+            addr.index[addr.index_count - 1] = path->inputs[1];
+        } else {
+            addr.base = path->inputs[1];
+        }
+        addr.offset += amt;
+    }
+
+    // speculatively construct the previous paths' address, if we find it
+    // exists then we'd consider this redundant load.
+    __debugbreak();
+
+    #if 0
+    size_t mark = f->node_count;
+    TB_ArenaSavepoint sp = tb_arena_save(&f->arena);
+
+    // compute index sums
+    bool bad = false;
+    TB_DataType ptr_int_dt = TB_TYPE_I64;
+    FOR_N(i, 1, addr.index_count) {
+        TB_Node* idx = addr.index[i];
+
+        TB_Node* mul = tb_alloc_node(f, TB_MUL, ptr_int_dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, mul, idx, 1);
+        set_input(f, mul, make_int_node(f, ptr_int_dt, addr.stride[i]), 2);
+        mul = node_lookup(f, mul);
+        if (mul == NULL) {
+            bad = true;
+            break;
+        }
+
+        TB_Node* add = tb_alloc_node(f, TB_ADD, ptr_int_dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, add, lhs, 1);
+        set_input(f, add, idx, 2);
+        add = node_lookup(f, add);
+        if (add == NULL) {
+            bad = true;
+            break;
+        }
+
+        addr.index[i] = add;
+    }
+
+    // compute base
+    if (!bad) {
+        // TB_Node* significant = addr.index_count ? addr.index[addr.index_count - 1] : addr.base;
+    }
+
+    f->node_count = mark;
+    tb_arena_restore(&f->arena, sp);
+    return bad;
+    #endif
+    return false;
+}
+
 static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
     TB_Node* ctrl = n->inputs[0];
     TB_Node* mem = n->inputs[1];
@@ -128,6 +261,31 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
             // mark potential anti-deps
             mark_node_n_users(f, mem);
             return n;
+        }
+    }
+
+    // we could push the load further up if we know
+    // it's safe to access and partially redundant:
+    // * address is a phi-dependent (even indirectly to a degree)
+    if (0 && n->gvn == 33) {
+        MemRef addr = compute_mem_ref(f, n);
+        TB_Node* significant = addr.index_count ? addr.index[addr.index_count - 1] : addr.base;
+        if (significant->type == TB_PHI) {
+            tb_print(f);
+            __debugbreak();
+
+            int redundant = 0;
+            FOR_N(i, 1, significant->input_count) {
+                if (partially_redundant(f, n, significant, i, addr)) {
+                    redundant++;
+                }
+            }
+
+            // if at least half of the paths compute the relevant value, we might
+            // as well compute it for all paths
+            if (redundant >= (significant->input_count/2)) {
+                __debugbreak();
+            }
         }
     }
 

@@ -323,23 +323,6 @@ static bool loop_inside(TB_LoopTree* a, TB_LoopTree* b) {
     return a == b;
 }
 
-static void replace_uncloned_refs(TB_Function* f, TB_Node** cloned, TB_Node* n, TB_Node* target) {
-    for (size_t i = 0; i < n->user_count;) {
-        TB_Node* un = USERN(&n->users[i]);
-        if (!cloned[un->gvn] && un != n && un->type != TB_CALLGRAPH) {
-            #if TB_OPTDEBUG_LOOP
-            printf("     ROTATE(");
-            tb_print_dumb_node(NULL, un);
-            printf(", %d, %%%u)\n", USERI(&n->users[i]), target->gvn);
-            #endif
-
-            set_input(f, un, target, USERI(&n->users[i]));
-        } else {
-            i += 1;
-        }
-    }
-}
-
 // returns the cloned loop header (with no preds)
 static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t cloned_n, TB_Node** cloned, TB_Node* header, TB_Node* latch) {
     TB_Function* f = ctx->f;
@@ -413,87 +396,83 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
         #endif
     }
 
-    // since there's 0 preds, we don't need the phis (we're making the ZTC block so we should
-    // redirect all uses of the phis to the init path, and all pre-cloned versions to the "next" path)
+    TB_LoopTree* loop = nl_table_get(&ctx->loop_map, header);
+
+    // anyone in the body who used to refer to the header nodes should now refer directly
+    // to a new rotated phi
+    aarray_for(i, cloned_list) {
+        TB_Node* n = cloned_list[i];
+        if (n == header || (n->type == TB_PHI && n->inputs[0] == header)) {
+            continue;
+        }
+
+        #if TB_OPTDEBUG_LOOP
+        printf("   ROOF(");
+        tb_print_dumb_node(NULL, n);
+        printf(")\n");
+        #endif
+
+        TB_Node* p = NULL;
+        for (size_t i = 0; i < n->user_count;) {
+            TB_Node* un = USERN(&n->users[i]);
+            int ui      = USERI(&n->users[i]);
+
+            if (cloned[un->gvn] == NULL && !is_proj(un)) {
+                TB_Node* bb = ctx->ctrl[un->gvn];
+                TB_LoopTree* use_loop = nl_table_get(&ctx->loop_map, bb);
+                if (loop_inside(loop, use_loop)) {
+                    if (p == NULL) {
+                        p = tb_alloc_node(f, TB_PHI, n->dt, 3, 0);
+                        set_input(f, p, header, 0);
+                        set_input(f, p, cloned[n->gvn], 1);
+                        set_input(f, p, n, 2);
+
+                        #if TB_OPTDEBUG_LOOP
+                        printf("   PHI(");
+                        tb_print_dumb_node(NULL, p);
+                        printf(")\n");
+                        #endif
+                    }
+
+                    #if TB_OPTDEBUG_LOOP
+                    printf("   USSR(");
+                    tb_print_dumb_node(NULL, un);
+                    printf(", %d)\n", ui);
+                    #endif
+
+                    set_input(f, un, p, ui);
+                    continue;
+                }
+            }
+            i++;
+        }
+        TB_OPTDEBUG(LOOP)(printf("\n"));
+    }
+
+    // ZTC doesn't need its cloned phis, replace
+    // them with a single value.
     FOR_USERS(u, header) {
         TB_Node* old_phi = USERN(u);
-        if (old_phi->type == TB_PHI) {
+        if (old_phi->type == TB_PHI && old_phi->gvn < cloned_n) {
             TB_ASSERT(USERI(u) == 0);
-
             TB_Node* new_phi = cloned[old_phi->gvn];
 
             #if TB_OPTDEBUG_LOOP
-            printf("NEW_PHI: ");
+            printf("INIT: ");
             tb_print_dumb_node(NULL, new_phi);
             printf(" => ");
             tb_print_dumb_node(NULL, old_phi->inputs[1]);
-            printf("\n");
-
-            printf("ROTATED_PHI: ");
-            tb_print_dumb_node(NULL, old_phi);
-            printf(" => ");
-            tb_print_dumb_node(NULL, old_phi->inputs[2]);
             printf("\n");
             #endif
 
             subsume_node(f, new_phi, old_phi->inputs[1]);
             cloned[old_phi->gvn] = old_phi->inputs[1];
 
-            // if we cloned the next value then it means part of that computation is done
-            // in the header and we should update the phi such that the loop body begins
-            // during the second iteration's value.
             TB_Node* next_val = old_phi->inputs[2];
-            if (cloned[next_val->gvn]) {
-                set_input(f, old_phi, cloned[next_val->gvn], 1);
-            }
-
-            // we're depending on the GCM a bit for this, a node which is
-            // "above" the body nodes must use the original value, but those who
-            // are "after" the header (now the next block) use the next value.
-            TB_ASSERT(ctx->ctrl[old_phi->gvn] == header);
-            worklist_clear(ws);
-            worklist_push(ws, old_phi);
-
-            for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-                TB_Node* n = ws->items[i];
-
-                FOR_USERS(u, n) {
-                    TB_Node* un = USERN(u);
-                    if (ctx->ctrl[un->gvn] == header && un != next_val) {
-                        worklist_push(ws, un);
-                    }
-                }
-
-                #if TB_OPTDEBUG_LOOP
-                printf("   AFTER(");
-                tb_print_dumb_node(NULL, n);
-                printf(")\n");
-                #endif
-            }
-
-            // HEADER:
-            //   OLD_PHI = PHI(INIT, Y)
-            //   X       = OLD_PHI + 1.0f
-            // BODY:
-            //   Y       = X + 2.0f
-            //
-            // VVV
-            //
-            // HEADER:
-            //   OLD_PHI = PHI(INIT, X)
-            // BODY:
-            //   Y = OLD_PHI + 2.0f
-            //   X = Y + 1.0f
-            //
-            // if the next_val (the original "Y" in this case) is not in the header, then rotating it
-            // can get tricky. we make all uncloned refs of the phi point to Y (thus moving Y down) and
-            // cut the cycle by making Y refer to the old phi instead of the uncloned refs
-            // our original loop header is being repurposed as an end of loop latch, because of this
-            // we need to update any phi uses such that they refer to the "next" path.
             for (size_t j = 0; j < old_phi->user_count;) {
                 TB_Node* un = USERN(&old_phi->users[j]);
 
-                if (cloned[un->gvn] && un != old_phi && worklist_test(ws, un)) {
+                if (cloned[un->gvn] && un != old_phi) {
                     #if TB_OPTDEBUG_LOOP
                     printf("   USER(");
                     tb_print_dumb_node(NULL, un);
@@ -501,58 +480,41 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
                     #endif
 
                     set_input(f, un, next_val, USERI(&old_phi->users[j]));
-                    TB_Node* next_val_base = is_proj(next_val) ? next_val->inputs[0] : next_val;
-
-                    // any cyclic refs are immediately replaced here are
-                    // replaced by pointing to the old_phi
-                    TB_Node* cycle = NULL;
-                    FOR_N(j, 0, next_val_base->input_count) {
-                        TB_Node* in = next_val_base->inputs[j];
-                        if (in == NULL) { continue; }
-
-                        TB_Node* base = is_proj(in) ? in->inputs[0] : in;
-                        if (base == un) {
-                            #if TB_OPTDEBUG_LOOP
-                            printf("     CYCLE(");
-                            tb_print_dumb_node(NULL, next_val_base);
-                            printf(", %zu, %%%u)\n", j, old_phi->gvn);
-                            #endif
-
-                            set_input(f, next_val_base, old_phi, j);
-                            if (in != base) {
-                                // if we rotated a tuple, it's possible there's a control
-                                // phi, there's never two paths here because then the loop
-                                // wouldn't be canonically natural.
-                                TB_Node* next = cfg_next_control0(base);
-                                if (next) {
-                                    TB_Node* z = next_val_base->inputs[0];
-                                    if (is_proj(z)) { z = z->inputs[0]; }
-                                    set_input(f, z, header, 0);
-
-                                    TB_ASSERT(cfg_is_cproj(next));
-                                    set_input(f, base, header->inputs[1], 0);
-                                    set_input(f, header, next, 1);
-                                }
-                            }
-                            cycle = in;
-                        }
-                    }
-
-                    if (cycle) {
-                        // any uncloned refs of "un" refer to the old phi now
-                        if (un->dt.type == TB_TAG_TUPLE) {
-                            TB_ASSERT(cycle->inputs[0] == un);
-                            replace_uncloned_refs(f, cloned, cycle, old_phi);
-                        } else {
-                            replace_uncloned_refs(f, cloned, un, old_phi);
-                        }
-
-                        set_input(f, old_phi, cloned[cycle->gvn], 1);
-                        set_input(f, old_phi, cycle, 2);
-                    }
                 } else {
-                    j += 1;
+                    j++;
                 }
+            }
+
+            if (old_phi->user_count == 0) {
+                #if TB_OPTDEBUG_LOOP
+                printf("   KILL(");
+                tb_print_dumb_node(NULL, old_phi);
+                printf(")\n");
+                #endif
+
+                tb_kill_node(f, old_phi);
+            }
+        }
+    }
+
+    // if the "pre_latch_ctrl" is not cloned that means there's at least
+    // one control node in the body of the loop and we're now hooking the
+    // rotated control nodes to it.
+    TB_Node* pre_latch_ctrl = latch->inputs[1];
+    if (!cloned[pre_latch_ctrl->gvn]) {
+        for (size_t j = 0; j < header->user_count;) {
+            TB_Node* un = USERN(&header->users[j]);
+
+            if (cloned[un->gvn] && un->type != TB_PHI) {
+                #if TB_OPTDEBUG_LOOP
+                printf("   USER(");
+                tb_print_dumb_node(NULL, un);
+                printf(", %d, %%%u)\n", USERI(&header->users[j]), pre_latch_ctrl->gvn);
+                #endif
+
+                set_input(f, un, pre_latch_ctrl, USERI(&header->users[j]));
+            } else {
+                j++;
             }
         }
     }
@@ -1472,9 +1434,9 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 // if we were ctrl-dependent on successfully entering the
                 // loop body, we need to be hooked to the header now
                 loop_hoist_ops(f, into_loop2, header);
-                // since everything in the original header BB was cloned, there's two versions and
-                // when we're using these values past the loop exit, we need to insert a phi to resolve
-                // these conflicting definitions.
+
+                // insert phis at the join site since we've now got two sets
+                // of definitions for any nodes which are referenced outside the loop
                 size_t snapshot_count = f->node_count;
                 aarray_for(i, cloned_list) {
                     TB_Node* n = cloned_list[i];
@@ -1486,27 +1448,27 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                     bool is_loop_phi = n->type == TB_PHI && n->inputs[0] == header;
 
                     // lazily constructed
-                    //   [0] exit, [1] body
-                    TB_Node* phis[2] = { NULL, NULL };
+                    TB_Node* p = NULL;
                     for (size_t i = 0; i < n->user_count;) {
                         TB_Node* un = USERN(&n->users[i]);
                         int ui      = USERI(&n->users[i]);
+
+                        // uses by our own loop phi cannot be considered "escapes"
+                        if (un->type == TB_PHI && un->inputs[0] == header) {
+                            i += 1;
+                            continue;
+                        }
 
                         if (un->gvn < snapshot_count && un->type != TB_CALLGRAPH) {
                             // if it's not within the loop (including the kids), it's used
                             // after the loop which means it should refer to the "new_phi"
                             TB_Node* bb = ctx->ctrl[un->gvn];
                             TB_LoopTree* use_loop = nl_table_get(&ctx->loop_map, bb);
-
                             if (loop != use_loop && (use_loop == NULL || bb != loop->header)) {
-                                int flavor = loop_inside(loop, use_loop) ? 1 : 0;
-
-                                // we don't "escape" if it's just the loop phis being used in the loop body
-                                if (flavor != 1 || !is_loop_phi) {
-                                    TB_Node* p = phis[flavor];
+                                if (!loop_inside(loop, use_loop)) {
                                     if (p == NULL) {
                                         #if TB_OPTDEBUG_LOOP
-                                        printf("ESCAPE %s! ", flavor ? "BODY" : "EXIT");
+                                        printf("ESCAPE! ");
                                         tb_print_dumb_node(NULL, n);
                                         printf("\n");
                                         #endif
@@ -1514,20 +1476,24 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                                         // cloned form is the init-case
                                         TB_ASSERT(n->gvn < cloned_n);
                                         TB_Node* init_path = cloned[n->gvn];
+                                        TB_ASSERT(join->input_count == 2);
 
-                                        TB_Node* r = flavor ? header : join;
-                                        TB_ASSERT(r->input_count == 2);
-
-                                        p = phis[flavor] = tb_alloc_node(f, TB_PHI, n->dt, 3, 0);
-                                        set_input(f, p, r,         0);
+                                        p = tb_alloc_node(f, TB_PHI, n->dt, 3, 0);
+                                        set_input(f, p, join,      0);
                                         set_input(f, p, init_path, 1);
                                         if (is_loop_phi) {
                                             set_input(f, p, n->inputs[2], 2);
                                         } else {
                                             set_input(f, p, n, 2);
                                         }
-                                        loop_set_ctrl(ctx, p, r);
+                                        loop_set_ctrl(ctx, p, join);
                                         mark_node(f, p);
+
+                                        #if TB_OPTDEBUG_LOOP
+                                        printf("   ");
+                                        tb_print_dumb_node(NULL, p);
+                                        printf("\n");
+                                        #endif
 
                                         latuni_set(f, p, latuni_get(f, n));
                                     }
@@ -1547,9 +1513,9 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                         i += 1;
                     }
 
-                    if (phis[0] != NULL) { mark_node_n_users(f, phis[0]); }
-                    if (phis[1] != NULL) { mark_node_n_users(f, phis[1]); }
+                    if (p != NULL) { mark_node_n_users(f, p); }
                 }
+
                 progress = true;
                 tb_arena_restore(&f->tmp_arena, sp2);
 

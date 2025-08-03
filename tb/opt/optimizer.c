@@ -142,7 +142,7 @@ static bool same_sorta_branch(TB_Node* n, TB_Node* n2) {
 
 static TB_Node* next_mem_user(TB_Node* n) {
     FOR_USERS(u, n) {
-        if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u))) {
+        if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u)) || (USERN(u)->type == TB_PHI && USERN(u)->dt.type == TB_TAG_MEMORY)) {
             return USERN(u);
         }
     }
@@ -227,6 +227,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 
 // Standard local rewrites
 #include "peep_int.h"
+#include "peep_cmp.h"
 #include "peep_mem.h"
 #include "peep_float.h"
 
@@ -1436,7 +1437,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_MEMORY
-    if (strcmp(f->super.name, "pcg32_pie") == 0) {
+    if (strcmp(f->super.name, "sroa") == 0) {
         f->enable_log = true;
     }
     #endif
@@ -1537,7 +1538,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_OPTLOG(PEEP, printf("=== COMPACT ===\n"));
             STATS_ENTER(COMPACT);
             size_t old = tb_arena_current_size(&f->arena);
-            tb_compact_nodes(f, ws);
+            // tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
             STATS_EXIT(COMPACT);
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
@@ -1556,7 +1557,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_Worklist tmp_ws = { 0 };
             worklist_alloc(&tmp_ws, f->node_count);
 
-            // Loop optimizer:
             ////////////////////////////////
             // 1. Loop finding
             ////////////////////////////////

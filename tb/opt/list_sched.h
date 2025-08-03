@@ -255,6 +255,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
                             int d = depth[in->gvn];
                             #ifndef NDEBUG
                             if (d < 0) {
+                                tb_print_dumb(f);
                                 printf("CYCLE DETECTED BETWEEN %%%u and %%%u!!!\n", n->gvn, in->gvn);
                                 cycle = true;
                             }

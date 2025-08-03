@@ -1506,7 +1506,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                         cg_expr(tu, g, s->for_.next);
                     }
                 }
-                tb_builder_br(g, header);
+                tb_builder_br(g, loop);
                 tb_builder_label_kill(g, paths[0]);
             }
             tb_builder_label_kill(g, next);

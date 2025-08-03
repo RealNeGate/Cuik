@@ -3,6 +3,7 @@
 static int64_t sadd(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a + (uint64_t)b) & mask; }
 static int64_t ssub(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a - (uint64_t)b) & mask; }
 static int64_t smul(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a * (uint64_t)b) & mask; }
+static bool is_iconst(TB_Function* f, TB_Node* n) { return lattice_is_iconst(latuni_get(f, n)); }
 
 static int node_pos(TB_Node* n) {
     switch (n->type) {
@@ -911,233 +912,115 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
     }
 }
 
-////////////////////////////////
-// Comparison
-////////////////////////////////
-static TB_Node* ideal_cmp(TB_Function* f, TB_Node* n) {
-    TB_NodeTypeEnum type = n->type;
+static TB_Node* ideal_int_mod(TB_Function* f, TB_Node* n) {
+    bool is_signed = n->type == TB_SMOD;
 
-    // commutativity ops
-    if (type == TB_CMP_EQ || type == TB_CMP_NE) {
-        TB_Node* a = n->inputs[1];
-        TB_Node* b = n->inputs[2];
+    TB_DataType dt = n->dt;
+    TB_Node* x = n->inputs[1];
 
-        // commutativity opts (we want a canonical form).
-        int ap = node_pos(a);
-        int bp = node_pos(b);
-        if (ap < bp || (ap == bp && a->gvn < b->gvn)) {
-            set_input(f, n, b, 1);
-            set_input(f, n, a, 2);
-            return n;
-        }
-    }
-
-    TB_DataType dt = n->inputs[1]->dt;
-    if (type == TB_CMP_EQ && TB_IS_FLOAT_TYPE(dt)) {
-        // (a == 0) is !a
-        TB_Node* cmp = n->inputs[1];
-
-        uint64_t rhs;
-        if (get_int_const(n->inputs[2], &rhs) && rhs == 0) {
-            // !(a < b) is (b <= a)
-            switch (cmp->type) {
-                case TB_CMP_EQ:  n->type = TB_CMP_NE; break;
-                case TB_CMP_NE:  n->type = TB_CMP_EQ; break;
-                case TB_CMP_SLT: n->type = TB_CMP_SLE; break;
-                case TB_CMP_SLE: n->type = TB_CMP_SLT; break;
-                case TB_CMP_ULT: n->type = TB_CMP_ULE; break;
-                case TB_CMP_ULE: n->type = TB_CMP_ULT; break;
-                default: return NULL;
-            }
-
-            TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cmp, TB_NodeCompare)->cmp_dt;
-            TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = cmp_dt);
-
-            set_input(f, n, cmp->inputs[2], 1);
-            set_input(f, n, cmp->inputs[1], 2);
-            return n;
-        }
-    }
-
-    if (type >= TB_CMP_EQ && type <= TB_CMP_ULE) {
-        // (Cmp Sxt(a) Sxt(b)) => (Cmp a b)
-        // (Cmp Zxt(a) Zxt(b)) => (Cmp a b)
-        if ((n->inputs[1]->type == TB_SIGN_EXT && n->inputs[2]->type == TB_SIGN_EXT) ||
-            (n->inputs[1]->type == TB_ZERO_EXT && n->inputs[2]->type == TB_ZERO_EXT)) {
-            TB_DataType dt = n->inputs[1]->inputs[1]->dt;
-            set_input(f, n, n->inputs[1]->inputs[1], 1);
-            set_input(f, n, n->inputs[2]->inputs[1], 2);
-            TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = dt);
-            return n;
-        }
-    }
-
-    return NULL;
-}
-
-static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
-    Lattice* a = latuni_get(f, n->inputs[1]);
-    Lattice* b = latuni_get(f, n->inputs[2]);
-    if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
-        return &TOP_IN_THE_SKY;
-    }
-
-    TB_DataType dt = n->inputs[1]->dt;
-    if (TB_IS_INTEGER_TYPE(dt)) {
-        Lattice* old_type = latuni_get(f, n);
-        bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
-        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, a, b, c, old_type == &TOP_IN_THE_SKY);
-
-        // ok it's really annoying that i have to deal with the "idk bro" case in the middle
-        // of each but that's why it looks like this... if you were curious (which you aren't :p)
-        switch (n->type) {
-            case TB_CMP_EQ:  // cmp == 0
-            if (lattice_int_eq(cmp, 0)) { return lattice_int_const(f,-1); }
-            if (lattice_int_ne(cmp, 0)) { return lattice_int_const(f, 0); }
-            break;
-            case TB_CMP_NE:  // cmp != 0
-            if (lattice_int_eq(cmp, 0)) { return lattice_int_const(f, 0); }
-            if (lattice_int_ne(cmp, 0)) { return lattice_int_const(f,-1); }
-            break;
-            case TB_CMP_SLT: // cmp < 0
-            if (lattice_int_lt(cmp, 0)) { return lattice_int_const(f,-1); }
-            if (lattice_int_ge(cmp, 0)) { return lattice_int_const(f, 0); }
-            break;
-            case TB_CMP_SLE: // cmp <= 0
-            if (lattice_int_le(cmp, 0)) { return lattice_int_const(f,-1); }
-            if (lattice_int_gt(cmp, 0)) { return lattice_int_const(f, 0); }
-            break;
-
-            case TB_CMP_ULT:
-            if (lattice_is_unsigned(a) && lattice_is_unsigned(b)) {
-                if (lattice_int_lt(cmp, 0)) { return lattice_int_const(f,-1); }
-                if (lattice_int_ge(cmp, 0)) { return lattice_int_const(f, 0); }
-            }
-            break;
-
-            case TB_CMP_ULE:
-            if (lattice_is_unsigned(a) && lattice_is_unsigned(b)) {
-                if (lattice_int_le(cmp, 0)) { return lattice_int_const(f,-1); }
-                if (lattice_int_gt(cmp, 0)) { return lattice_int_const(f, 0); }
-            }
-            break;
-        }
-    } else if (dt.type == TB_TAG_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-        Lattice* meet = lattice_meet(f, a, b);
-        if (meet->tag == LATTICE_NULL || meet->tag == LATTICE_PTRCON) {
-            if (n->type == TB_CMP_EQ) {
-                return a == b ? &TRUE_IN_THE_SKY : &BOOL_IN_THE_SKY;
-            } else {
-                return a == b ? &FALSE_IN_THE_SKY : &BOOL_IN_THE_SKY;
-            }
-        }
-    }
-
-    bool eq_id = true;
-
-    // float oddities: regardless of the comparison, they'll always be false if a NaN is involved.
-    if (dt.type == TB_TAG_F32) {
-        if (a->tag == LATTICE_FLTCON32 && b->tag == LATTICE_FLTCON32) {
-            if (n->type == TB_CMP_EQ) { return a->_f32 == b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_NE) { return a->_f32 != b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_FLT) { return a->_f32 < b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_FLE) { return a->_f32 <= b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-        }
-
-        if (lattice_at_least(f, a, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
-        if (lattice_at_least(f, b, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
-
-        if (!lattice_at_least(f, a, &XNAN32_IN_THE_SKY) || !lattice_at_least(f, b, &XNAN32_IN_THE_SKY)) {
-            eq_id = false;
-        }
-    } else if (dt.type == TB_TAG_F64) {
-        if (a->tag == LATTICE_FLTCON64 && b->tag == LATTICE_FLTCON64) {
-            if (n->type == TB_CMP_EQ) { return a->_f64 == b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_NE) { return a->_f64 != b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_FLT) { return a->_f64 < b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_FLE) { return a->_f64 <= b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-        }
-
-        if (lattice_at_least(f, a, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
-        if (lattice_at_least(f, b, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
-
-        if (!lattice_at_least(f, a, &XNAN64_IN_THE_SKY) || !lattice_at_least(f, b, &XNAN64_IN_THE_SKY)) {
-            eq_id = false;
-        }
-    }
-
-    if (eq_id && gcf_is_congruent(f, n->inputs[1], n->inputs[2])) {
-        if (n->type == TB_CMP_EQ) {
-            return &TRUE_IN_THE_SKY;
-        } else if (n->type == TB_CMP_NE) {
-            return &FALSE_IN_THE_SKY;
-        }
+    uint64_t y = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
+    uint64_t log2 = tb_ffs(y) - 1;
+    if (!is_signed && y == (UINT64_C(1) << log2)) {
+        TB_Node* and_node = tb_alloc_node(f, TB_AND, dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, and_node, x, 1);
+        set_input(f, and_node, make_int_node(f, dt, y - 1), 2);
+        return and_node;
     }
 
     return NULL;
 }
 
 ////////////////////////////////
-// Extension
+// Integer identities
 ////////////////////////////////
-static Lattice* value_zext(TB_Function* f, TB_Node* n) {
-    Lattice* a = latuni_get(f, n->inputs[1]);
-    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
+    Lattice* aa = latuni_get(f, n->inputs[1]);
+    Lattice* bb = latuni_get(f, n->inputs[2]);
+    if (n->type == TB_AND) {
+        int bits = tb_data_type_bit_size(NULL, n->dt.type);
+        uint64_t mask = tb__mask(bits);
 
-    int dst_bits = tb_data_type_bit_size(NULL, n->dt.type);
-    int src_bits = tb_data_type_bit_size(NULL, n->inputs[1]->dt.type);
-    TB_ASSERT(src_bits != 64);
+        if (aa != &TOP_IN_THE_SKY && bb->tag == LATTICE_INT) {
+            uint64_t possible_ones = (aa->_int.known_ones  | ~aa->_int.known_zeros) & mask;
+            uint64_t affected      = (bb->_int.known_zeros | ~bb->_int.known_ones)  & mask;
 
-    if (a->_int.min == a->_int.max) {
-        uint64_t mask = tb__mask(src_bits);
-        int64_t min = tb__sxt(a->_int.min & mask, dst_bits, 64);
-        return lattice_gimme_uint(f, min, min, dst_bits);
+            // possible ones don't intersect with the mask? lmao
+            if ((possible_ones & affected) == 0) {
+                return n->inputs[1];
+            }
+        }
     }
 
-    Lattice* full_zxt_range = lattice_gimme_int(f, 0, lattice_uint_max(src_bits), src_bits);
-    if (a->_int.min >= 0 || (a->_int.known_zeros >> (src_bits - 1)) & 1) { // known non-negative
-        return lattice_join(f, full_zxt_range, a);
-    } else {
-        return full_zxt_range;
+    if (lattice_is_iconst(bb)) {
+        // better not be a cyclic phi, those need special treatment
+        if (n->inputs[1]->type == TB_PHI) {
+            FOR_N(i, 1, n->inputs[1]->input_count) {
+                if (n->inputs[1]->inputs[i] == n) {
+                    return n;
+                }
+            }
+        }
+
+        if (lattice_int_eq(bb, 1)) {
+            if (n->type == TB_MUL || n->type == TB_SDIV || n->type == TB_UDIV) {
+
+            }
+        } else if (lattice_int_eq(bb, 0)) {
+            // a + 0 => a
+            // a - 0 => a
+            // a ^ 0 => a
+            if (n->type == TB_ADD || n->type == TB_SUB || n->type == TB_XOR || n->type == TB_SHL || n->type == TB_SHR) {
+                return n->inputs[1];
+            }
+
+            // ((a: bool) != 0) => a
+            if (n->type == TB_CMP_NE && n->inputs[1]->dt.type == TB_TAG_BOOL) {
+                return n->inputs[1];
+            }
+        }
     }
+
+    return n;
 }
 
-static Lattice* value_sext(TB_Function* f, TB_Node* n) {
-    Lattice* a = latuni_get(f, n->inputs[1]);
-    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+////////////////////////////////
+// Casting
+////////////////////////////////
+static bool nice_ass_trunc(TB_NodeTypeEnum t) { return t == TB_AND || t == TB_XOR || t == TB_OR; }
+static TB_Node* ideal_truncate(TB_Function* f, TB_Node* n) {
+    TB_Node* src = n->inputs[1];
 
-    #if 1
-    return a;
-    #else
-    if (a->_int.min == a->_int.max) { return a; }
+    if (src->type == TB_ZERO_EXT && TB_IS_INTEGER_TYPE(src->inputs[1]->dt) && TB_IS_INTEGER_TYPE(n->dt)) {
+        int now = tb_data_type_bit_size(NULL, n->dt.type);
+        int before = tb_data_type_bit_size(NULL, src->inputs[1]->dt.type);
 
-    int64_t min    = a->_int.min;
-    int64_t max    = a->_int.max;
-    uint64_t zeros = a->_int.known_zeros;
-    uint64_t ones  = a->_int.known_ones;
-
-    int old_bits = tb_data_type_bit_size(NULL, n->inputs[1]->dt);
-    int bits     = tb_data_type_bit_size(NULL, n->dt);
-    uint64_t mask  = tb__mask(bits) & ~tb__mask(old_bits);
-
-    if (min >= 0 || (zeros >> (old_bits - 1))) { // known non-negative
-        int64_t type_max = lattice_int_max(old_bits);
-
-        zeros |= mask;
-        if (min < 0) { min = 0; }
-        if (max > type_max) { max = type_max; }
-    } else if (max < 0 || (ones >> (old_bits - 1))) { // known non-positive
-        int64_t type_min = lattice_int_min(old_bits);
-
-        ones |= mask;
-        if (min < type_min) { min = type_min; }
-        if (max > -1) { max = -1; }
+        if (now != before) {
+            // we're extending the original value
+            TB_Node* ext = tb_alloc_node(f, now < before ? TB_TRUNCATE : src->type, n->dt, 2, 0);
+            set_input(f, ext, src->inputs[1], 1);
+            return ext;
+        } else {
+            return src->inputs[1];
+        }
     }
 
-    Lattice* this   = latuni_get(f, n);
-    Lattice* narrow = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
-    return lattice_join(f, this, narrow);
-    #endif
+    // Trunc(NiceAssBinop(a, b)) => NiceAssBinop(Trunc(a), Trunc(b))
+    if (nice_ass_trunc(src->type)) {
+        TB_Node* left = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
+        set_input(f, left, src->inputs[1], 1);
+        mark_node(f, left);
+
+        TB_Node* right = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
+        set_input(f, right, src->inputs[2], 1);
+        mark_node(f, right);
+
+        TB_Node* new_binop = tb_alloc_node(f, src->type, n->dt, 3, 0);
+        set_input(f, new_binop, left, 1);
+        set_input(f, new_binop, right, 2);
+        return new_binop;
+    }
+
+    return NULL;
 }
 
 static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
@@ -1211,4 +1094,129 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
     }
 
     return NULL;
+}
+
+static TB_Node* ideal_bitcast(TB_Function* f, TB_Node* n) {
+    TB_Node* src = n->inputs[1];
+
+    if (n->dt.raw == src->dt.raw) {
+        return src;
+    } else if (src->type == TB_BITCAST) {
+        set_input(f, n, src->inputs[1], 1);
+        return n;
+    }
+
+    // single use load? ok replace the load
+    if (src->type == TB_LOAD && src->user_count == 1) {
+        src->dt = n->dt;
+        latuni_set(f, src, NULL);
+        return src;
+    }
+
+    // int -> smaller int means truncate
+    if (TB_IS_INTEGER_TYPE(src->dt) && TB_IS_INTEGER_TYPE(n->dt) && src->dt.type > n->dt.type) {
+        n->type = TB_TRUNCATE;
+        return n;
+    } else if (src->type == TB_ICONST) {
+        return make_int_node(f, n->dt, TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value);
+    }
+
+    return NULL;
+}
+
+static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
+    if (TB_IS_INTEGER_TYPE(n->dt)) {
+        int bits = tb_data_type_bit_size(NULL, n->dt.type);
+        uint64_t mask = tb__mask(bits);
+        int64_t  min = tb_sign_ext(NULL, n->dt, a->_int.min & mask);
+        int64_t  max = tb_sign_ext(NULL, n->dt, a->_int.max & mask);
+        if (min > max) {
+            return NULL;
+        }
+
+        uint64_t zeros = a->_int.known_zeros & mask;
+        uint64_t ones  = a->_int.known_ones  & mask;
+        return lattice_gimme_int2(f, min, max, zeros, ones, bits);
+    } else {
+        return NULL;
+    }
+}
+
+static Lattice* value_bitcast(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
+    if (a->tag == LATTICE_INT && a->_int.min == a->_int.max && n->dt.type == TB_TAG_PTR) {
+        // bitcast with a constant leads to fun cool stuff (usually we get constant zeros for NULL)
+        return a->_int.min ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
+    }
+
+    return NULL;
+}
+
+static Lattice* value_zext(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+
+    int dst_bits = tb_data_type_bit_size(NULL, n->dt.type);
+    int src_bits = tb_data_type_bit_size(NULL, n->inputs[1]->dt.type);
+    TB_ASSERT(src_bits != 64);
+
+    if (a->_int.min == a->_int.max) {
+        uint64_t mask = tb__mask(src_bits);
+        int64_t min = tb__sxt(a->_int.min & mask, dst_bits, 64);
+        return lattice_gimme_uint(f, min, min, dst_bits);
+    }
+
+    Lattice* full_zxt_range = lattice_gimme_int(f, 0, lattice_uint_max(src_bits), src_bits);
+    if (a->_int.min >= 0 || (a->_int.known_zeros >> (src_bits - 1)) & 1) { // known non-negative
+        return lattice_join(f, full_zxt_range, a);
+    } else {
+        return full_zxt_range;
+    }
+}
+
+static Lattice* value_sext(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+
+    #if 1
+    return a;
+    #else
+    if (a->_int.min == a->_int.max) { return a; }
+
+    int64_t min    = a->_int.min;
+    int64_t max    = a->_int.max;
+    uint64_t zeros = a->_int.known_zeros;
+    uint64_t ones  = a->_int.known_ones;
+
+    int old_bits = tb_data_type_bit_size(NULL, n->inputs[1]->dt);
+    int bits     = tb_data_type_bit_size(NULL, n->dt);
+    uint64_t mask  = tb__mask(bits) & ~tb__mask(old_bits);
+
+    if (min >= 0 || (zeros >> (old_bits - 1))) { // known non-negative
+        int64_t type_max = lattice_int_max(old_bits);
+
+        zeros |= mask;
+        if (min < 0) { min = 0; }
+        if (max > type_max) { max = type_max; }
+    } else if (max < 0 || (ones >> (old_bits - 1))) { // known non-positive
+        int64_t type_min = lattice_int_min(old_bits);
+
+        ones |= mask;
+        if (min < type_min) { min = type_min; }
+        if (max > -1) { max = -1; }
+    }
+
+    Lattice* this   = latuni_get(f, n);
+    Lattice* narrow = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_join(f, this, narrow);
+    #endif
 }

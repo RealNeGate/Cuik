@@ -4,17 +4,6 @@
 //   Samuel Larsen and Saman Amarasinghe
 //
 // only type of PackSet we need
-typedef struct {
-    TB_Node* mem;
-    TB_Node* base;
-    int32_t offset;
-    int32_t size;
-
-    int index_count;
-    TB_Node* index[2];
-    int32_t stride[2];
-} MemRef;
-
 typedef struct Pair {
     struct Pair* next;
     int id;
@@ -122,58 +111,6 @@ static bool is_adjacent_ref(MemRef a, MemRef b) {
     return a.base == b.base && a.size == b.size && (a.offset + a.size == b.offset || b.offset + b.size == a.offset);
 }
 
-static MemRef compute_mem_ref(TB_Function* f, TB_Node* mem, TB_Node* top) {
-    MemRef r = { mem, mem->inputs[2] };
-    if (r.base->type == TB_PTR_OFFSET) {
-        TB_Node* curr = r.base->inputs[2];
-        r.base = r.base->inputs[1];
-
-        if (curr->type == TB_ICONST) {
-            r.offset = TB_NODE_GET_EXTRA_T(curr, TB_NodeInt)->value;
-        } else {
-            TB_Node* index = NULL;
-            uint64_t stride = 1;
-            for (;;) {
-                if (curr->type == TB_ADD && curr->inputs[2]->type == TB_ICONST) {
-                    int64_t disp = TB_NODE_GET_EXTRA_T(curr->inputs[2], TB_NodeInt)->value;
-
-                    curr = curr->inputs[1];
-                    r.offset += disp * stride;
-                }
-
-                if (curr->type == TB_SHL && curr->inputs[2]->type == TB_ICONST) {
-                    stride <<= TB_NODE_GET_EXTRA_T(curr->inputs[2], TB_NodeInt)->value;
-                    curr = curr->inputs[1];
-                }
-
-                r.stride[r.index_count] = stride;
-                r.index[r.index_count++] = curr;
-
-                // combining indices (we limit the analysis to 2D because... works :p)
-                if (r.index_count >= 2 || curr->type != TB_ADD) {
-                    break;
-                }
-
-                r.index[r.index_count - 1] = curr->inputs[1];
-                curr = curr->inputs[2];
-            }
-
-            // if there's two indices and one has a bigger stride, it should be placed first
-            if (r.index_count == 2 && (r.stride[0] < r.stride[1] || (r.stride[0] == r.stride[1] && r.index[0]->gvn > r.index[1]->gvn))) {
-                SWAP(int32_t,  r.stride[0], r.stride[1]);
-                SWAP(TB_Node*, r.index[0], r.index[1]);
-            }
-        }
-    }
-
-    if (mem->type == TB_LOAD) {
-        r.size = tb_data_type_byte_size(f->super.module, mem->dt.type);
-    } else {
-        r.size = tb_data_type_byte_size(f->super.module, mem->inputs[3]->dt.type);
-    }
-    return r;
-}
-
 static bool can_pack(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b, TB_Node* top) {
     if (pairs->l_map[a->gvn] || pairs->r_map[b->gvn]) {
         return false;
@@ -192,8 +129,8 @@ static bool can_pack(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b, TB_
 
         // if it's a memory op then it should share a base, we can't do sparse loads
         if (a->type == TB_LOAD || a->type == TB_STORE) {
-            MemRef aa = compute_mem_ref(f, a, top);
-            MemRef bb = compute_mem_ref(f, b, top);
+            MemRef aa = compute_mem_ref(f, a);
+            MemRef bb = compute_mem_ref(f, b);
             if (!is_adjacent_ref(aa, bb)) {
                 return false;
             }
@@ -312,7 +249,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs, TB_Worklist* ws, LoopOpt* ctx
 
             // find relevant memory ops
             if (n->type == TB_LOAD || n->type == TB_STORE) {
-                aarray_push(refs, compute_mem_ref(f, n, top));
+                aarray_push(refs, compute_mem_ref(f, n));
             }
         }
         worklist_clear(ws);

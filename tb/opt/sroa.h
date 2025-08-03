@@ -76,9 +76,11 @@ static bool add_configs(TB_Function* f, TB_Node* addr, TB_Node* base_address, si
             if (*config_count == SROA_LIMIT) {
                 return false;
             }
+
+            TB_OPTDEBUG(SROA)(printf("SROA(%%%u): find config at %%%u [%zu, %zu)", n->gvn, address->gvn, base_offset, base_offset + size));
             configs[(*config_count)++] = (AggregateConfig){ address, base_offset, size, dt };
         } else if (configs[match].old_n != address) {
-            log_warn("%s: v%u SROA config matches but reaches so via a different node, please idealize nodes before mem2reg", f->super.name, address->gvn);
+            log_warn("%s: %%%u SROA config matches but reaches so via a different node, please idealize nodes before mem2reg", f->super.name, address->gvn);
             return false;
         }
     }
@@ -86,23 +88,24 @@ static bool add_configs(TB_Function* f, TB_Node* addr, TB_Node* base_address, si
     return true;
 }
 
-static size_t sroa_rewrite(TB_Function* f, TB_Node* start, TB_Node* n) {
+static size_t tb_opt_sroa(TB_Function* f, TB_Node* n) {
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     size_t config_count = 0;
     AggregateConfig* configs = tb_arena_alloc(&f->tmp_arena, SROA_LIMIT * sizeof(AggregateConfig));
     if (!add_configs(f, n, n, 0, &config_count, configs)) {
+        tb_arena_restore(&f->tmp_arena, sp);
         return 1;
     }
 
     // split allocation into pieces
     if (config_count > 1) {
-        DO_IF(TB_OPTDEBUG_SROA)(printf("sroa v%u => SROA to %zu pieces", n->gvn, config_count));
+        TB_OPTDEBUG(SROA)(printf("SROA(%%%u): split into %zu pieces", n->gvn, config_count));
 
         uint32_t alignment = TB_NODE_GET_EXTRA_T(n, TB_NodeLocal)->align;
         FOR_N(i, 0, config_count) {
             TB_Node* new_n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
-            set_input(f, new_n, start, 0);
+            set_input(f, new_n, f->root_node, 0);
             TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
 
             // replace old pointer with new fancy
@@ -113,7 +116,7 @@ static size_t sroa_rewrite(TB_Function* f, TB_Node* start, TB_Node* n) {
             mark_users(f, new_n);
         }
 
-        // we marked the changes else where which is cheating the peephole
+        // we marked the changes elsewhere which is cheating the peephole
         // but still doing all the progress it needs to.
         mark_users(f, n);
     }

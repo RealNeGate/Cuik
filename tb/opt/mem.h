@@ -850,25 +850,21 @@ static TB_Node* node_uf_find(TB_Node** uf, TB_Node* n) {
 
 int tb_opt_locals(TB_Function* f) {
     cuikperf_region_start("locals", NULL);
-    assert(dyn_array_length(f->worklist->items) == 0);
+    TB_ASSERT(dyn_array_length(f->worklist->items) == 0);
 
-    /*CUIK_TIMED_BLOCK("sroa") {
-        TB_Worklist* ws = f->worklist;
-        int pointer_size = f->super.module->codegen->pointer_size;
-        TB_Node* root = f->root_node;
-
-        // write initial locals
-        FOR_USERS(u, root) {
-            if (USERN(u)->type == TB_LOCAL) { worklist_push(ws, USERN(u)); }
+    bool needs_to_rewrite = false;
+    CUIK_TIMED_BLOCK("sroa") {
+        // i think the SROA'd pieces can't themselves split more? that
+        // should something we check
+        size_t snapshot = f->node_count;
+        FOR_USERS(u, f->root_node) {
+            if (USERN(u)->type == TB_LOCAL && USERN(u)->gvn < snapshot) {
+                if (tb_opt_sroa(f, USERN(u)) > 1) {
+                    needs_to_rewrite = true;
+                }
+            }
         }
-
-        // i think the SROA'd pieces can't themselves split more? that should something we check
-        size_t local_count = dyn_array_length(ws->items);
-        for (size_t i = 0; i < local_count; i++) {
-            TB_ASSERT(ws->items[i]->type == TB_LOCAL);
-            sroa_rewrite(f, root, ws->items[i]);
-        }
-    }*/
+    }
 
     // find all locals
     LocalSplitter ctx = { 0 };
@@ -887,7 +883,6 @@ int tb_opt_locals(TB_Function* f) {
     int splits_needed = 1;
 
     size_t j = 0;
-    bool needs_to_rewrite = false;
     aarray_for(i, locals) {
         TB_Node* addr = locals[i];
         RenameMode mode = RENAME_VALUE;
