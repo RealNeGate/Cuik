@@ -164,6 +164,7 @@ static TB_Symbol* gimme_float_sym(Ctx* ctx, TB_Node* n) {
 static bool try_for_imm32_2(TB_DataType dt, uint64_t src, int32_t* out_x);
 static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n);
 static TB_Node* isel_peep_shift(Ctx* ctx, TB_Function* f, TB_Node* n);
+static TB_Node* isel_if_branch(Ctx* ctx, TB_Function* f, TB_Node* n);
 static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n);
 
 #include "x64_gen.h"
@@ -213,6 +214,38 @@ static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n) {
     op_extra->mode = MODE_LD;
     op_extra->disp = -(8 + proto->param_count*8);
     return op;
+}
+
+// If(x)
+// Default    Case(key)
+// VVV
+// If(x != key)
+// IfTrue     IfFalse
+static TB_Node* isel_if_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
+    TB_NodeBranchProj* br = cfg_if_branch(n);
+    bool progress = false;
+
+    if (br) {
+        if (n->type != TB_BRANCH) {
+            n->type = TB_BRANCH;
+            progress = true;
+        }
+
+        if (br->key != 0) {
+            // insert compare
+            TB_Node* cmp = tb_alloc_node(f, TB_CMP_NE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+            set_input(f, cmp, n->inputs[1], 1);
+            set_input(f, cmp, make_int_node(f, n->inputs[1]->dt, br->key), 2);
+            set_input(f, n, cmp, 1);
+
+            br->key = 0;
+            progress = true;
+        }
+
+        return progress ? n : NULL;
+    }
+
+    return NULL;
 }
 
 enum { PHASH_DEFAULT = 0xcc9e2d51 };
@@ -946,9 +979,6 @@ static int node_2addr(TB_Node* n) {
 
         case x86_cmovcc: case x86_adc:
         return 2;
-
-        case x86_cmp: case x86_test:
-        return 0;
 
         case x86_shl: case x86_shr: case x86_sar:
         case x86_rol: case x86_ror: {

@@ -602,8 +602,10 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
 
                 // flip
                 FOR_USERS(u, n) {
-                    TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
+                    TB_ASSERT(USERN(u)->type == TB_BRANCH_PROJ);
+                    TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(USERN(u));
                     p->index = !p->index;
+                    p->key   = 0;
                 }
 
                 set_input(f, n, new_cmp, 1);
@@ -864,12 +866,16 @@ static TB_Node* identity_phi(TB_Function* f, TB_Node* n) {
             Lattice* ctrl = latuni_get(f, n->inputs[0]->inputs[i - 1]);
             if (ctrl == &LIVE_IN_THE_SKY) {
                 if (n->inputs[i] == n) continue;
+                if (n->inputs[i]->type == TB_POISON) continue;
                 if (same && same != n->inputs[i]) return n;
                 same = n->inputs[i];
             }
         }
 
-        TB_ASSERT(same);
+        if (same == NULL) {
+            // phi has no possible paths, simplify it into a poison
+            return make_poison(f, n->dt);
+        }
     }
     return same;
 }

@@ -17,7 +17,7 @@ enum {
 #define USERI(u) ((u)->_slot) // index
 #endif
 
-#if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
+#if TB_OPT_LOG_ENABLED
 #define TB_OPTLOG(name, ...) do { if (f->enable_log) { TB_OPTDEBUG(name)(__VA_ARGS__); } } while (0)
 #else
 #define TB_OPTLOG(name, ...) do {} while (0)

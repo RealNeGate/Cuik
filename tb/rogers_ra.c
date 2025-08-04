@@ -834,13 +834,16 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             if (remat && to_spill->user_count == 1 && !is_tuple) {
                 TB_Node* use = USERN(&to_spill->users[0]);
 
-                TB_BasicBlock* bb = f->scheduled[use->gvn];
-                tb__remove_node(ctx, f, to_spill);
-                ra.order[to_spill->gvn] = tb__insert_before(ctx, ctx->f, to_spill, use);
-                clean_single_bb_ordinals(ctx, &ra, bb);
+                // TODO(NeGate): realistically we could allow this shuffling for PHIs
+                if (use->type != TB_PHI) {
+                    TB_BasicBlock* bb = f->scheduled[use->gvn];
+                    tb__remove_node(ctx, f, to_spill);
+                    ra.order[to_spill->gvn] = tb__insert_before(ctx, ctx->f, to_spill, use);
+                    clean_single_bb_ordinals(ctx, &ra, bb);
 
-                TB_OPTDEBUG(REGALLOC3)(printf("#       shuffled %%%u right before %%%u\n", to_spill->gvn, use->gvn));
-                continue;
+                    TB_OPTDEBUG(REGALLOC3)(printf("#       shuffled %%%u right before %%%u\n", to_spill->gvn, use->gvn));
+                    continue;
+                }
             }
 
             // if we're at the last use before death AND we can move past it, we could
@@ -2013,6 +2016,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
         TB_Node* last = reload_bb->items[aarray_length(reload_bb->items) - 1];
         int min_order = spill_site.bb == reload_bb ? spill_site.order : 0;
         int reload_order = aarray_length(reload_bb->items) - (last == a ? 0 : 1);
+        reload_order = TB_MAX(min_order, reload_order);
 
         TB_BasicBlock** scheduled = ctx->f->scheduled;
         FOR_USERS(use, a) {
@@ -2024,7 +2028,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
                     continue;
                 }
                 // don't consider the uses before the spill
-                if (ra->order[un->gvn] > min_order) {
+                if (ra->order[un->gvn] - 1 > min_order) {
                     reload_order = TB_MIN(reload_order, ra->order[un->gvn] - 1);
                 }
             }
@@ -2047,7 +2051,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
 
     #if TB_OPTDEBUG_REGALLOC3
     printf("Spill:  BB%zu (after %%%u)\n", spill_site.bb - ctx->cfg.blocks, spill_site.bb->items[spill_site.order - 1]->gvn);
-    printf("Reload: BB%zu @ %%%u\n", reload_site.bb - ctx->cfg.blocks, reload_site.bb->items[reload_site.order]->gvn);
+    printf("Reload: BB%zu @ %%%d\n", reload_site.bb - ctx->cfg.blocks, reload_site.order == aarray_length(reload_site.bb->items) ? -1 : reload_site.bb->items[reload_site.order]->gvn);
 
     // rogers_dump_split(ctx, ra, spill_site.bb, a, b);
     if (spill_site.bb != reload_site.bb) {

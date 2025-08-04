@@ -1016,6 +1016,17 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         mark_node(f, trip_inc);
         mark_node_n_users(f, latch);
 
+        // we want the latch to exit once the key (0) is hit
+        bool loop_when_key = TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
+        if (loop_when_key) {
+            FOR_USERS(u, latch) {
+                TB_ASSERT(USERN(u)->type == TB_BRANCH_PROJ);
+                TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(USERN(u));
+                p->index = !p->index;
+                p->key   = 0;
+            }
+        }
+
         TB_OPTDEBUG(LOOP)(printf("  Created new trip-counter IV: %%%u (limit=%%%u)\n", trip_iv->gvn, replace_latch_iv->gvn));
         TB_OPTDEBUG(PASSES)(printf("        * Added new trip-counter IV: %%%u\n", trip_iv->gvn));
     }
@@ -1400,12 +1411,13 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 TB_User after_exit = *cfg_next_user(exit_proj);
                 mark_node_n_users(f, USERN(&after_exit));
                 TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
-                set_input(f, USERN(&after_exit), join, USERI(&after_exit));
+                // set_input(f, USERN(&after_exit), join, USERI(&after_exit));
+                subsume_node2(f, exit_proj, join);
                 set_input(f, join, exit_loop, 0);
                 set_input(f, join, exit_proj, 1);
                 // any non-CFG nodes attached to this exit projection
                 // should be moved down to the new shared join point.
-                loop_hoist_ops(f, exit_proj, join);
+                // loop_hoist_ops(f, exit_proj, join);
                 loop_set_ctrl(ctx, join, join);
                 mark_node(f, join);
                 // fill in the doms

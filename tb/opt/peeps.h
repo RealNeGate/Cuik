@@ -123,6 +123,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_BRANCH_PROJ]    = { NULL,              NULL,               value_proj       },
     [TB_SELECT]         = { ideal_select,      identity_select,    value_select     },
     [TB_PHI]            = { ideal_phi,         identity_phi,       value_phi        },
+    [TB_POISON]         = { NULL,              NULL,               value_poison     },
     // control flow
     [TB_DEBUG_LOCATION] = { ideal_location,    NULL,               NULL             },
     [TB_RETURN]         = { ideal_return,      NULL,               value_ctrl       },

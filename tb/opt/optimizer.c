@@ -571,6 +571,10 @@ static TB_Node* identity_select(TB_Function* f, TB_Node* n) {
     }
 }
 
+static Lattice* value_poison(TB_Function* f, TB_Node* n) {
+    return &TOP_IN_THE_SKY;
+}
+
 static Lattice* value_select(TB_Function* f, TB_Node* n) {
     Lattice* pred = lattice_truthy(latuni_get(f, n->inputs[1]));
     Lattice* a = latuni_get(f, n->inputs[2]);
@@ -693,6 +697,7 @@ TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra) {
 TB_Node* make_poison(TB_Function* f, TB_DataType dt) {
     TB_Node* n = tb_alloc_node(f, TB_POISON, dt, 1, 0);
     set_input(f, n, f->root_node, 0);
+    latuni_set(f, n, &TOP_IN_THE_SKY);
     return tb__gvn(f, n, 0);
 }
 
@@ -1436,8 +1441,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
-    #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_MEMORY
-    if (strcmp(f->super.name, "sroa") == 0) {
+    #if TB_OPT_LOG_ENABLED
+    if (strcmp(f->super.name, "advance") == 0) {
         f->enable_log = true;
     }
     #endif

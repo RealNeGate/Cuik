@@ -1006,12 +1006,12 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
             rewrites++;
 
             if (n != k) {
+                worklist_push(ws, k);
+                subsume_node2(f, n, k);
+
                 if (n->user_count == 0 && !is_proj(n)) {
                     tb_kill_node(f, n);
                 }
-
-                worklist_push(ws, k);
-                subsume_node2(f, n, k);
                 n = k;
             }
             mark_users(f, n);

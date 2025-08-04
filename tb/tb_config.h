@@ -35,3 +35,9 @@
 #define TB_OPTDEBUG_SERVER    0
 // for toggling ANSI colors
 #define TB_OPTDEBUG_ANSI      1
+
+#if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_MEMORY
+#define TB_OPT_LOG_ENABLED 1
+#else
+#define TB_OPT_LOG_ENABLED 0
+#endif
