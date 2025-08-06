@@ -402,6 +402,7 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
         // optimize the function now that we've inlined the callees we wanted
         void* args[2] = { f, NULL };
         ipo_opt_task(pool, args);
+        tb_print_dumb(f);
         cuikperf_region_end();
 
         // update the callgraph, this may change the shape of the SCC

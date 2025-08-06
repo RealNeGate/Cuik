@@ -280,15 +280,19 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
             overflow |= mul_overflow(amax, bmin, bits, &prods[1]);
             overflow |= mul_overflow(amin, bmax, bits, &prods[2]);
             overflow |= mul_overflow(amax, bmax, bits, &prods[3]);
-            if (overflow) {
-                min = imin, max = imax;
-                break;
-            }
+            if (amin == amax && bmin == bmax) {
+                min = max = prods[0];
+            } else {
+                if (overflow) {
+                    min = imin, max = imax;
+                    break;
+                }
 
-            min = prods[0], max = prods[0];
-            for (int i = 1; i < 4; i++) {
-                min = TB_MIN(min, prods[i]);
-                max = TB_MAX(max, prods[i]);
+                min = prods[0], max = prods[0];
+                for (int i = 1; i < 4; i++) {
+                    min = TB_MIN(min, prods[i]);
+                    max = TB_MAX(max, prods[i]);
+                }
             }
             break;
         }
@@ -775,6 +779,9 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
     TB_DataType dt = n->dt;
     TB_Node* x = n->inputs[1];
 
+    int bits = tb_data_type_bit_size(NULL, n->dt.type);
+    uint64_t mask = tb__mask(bits);
+
     uint64_t y = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
     if (y >= (1ull << 63ull) && !is_signed) {
         // if the top bit is set in the divisor then there's literally only two quotients
@@ -791,7 +798,7 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         return tb_alloc_node(f, TB_POISON, dt, 1, 0);
     } else if (y == 1) {
         return x;
-    } else if (y == -1 && is_signed) {
+    } else if ((y & mask) == mask && is_signed) {
         // just negate it
         TB_Node* neg = tb_alloc_node(f, TB_SUB, dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, neg, make_int_node(f, dt, 0), 1);
@@ -843,7 +850,6 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
 
     // now we can take a and sh and do:
     //   x / y  => mulhi(x, a) >> sh
-    int bits = tb_data_type_bit_size(NULL, n->dt.type);
     if (dt.type != TB_TAG_I64) {
         TB_DataType big_dt;
         switch (dt.type) {

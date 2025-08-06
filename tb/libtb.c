@@ -20,6 +20,7 @@ void* tb_jit_stack_create(void);
 #include "codegen.c"
 #include "rogers_ra.c"
 #include "briggs_ra.c"
+#include "ra_split.c"
 
 // Parsers
 #define TB_COFF_IMPL

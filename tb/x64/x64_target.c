@@ -997,6 +997,11 @@ static int node_2addr(TB_Node* n) {
 }
 
 static bool node_remat(TB_Node* n) {
+    X86MemOp* op = TB_NODE_GET_EXTRA(n);
+    if ((n->type == x86_mov || n->type == x86_vmov) && op->mode == MODE_LD && n->inputs[1] == NULL) {
+        return true;
+    }
+
     return n->type == x86_lea || n->type == x86_cmp || n->type == x86_test || n->type == x86_ucomi || n->type == x86_bt;
 }
 
@@ -2532,13 +2537,6 @@ static int node_latency(TB_Function* f, TB_Node* n, int i) {
         lat = 1;
     }
 
-    if (op->mode == MODE_LD) {
-        // L1 hit is 4 cycles
-        lat += 4;
-    } else if (op->mode == MODE_ST) {
-        lat += 1;
-    }
-
     return lat;
     #endif
 
@@ -2548,7 +2546,36 @@ static int node_latency(TB_Function* f, TB_Node* n, int i) {
         return 100;
     }
 
-    return 1;
+    if (is_proj(n)) {
+        return 0;
+    }
+
+    // skylake:
+    //   addps  1*p01
+    //
+    int lat = 0;
+    switch (n->type) {
+        // input latencies
+        case x86_vadd: lat = 4; break;
+        case x86_vsub: lat = 4; break;
+        case x86_vmul: lat = 4; break;
+    }
+
+    if (lat == 0) {
+        return 1;
+    }
+
+    X86MemOp* op = TB_NODE_GET_EXTRA(n);
+
+    // reads:  1*p23        (+5 latency)
+    // writes: 1*p237+1*p4  (+1 latency)
+    if (op->mode == MODE_LD) {
+        lat += 5;
+    } else if (op->mode == MODE_ST) {
+        lat += 1;
+    }
+
+    return lat;
 }
 
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {

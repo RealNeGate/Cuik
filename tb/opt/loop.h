@@ -500,7 +500,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
     // if the "pre_latch_ctrl" is not cloned that means there's at least
     // one control node in the body of the loop and we're now hooking the
     // rotated control nodes to it.
-    TB_Node* pre_latch_ctrl = latch->inputs[1];
+    TB_Node* pre_latch_ctrl = latch->inputs[0];
     if (!cloned[pre_latch_ctrl->gvn]) {
         for (size_t j = 0; j < header->user_count;) {
             TB_Node* un = USERN(&header->users[j]);
@@ -769,7 +769,8 @@ static TB_Node* generate_loop_trip_count(TB_Function* f, TB_InductionVar var) {
     }
 
     // if we're dealing with "<" then we wanna round our range up
-    Lattice* pad = lattice_int_const(f, var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0));
+    int64_t extra = var.pred == IND_NE || var.pred == IND_SLT || var.pred == IND_ULT ? (var.step > 0 ? 1 : -1) : 0;
+    Lattice* pad = lattice_int_const(f, var.step - extra);
     if (!lattice_is_izero(pad)) {
         Lattice* range_ty = latuni_get(f, range);
         Lattice* add = value_arith_raw(f, TB_ADD, var.phi->dt, range_ty, pad, false, false);
@@ -781,7 +782,7 @@ static TB_Node* generate_loop_trip_count(TB_Function* f, TB_InductionVar var) {
         }
     }
 
-    bool is_signed = var.pred == IND_SLT || var.pred == IND_SLE;
+    bool is_signed = var.pred == IND_NE || var.pred == IND_SLT || var.pred == IND_SLE;
     if (var.step != 1) {
         TB_Node* step = make_int_node(f, var.phi->dt, var.step);
         return make_int_binop(f, is_signed ? TB_SDIV : TB_UDIV, range, step);

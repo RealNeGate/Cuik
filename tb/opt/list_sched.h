@@ -111,7 +111,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
 
         // score things which decrease pressure higher
         int dt = pressure_delta(sched, n);
-        score -= dt * 50;
+        score -= dt * 10;
 
         // if we have a single use and it's waiting on us? then we
         // really wanna schedule, if it's waiting on a lot of others then
@@ -122,11 +122,6 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
             // try to schedule the latch IVs late
             if (cfg_is_branch(bb->end) && n == bb->end->inputs[1]) {
                 continue;
-            }
-
-            if (count_waiting_deps(f, ws, bb, use) == 1) {
-                score += use == bb->end ? -200 : 100;
-                if (score < 1) { score = 1; }
             }
         }
 
@@ -327,7 +322,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
         TB_OPTDEBUG(SCHED4)(printf("}\n"));
 
         #if TB_OPTDEBUG_SCHED3
-        FOR_REV_N(i, 0, cnt) {
+        FOR_N(i, 0, cnt) {
             TB_Node* n = ordered[i];
             tb_print_dumb_node(NULL, n);
             printf(" latency=%d\n", sched.latency[n->gvn]);

@@ -1442,7 +1442,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPT_LOG_ENABLED
-    if (strcmp(f->super.name, "advance") == 0) {
+    if (strcmp(f->super.name, "foo") == 0) {
         f->enable_log = true;
     }
     #endif
@@ -1556,11 +1556,12 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
             TB_OPTLOG(PEEP, printf("=== LOOPS OPTS ===\n"));
             TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
-            TB_OPTLOG(PEEP, tb_print_dumb(f));
             cuikperf_region_start("loops", NULL);
 
             TB_Worklist tmp_ws = { 0 };
             worklist_alloc(&tmp_ws, f->node_count);
+
+            TB_OPTLOG(PEEP, tb_print_dumb(f));
 
             ////////////////////////////////
             // 1. Loop finding

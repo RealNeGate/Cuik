@@ -3,21 +3,39 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-uint64_t table[256];
-void dfa_range(int state, int min, int max, int next) {
-    for (int i = min; i <= max; i++) {
-        // erase old entry
-        table[i] &= ~(0b111111 << (state*6));
-        table[i] |= (next*6) << (state*6);
-    }
-}
-
-static void low_pass(int n, double* y,  double* x, double dt, double rc) {
+void low_pass(int n, double* y,  double* x, double dt, double rc) {
     double a = dt / (rc + dt);
     y[0] = a * x[0];
     for (int i = 1; i < n; i++) {
         y[i] = a*x[i] + (1-a)*y[i-1];
     }
+}
+
+static void cmul_darray(int n, double* c,  double* a, double* b) {
+    for(int i = 0; i < n; i++) {
+        c[2i] = a[2*i]*b[2*i] - a[2*i+1]*b[2*i+1];
+        c[2i+1] = a[2*i]*b[2*i+1] + a[2*i+1]*b[2*i];
+    }
+}
+
+void foo(void) {
+    int n = 10;
+    float* arr = malloc(10 * sizeof(float));
+
+    while (n--) {
+        arr[n] = 1.0;
+    }
+
+    n = 10;
+    while (n--) {
+        printf("%f\n", arr[n]);
+    }
+}
+
+int main() {
+    printf("Hello, World!\n");
+    foo();
+    return 0;
 }
 
 typedef struct {
