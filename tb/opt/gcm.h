@@ -9,7 +9,7 @@ typedef struct Elem {
 // any blocks in the dom tree between and including early and late are valid schedules.
 static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_lat, TB_Node* n, TB_BasicBlock* early, TB_BasicBlock* late) {
     TB_ASSERT(early != late);
-    if (n->type == TB_LOCAL) {
+    if (n->type == TB_LOCAL || n->type == TB_MACH_SYMBOL) {
         return early;
     }
 
@@ -20,7 +20,6 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
     // ideally we don't place things into the backedge of a rotated loop
     if (late->start->type == TB_BRANCH_PROJ && late->start == late->end) {
         TB_Node* next = cfg_next_control(late->end);
-        // if (cfg_is_natural_loop(next)) {
         if (cfg_is_region(next)) {
             return early != late ? late->dom : late;
         }

@@ -271,6 +271,8 @@ typedef enum TB_NodeTypeEnum {
     TB_BRANCH,      // (Control, Data) -> (Control...)
     //   just a branch but tagged as the latch to some affine loop.
     TB_AFFINE_LATCH,// (Control, Data) -> (Control...)
+    //   if the condition is non-zero, it'll take the CProj0 else CProj1
+    TB_IF,          // (Control, Data) -> (Control...)
     //   this is a fake branch which acts as a backedge for infinite loops, this keeps the
     //   graph from getting disconnected with the endpoint.
     //

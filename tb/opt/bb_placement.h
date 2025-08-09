@@ -72,22 +72,28 @@ static TB_BasicBlock* best_successor_of(TB_CFG* cfg, TB_Node* n) {
         TB_Node* succ = cfg_next_control(n);
         return nl_map_get_checked(cfg->node_to_block, succ);
     } else {
-        // find highest freq successor (it might make sense to search in a consistent order?)
         if (cfg_is_branch(n)) {
+            // find highest prob successor (it might make sense to search in a consistent order?)
             TB_BasicBlock* best = NULL;
-            float best_freq = 0.0f;
+            uint64_t most_hits = 0;
 
             FOR_USERS(u, n) {
                 TB_Node* succ = USERN(u);
                 if (cfg_is_cproj(succ)) {
                     TB_ASSERT(succ->type == TB_BRANCH_PROJ);
 
-                    TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, succ);
-                    if (succ_bb->freq > best_freq) {
-                        best = succ_bb;
-                        best_freq = succ_bb->freq;
+                    uint64_t hits = TB_NODE_GET_EXTRA_T(succ, TB_NodeBranchProj)->taken;
+                    if (hits > most_hits) {
+                        best = nl_map_get_checked(cfg->node_to_block, succ);
+                        most_hits = hits;
                     }
                 }
+            }
+
+            uint64_t total = TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->total_hits;
+            double prob = most_hits / total;
+            if (prob < 0.1f) {
+                return NULL;
             }
 
             return best;

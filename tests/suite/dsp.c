@@ -13,8 +13,8 @@ void low_pass(int n, double* y,  double* x, double dt, double rc) {
 
 static void cmul_darray(int n, double* c,  double* a, double* b) {
     for(int i = 0; i < n; i++) {
-        c[2i] = a[2*i]*b[2*i] - a[2*i+1]*b[2*i+1];
-        c[2i+1] = a[2*i]*b[2*i+1] + a[2*i+1]*b[2*i];
+        c[2*i] = a[2*i]*b[2*i] - a[2*i+1]*b[2*i+1];
+        c[2*i+1] = a[2*i]*b[2*i+1] + a[2*i+1]*b[2*i];
     }
 }
 

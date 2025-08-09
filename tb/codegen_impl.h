@@ -225,7 +225,7 @@ static void construct_prologue_epilogue(Ctx* restrict ctx, TB_Function* f) {
         // so if XMM2 is used, it's always the 3rd parameter.
         if (!cc->flexible_param_alloc) {
             used[1] = used[2] = i;
-            used[REG_CLASS_STK] = 1 + ctx->param_count + i;
+            used[REG_CLASS_STK] = 1 + i;
         }
 
         TB_Node* in = projs[1 + i];

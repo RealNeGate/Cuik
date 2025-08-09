@@ -736,7 +736,7 @@ void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]) {
         paths[i] = syms;
     }
 
-    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
     br->total_hits = 100;
     br->succ_count = 2;
 }
