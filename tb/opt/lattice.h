@@ -209,6 +209,8 @@ Lattice* lattice_truthy(Lattice* l) {
 
         case LATTICE_NULL:  return &FALSE_IN_THE_SKY;
         case LATTICE_XNULL: return &TRUE_IN_THE_SKY;
+        // pointer constants are symbols, these cannot be NULL
+        case LATTICE_PTRCON: return &TRUE_IN_THE_SKY;
 
         case LATTICE_TOP: return &TOP_IN_THE_SKY;
         default: return &BOT_IN_THE_SKY;
@@ -399,9 +401,9 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
             i.widen = INT_WIDEN_LIMIT - i.widen;
 
             // invert unknowns
-            uint64_t unknown = (i.known_zeros | i.known_ones);
-            i.known_zeros = ~(i.known_ones | unknown);
-            i.known_ones  &= unknown;
+            // uint64_t known = (i.known_zeros | i.known_ones);
+            i.known_ones  = ~i.known_ones;  // known;
+            i.known_zeros = ~i.known_zeros; // ~i.known_ones & known;
 
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = i });
         }
@@ -454,6 +456,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
                 return &BOT_IN_THE_SKY;
             }
 
+            #if 0
             // unknown is when it's not one and not zero
             uint64_t a_unk = ~(a->_int.known_ones | a->_int.known_zeros);
             uint64_t b_unk = ~(b->_int.known_ones | b->_int.known_zeros);
@@ -462,6 +465,10 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             // not one, not unknown
             uint64_t known_ones = a->_int.known_ones & b->_int.known_ones;
             uint64_t known_zeros = ~unknown & ~known_ones;
+            #else
+            uint64_t known_ones  = a->_int.known_ones & b->_int.known_ones;
+            uint64_t known_zeros = a->_int.known_zeros & b->_int.known_zeros;
+            #endif
 
             // [amin, amax] /\ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
             LatticeInt i = {

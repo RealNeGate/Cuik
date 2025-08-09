@@ -129,6 +129,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_CALL:     return "call";
         case TB_SYSCALL:  return "syscall";
         case TB_BRANCH:   return "branch";
+        case TB_IF:       return "if";
         case TB_AFFINE_LATCH: return "affine_latch";
         case TB_NEVER_BRANCH: return "never_branch";
         case TB_TAILCALL: return "tailcall";
@@ -372,6 +373,21 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
             }
 
             case TB_AFFINE_LATCH:
+            case TB_IF: {
+                TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
+                TB_Node* ift = USERN(proj_with_index(n, 0));
+                TB_Node* iff = USERN(proj_with_index(n, 1));
+
+                s_writef(s, "  if ");
+                print_ref_to_node(ctx, n->inputs[1], s, false);
+                s_writef(s, " then ");
+                print_branch_edge(ctx, ift, s, false);
+                s_writef(s, " else ");
+                print_branch_edge(ctx, iff, s, false);
+                s_writef(s, " // prob: %f", br->prob);
+                break;
+            }
+
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
                 TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);

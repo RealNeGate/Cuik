@@ -577,16 +577,18 @@ enum {
     NODE_FORK_CTRL  = 8,
     // uses TB_BRANCH_PROJ for the cprojs
     NODE_BRANCH     = 16,
+    // uses TB_NodeIf
+    NODE_IF         = 32,
     // has potential memory input in inputs[1]
-    NODE_MEMORY_IN  = 32,
+    NODE_MEMORY_IN  = 64,
     // has memory outputs
-    NODE_MEMORY_OUT = 64,
+    NODE_MEMORY_OUT = 128,
     // the first few bytes of extra are TB_NodeSafepoint
-    NODE_SAFEPOINT  = 128,
+    NODE_SAFEPOINT  = 256,
     // cannot be scheduled late
-    NODE_PINNED     = 256,
+    NODE_PINNED     = 512,
     // "necessary" CFG node (in the context of the optimistic solver)
-    NODE_EFFECT     = 512,
+    NODE_EFFECT     = 1024,
 };
 
 struct ICodeGen {

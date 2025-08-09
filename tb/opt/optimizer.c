@@ -134,12 +134,6 @@ static bool is_empty_bb(TB_Function* f, TB_Node* end) {
     return true;
 }
 
-static bool same_sorta_branch(TB_Node* n, TB_Node* n2) {
-    TB_NodeBranchProj* br  = cfg_if_branch(n);
-    TB_NodeBranchProj* br2 = cfg_if_branch(n2);
-    return br && br2 && br->key == br2->key;
-}
-
 static TB_Node* next_mem_user(TB_Node* n) {
     FOR_USERS(u, n) {
         if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u)) || (USERN(u)->type == TB_PHI && USERN(u)->dt.type == TB_TAG_MEMORY)) {
@@ -1049,7 +1043,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                     }
                 }
 
-                if (n->type != TB_BRANCH && n->type != TB_AFFINE_LATCH) {
+                if (n->type != TB_IF && n->type != TB_AFFINE_LATCH) {
                     return NULL;
                 }
 

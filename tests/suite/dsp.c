@@ -3,6 +3,14 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+int bar(int x, int y) {
+    if (x && y) {
+        return 6;
+    }
+
+    return 4;
+}
+
 void low_pass(int n, double* y,  double* x, double dt, double rc) {
     double a = dt / (rc + dt);
     y[0] = a * x[0];
@@ -38,6 +46,7 @@ int main() {
     return 0;
 }
 
+#if 0
 typedef struct {
     size_t n;
     float* arr;
@@ -58,4 +67,5 @@ void sroa() {
         arr[n] = 1.0;
     }
 }
+#endif
 #endif

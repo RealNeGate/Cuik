@@ -90,15 +90,15 @@ node (jcc)
 node (jmp_MULTI)
 
 /* canonicalize the if-shaped branches */
-pat (TB_BRANCH ...) => "isel_if_branch(ctx, f, n)"
+pat (TB_IF ...) => "isel_if_branch(ctx, f, n)"
 pat (TB_AFFINE_LATCH ...) => "isel_if_branch(ctx, f, n)"
 
 /* standard two-way branches */
-pat (TB_BRANCH dt=$dt $ctrl (x86_COND $cmp cond=$cond)) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond)
-pat (TB_BRANCH dt=$dt $ctrl $x) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE)
-pat (TB_BRANCH dt=$dt $ctrl (TB_AND ___ $x $y)) where "cfg_if_branch(n)" => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $y extra_dt="n->inputs[1]->dt") cond=NE)
+pat (TB_IF dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond prob="if_prob(n)")
+pat (TB_IF dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE prob="if_prob(n)")
+pat (TB_IF dt=$dt $ctrl (TB_AND ___ $x $y)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $y extra_dt="n->inputs[1]->dt") cond=NE prob="if_prob(n)")
 /* multi-way branches */ \
-pat (TB_BRANCH dt=$dt $ctrl $x) where "!cfg_if_branch(n)" => "isel_multi_way_branch(ctx, f, n)"
+pat (TB_BRANCH dt=$dt $ctrl $x) => "isel_multi_way_branch(ctx, f, n)"
 
 // if we don't get rid of the "condition" by merging it with something
 // else then it's being directly used.

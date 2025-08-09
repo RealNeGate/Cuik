@@ -36,20 +36,22 @@ enum {
 //   [3] idx
 //   [4] val (only if flags' HAS_IMMEDIATE is unset)
 typedef struct {
-    uint8_t mode  : 2;
-    uint8_t scale : 2;
-    uint8_t cond  : 4;
-    uint8_t flags;
-
-    TB_DataType extra_dt;
-
     union {
+        float prob;
+
         struct {
             int32_t disp;
             int32_t imm;
         };
         TB_FunctionPrototype* proto;
     };
+
+    uint8_t mode  : 2;
+    uint8_t scale : 2;
+    uint8_t cond  : 4;
+    uint8_t flags;
+
+    TB_DataType extra_dt;
 } X86MemOp;
 
 typedef struct {
@@ -167,6 +169,11 @@ static TB_Node* isel_peep_shift(Ctx* ctx, TB_Function* f, TB_Node* n);
 static TB_Node* isel_if_branch(Ctx* ctx, TB_Function* f, TB_Node* n);
 static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n);
 
+static float if_prob(TB_Node* n) {
+    TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
+    return br->prob;
+}
+
 #include "x64_gen.h"
 
 static TB_Node* redundant_and_63(TB_Node* n) {
@@ -216,33 +223,11 @@ static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n) {
     return op;
 }
 
-// If(x)
-// Default    Case(key)
-// VVV
-// If(x != key)
-// IfTrue     IfFalse
 static TB_Node* isel_if_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
-    TB_NodeBranchProj* br = cfg_if_branch(n);
-    bool progress = false;
-
-    if (br) {
-        if (n->type != TB_BRANCH) {
-            n->type = TB_BRANCH;
-            progress = true;
-        }
-
-        if (br->key != 0) {
-            // insert compare
-            TB_Node* cmp = tb_alloc_node(f, TB_CMP_NE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
-            set_input(f, cmp, n->inputs[1], 1);
-            set_input(f, cmp, make_int_node(f, n->inputs[1]->dt, br->key), 2);
-            set_input(f, n, cmp, 1);
-
-            br->key = 0;
-            progress = true;
-        }
-
-        return progress ? n : NULL;
+    // reduce affine latches into normal ifs again
+    if (n->type != TB_IF) {
+        n->type = TB_IF;
+        return n;
     }
 
     return NULL;
@@ -297,13 +282,13 @@ static TB_Node* insert_range_check(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node
     TB_Node* default_case = USERN(proj_with_index(n, 0));
     TB_ASSERT(default_case->type == TB_BRANCH_PROJ);
 
-    TB_Node* chk_jcc = tb_alloc_node(f, x86_jcc, TB_TYPE_TUPLE, 2, sizeof(X86JmpMulti));
+    TB_Node* chk_jcc = tb_alloc_node(f, x86_jcc, TB_TYPE_TUPLE, 2, sizeof(X86MemOp));
     set_input(f, chk_jcc, n->inputs[0], 0);
     set_input(f, chk_jcc, cmp,          1);
     TB_NODE_SET_EXTRA(chk_jcc, X86MemOp, .cond = cond);
 
-    TB_Node* into_table = make_branch_proj_node(f, chk_jcc, 0, 0);
-    TB_Node* early_exit = make_branch_proj_node(f, chk_jcc, 1, 0);
+    TB_Node* into_table = make_proj_node(f, TB_TYPE_CONTROL, chk_jcc, 0);
+    TB_Node* early_exit = make_proj_node(f, TB_TYPE_CONTROL, chk_jcc, 1);
 
     // early_out needs to be hooked to whatever default_case's successor is
     TB_User* default_succ = cfg_next_user(default_case);
@@ -540,7 +525,7 @@ static bool can_gvn(TB_Node* n) {
 
 static uint32_t node_flags(TB_Node* n) {
     if (n->type == x86_jcc) {
-        return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH | NODE_MEMORY_IN;
+        return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_IF | NODE_MEMORY_IN;
     } else if (n->type == x86_jmp_MULTI) {
         return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL;
     }
@@ -2262,7 +2247,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case x86_jcc: {
             int succ[2] = { -1, -1 };
             FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_BRANCH_PROJ) {
+                if (USERN(u)->type == TB_PROJ) {
                     int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                     TB_Node* succ_n = USERN(u);
 
@@ -2271,8 +2256,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 }
             }
 
-            TB_NodeBranchProj* if_br = cfg_if_branch(n);
-            TB_ASSERT(if_br != NULL);
             Cond cc = TB_NODE_GET_EXTRA_T(n, X86MemOp)->cond;
             if (ctx->fallthrough == succ[0]) {
                 // if flipping avoids a jmp, do that

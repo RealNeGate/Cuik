@@ -132,6 +132,7 @@ struct Lattice {
 uint32_t cfg_flags(TB_Node* n);
 bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);
+bool cfg_is_if(TB_Node* n);
 bool cfg_is_branch(TB_Node* n);
 bool cfg_is_fork(TB_Node* n);
 bool cfg_is_terminator(TB_Node* n);
@@ -185,32 +186,6 @@ static bool cfg_is_bb_entry(TB_Node* n) {
     } else {
         return false;
     }
-}
-
-// returns a BranchProj's falsey proj, if it's an if-like TB_BRANCH
-static TB_NodeBranchProj* cfg_if_branch(TB_Node* n) {
-    size_t succ_count = 0;
-    if (n->type == TB_BRANCH || n->type == TB_AFFINE_LATCH) {
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-        succ_count = br->succ_count;
-    } else if (cfg_is_branch(n)) {
-        FOR_USERS(u, n) {
-            if (USERN(u)->type == TB_BRANCH_PROJ) { succ_count++; }
-        }
-    } else {
-        tb_todo();
-    }
-
-    if (succ_count != 2) { return NULL; }
-    FOR_USERS(u, n) {
-        if (USERN(u)->type == TB_BRANCH_PROJ) {
-            TB_NodeBranchProj* proj = TB_NODE_GET_EXTRA(USERN(u));
-            if (proj->index == 1) { return proj; }
-        }
-    }
-
-    // shouldn't be reached wtf?
-    return NULL;
 }
 
 static bool is_mem_end_op(TB_Node* n) {
@@ -456,6 +431,7 @@ Lattice* latuni_get(TB_Function* f, TB_Node* n);
 void tb__print_regmask(RegMask* mask);
 
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
+TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 
 static TB_Node* int_binop(TB_Function* f, int type, TB_Node* lhs, TB_Node* rhs) {
     TB_Node* n = tb_alloc_node(f, type, lhs->dt, 3, sizeof(TB_NodeBinopInt));

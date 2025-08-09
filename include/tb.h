@@ -598,6 +598,10 @@ typedef struct { // TB_BRANCH
     size_t succ_count;
 } TB_NodeBranch;
 
+typedef struct { // TB_IF
+    float prob; // probability of hitting the true case
+} TB_NodeIf;
+
 typedef struct { // TB_MACH_COPY
     RegMask* use;
     RegMask* def;

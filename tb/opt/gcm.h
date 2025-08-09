@@ -18,15 +18,13 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
     }
 
     // ideally we don't place things into the backedge of a rotated loop
-    if (late->start->type == TB_BRANCH_PROJ && late->start == late->end) {
+    if (is_proj(late->start) && late->start == late->end) {
         TB_Node* next = cfg_next_control(late->end);
         if (cfg_is_region(next)) {
             return early != late ? late->dom : late;
         }
     }
 
-    // int lat = get_lat(f, n, NULL);
-    // if (lat >= 1) {
     TB_BasicBlock* best = late;
     for (;;) {
         if (late->freq < best->freq) {
@@ -36,8 +34,6 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
         late = late->dom;
     }
     return best;
-    // }
-    // return late;
 }
 
 // schedule nodes such that they appear the least common

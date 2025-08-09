@@ -9,13 +9,6 @@ typedef struct {
     NL_Table loop_map;
 } LoopOpt;
 
-static TB_Node* branch_cproj(TB_Function* f, TB_Node* n, uint64_t taken, int64_t key, int index) {
-    TB_Node* cproj = tb_alloc_node(f, TB_BRANCH_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeBranchProj));
-    set_input(f, cproj, n, 0);
-    TB_NODE_SET_EXTRA(cproj, TB_NodeBranchProj, .index = index, .taken = taken, .key = key);
-    return cproj;
-}
-
 ////////////////////////////////
 // Loop finding
 ////////////////////////////////
@@ -525,7 +518,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
 // Affine loop accessors
 static TB_Node* affine_loop_latch(TB_Node* header) {
     if (header->type == TB_AFFINE_LOOP &&
-        header->inputs[1]->type == TB_BRANCH_PROJ &&
+        header->inputs[1]->type == TB_PROJ &&
         header->inputs[1]->inputs[0]->type == TB_AFFINE_LATCH) {
         return header->inputs[1]->inputs[0];
     }
@@ -545,7 +538,7 @@ static void swap_nodes(TB_Function* f, TB_Node* n, int i, int j) {
 
 static TB_Node* get_simple_loop_exit(LoopOpt* opt, TB_LoopTree* loop, TB_Node* header, TB_Node* latch) {
     TB_ASSERT(nl_table_get(&opt->loop_map, header) == loop);
-    if ((latch->type != TB_BRANCH && latch->type != TB_AFFINE_LATCH) || TB_NODE_GET_EXTRA_T(latch, TB_NodeBranch)->succ_count != 2) {
+    if ((latch->type != TB_IF && latch->type != TB_AFFINE_LATCH)) {
         return NULL;
     }
 
@@ -553,7 +546,7 @@ static TB_Node* get_simple_loop_exit(LoopOpt* opt, TB_LoopTree* loop, TB_Node* h
     TB_Node* exit = NULL;
     TB_Node* backedge_bb = header->inputs[1];
     FOR_USERS(u, latch) {
-        if (USERN(u)->type != TB_BRANCH_PROJ) { continue; }
+        if (USERN(u)->type != TB_PROJ) { continue; }
         int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
         assert(index < 2);
 
@@ -612,9 +605,6 @@ static uint64_t* find_affine_indvar(TB_Node* n, TB_Node* header) {
 
 static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* restrict var) {
     bool exit_when_key = !TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
-    TB_NodeBranchProj* if_br = cfg_if_branch(latch);
-    assert(if_br);
-
     TB_Node* cond = latch->inputs[1];
     if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE) {
         // canonicalize compare, this way it's always shaped such that "true" means continue
@@ -623,8 +613,7 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
         TB_Node* b = cond->inputs[2];
 
         // flip condition
-        if ((!exit_when_key && if_br->key == 0) ||
-            (exit_when_key && if_br->key == 1)) {
+        if (!exit_when_key) {
             if (type == TB_CMP_EQ) { type = TB_CMP_NE; }
             else if (type == TB_CMP_NE) { type = TB_CMP_EQ; }
             else {
@@ -678,7 +667,7 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
             return true;
         }
     } else if (affine_indvar(cond, header)) {
-        if (exit_when_key || if_br->key == 0) {
+        if (exit_when_key) {
             TB_Node* stepper = cond;
             if (cond->type == TB_PHI) {
                 stepper = cond->inputs[2];
@@ -694,7 +683,7 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
                 .cond = cond,
                 .phi  = cond,
                 .step = step,
-                .end_const = if_br->key,
+                .end_const = 0,
                 .pred = IND_NE,
                 .backwards = false
             };
@@ -1021,10 +1010,9 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         bool loop_when_key = TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
         if (loop_when_key) {
             FOR_USERS(u, latch) {
-                TB_ASSERT(USERN(u)->type == TB_BRANCH_PROJ);
-                TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(USERN(u));
+                TB_ASSERT(USERN(u)->type == TB_PROJ);
+                TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
                 p->index = !p->index;
-                p->key   = 0;
             }
         }
 
@@ -1403,8 +1391,8 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 TB_ASSERT(top_cloned->input_cap >= 1);
                 top_cloned->input_count = 1;
                 set_input(f, top_cloned, ztc_start, 0);
-                TB_Node* into_loop = branch_cproj(f, bot_cloned, 90, 0, 1 - exit_loop_i);
-                TB_Node* exit_loop = branch_cproj(f, bot_cloned, 10, 0, exit_loop_i);
+                TB_Node* into_loop = make_proj_node(f, TB_TYPE_CONTROL, bot_cloned, 1 - exit_loop_i);
+                TB_Node* exit_loop = make_proj_node(f, TB_TYPE_CONTROL, bot_cloned, exit_loop_i);
                 mark_node(f, into_loop), mark_node(f, exit_loop);
                 // connect up to the loop
                 set_input(f, header, into_loop, 0);
@@ -1447,6 +1435,19 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 // if we were ctrl-dependent on successfully entering the
                 // loop body, we need to be hooked to the header now
                 loop_hoist_ops(f, into_loop2, header);
+
+                // set branch probabilities
+                {
+                    // the ZTC entrance probably will be 90%, same as the loop backedge's taken
+                    float taken = 0.9f;
+                    if (exit_loop_i == 0) {
+                        taken = 1.0f - taken;
+                    }
+
+                    TB_ASSERT(cfg_is_if(bot_cloned));
+                    TB_NodeIf* br = TB_NODE_GET_EXTRA(bot_cloned);
+                    br->prob = taken;
+                }
 
                 // insert phis at the join site since we've now got two sets
                 // of definitions for any nodes which are referenced outside the loop
@@ -1608,6 +1609,15 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 if (type == TB_AFFINE_LOOP) {
                     header->inputs[1]->inputs[0]->type = TB_AFFINE_LATCH;
                     mark_node_n_users(f, header->inputs[1]->inputs[0]);
+                }
+
+                // set branch probabilities
+                if (cfg_is_natural_loop(header) && header->inputs[1]->type == TB_PROJ && cfg_is_if(header->inputs[1]->inputs[0])) {
+                    float taken = 0.9f;
+
+                    int cont_loop_i = TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
+                    TB_NodeIf* br = TB_NODE_GET_EXTRA(header->inputs[1]->inputs[0]);
+                    br->prob = cont_loop_i ? taken : 1.0f - taken;
                 }
             }
         }
