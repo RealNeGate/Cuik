@@ -42,6 +42,9 @@ void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, OutStream* s) {
         s_writef(s, ", use=");
         tb__print_regmask(cpy->use);
         s_writef(s, " ");
+    } else if (n->type == TB_IF) {
+        TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
+        s_writef(s, "prob=%f ", br->prob);
     } else if (n->type == TB_MACH_TEMP) {
         TB_NodeMachTemp* tmp = TB_NODE_GET_EXTRA(n);
         s_writef(s, "def=");
@@ -95,7 +98,7 @@ void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, OutStream* s) {
     } else if (n->type >= 0x100) {
         int family = n->type / 0x100;
         assert(family >= 1 && family < TB_ARCH_MAX);
-        tb_codegen_families[family].print_extra(n);
+        tb_codegen_families[family].print_extra(s, n);
         s_writef(s, " ");
     }
     s_writef(s, "( ");

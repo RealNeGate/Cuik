@@ -537,15 +537,22 @@ static size_t extra_bytes(TB_Node* n) {
     return sizeof(X86MemOp);
 }
 
-static void print_extra(TB_Node* n) {
+static void print_extra(OutStream* s, TB_Node* n) {
     static const char* modes[] = { "reg", "ld", "st" };
 
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
-    printf("scale=%d, disp=%d, mode=%s", 1u<<op->scale, op->disp, modes[op->mode]);
+    s_writef(s, "scale=%d, disp=%d, mode=%s", 1u<<op->scale, op->disp, modes[op->mode]);
     if (op->flags & OP_IMMEDIATE) {
-        printf(", imm=%d", op->imm);
+        s_writef(s, ", imm=%d", op->imm);
     }
-    printf(", cond=%s", COND_NAMES[op->cond]);
+
+    if (n->type == x86_jcc) {
+        s_writef(s, ", prob=%f", op->prob);
+    }
+
+    if (n->type == x86_jcc || n->type == x86_setcc || n->type == x86_cmovcc) {
+        s_writef(s, ", cond=%s", COND_NAMES[op->cond]);
+    }
 }
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
@@ -625,6 +632,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             printf("  j%s ", COND_NAMES[op->cond]);
             print_pretty_edge(ctx, n->inputs[1]);
             printf(" BB%d else BB%d", succ[0], succ[1]);
+            printf(" // prob: %f", op->prob);
         } else {
             printf("  jmp BB%d", succ[0]);
         }

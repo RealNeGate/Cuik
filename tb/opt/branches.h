@@ -627,6 +627,9 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
         TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(cmp, TB_NodeCompare)->cmp_dt);
 
         // flip
+        TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
+        br->prob = 1.0f - br->prob;
+
         FOR_USERS(u, n) {
             TB_ASSERT(USERN(u)->type == TB_PROJ);
             TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
@@ -644,6 +647,9 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
         uint64_t imm = TB_NODE_GET_EXTRA_T(cmp->inputs[2], TB_NodeInt)->value;
         if (imm == 0) {
             set_input(f, n, cmp->inputs[1], 1);
+
+            TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
+            br->prob = 1.0f - br->prob;
 
             // flip successors
             if (cmp_type == TB_CMP_EQ) {

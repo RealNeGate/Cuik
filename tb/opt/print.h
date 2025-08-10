@@ -640,10 +640,13 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
                             TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
 
                             s_writef(s, ", ");
-                            tb_codegen_families[family].print_extra(n);
+                            tb_codegen_families[family].print_extra(s, n);
                         }
 
-                        if (cfg_is_branch(n)) {
+                        if (cfg_is_if(n)) {
+                            TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
+                            s_writef(s, " // prob: %f", br->prob);
+                        } else if (cfg_is_branch(n)) {
                             TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
                             TB_Node** restrict succ = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_Node**));
 

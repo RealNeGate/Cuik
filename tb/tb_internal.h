@@ -591,6 +591,13 @@ enum {
     NODE_EFFECT     = 1024,
 };
 
+typedef struct OutStream {
+    void (*color)(struct OutStream* s, int ansi_code);
+    void (*write)(struct OutStream* s, size_t n, const char* data);
+    int (*writef)(struct OutStream* s, const char* fmt, va_list ap);
+    bool quoted;
+} OutStream;
+
 struct ICodeGen {
     // what does CHAR_BIT mean on said platform
     int minimum_addressable_size, pointer_size;
@@ -602,7 +609,7 @@ struct ICodeGen {
     uint32_t (*flags)(TB_Node* n);
     size_t (*extra_bytes)(TB_Node* n);
     const char* (*node_name)(int n_type);
-    void (*print_extra)(TB_Node* n);
+    void (*print_extra)(OutStream* s, TB_Node* n);
 
     int (*is_pack_op_supported)(TB_Function* f, TB_DataType dt, TB_Node* n, int width);
     int (*max_pack_width_for_op)(TB_Function* f, TB_DataType dt, TB_Node* n);
@@ -625,13 +632,6 @@ typedef struct {
     // thus function_sym_start tells you what the starting point is in the symbol table
     TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_Arena* arena);
 } IDebugFormat;
-
-typedef struct OutStream {
-    void (*color)(struct OutStream* s, int ansi_code);
-    void (*write)(struct OutStream* s, size_t n, const char* data);
-    int (*writef)(struct OutStream* s, const char* fmt, va_list ap);
-    bool quoted;
-} OutStream;
 
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
 

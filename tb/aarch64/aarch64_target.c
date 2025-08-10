@@ -79,9 +79,9 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->mayspill_mask[REG_CLASS_FLAGS] = NULL;
 }
 
-static void print_extra(TB_Node* n) {
+static void print_extra(OutStream* s, TB_Node* n) {
     A64Op* op = TB_NODE_GET_EXTRA(n);
-    printf("imm=%d", op->imm);
+    s_writef(s, "imm=%d", op->imm);
 }
 
 static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {

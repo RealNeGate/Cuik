@@ -1537,8 +1537,8 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 TB_OPTDEBUG(PASSES)(printf("        * Added extra join %%%u\n", join->gvn));
 
                 #ifndef NDEBUG
-                TB_Node* exit_proj2 = get_simple_loop_exit(ctx, loop, header, header_end);
-                TB_ASSERT(exit_proj2->inputs[0] == latch);
+                TB_Node* exit_proj = get_simple_loop_exit(ctx, loop, header, header_end);
+                TB_ASSERT(exit_proj->inputs[0] == latch);
                 TB_ASSERT(into_loop2->inputs[0] == latch);
                 TB_ASSERT(header->inputs[1] == into_loop2 && header->inputs[1]->user_count == 1);
                 #endif
@@ -1547,7 +1547,7 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 // the loop is already rotated if there's a latch at the bottom, maybe
                 // it's marked, maybe it's not.
                 if (cfg_is_cproj(header->inputs[1])) {
-                    TB_Node* exit_proj = get_simple_loop_exit(ctx, loop, header, header->inputs[1]->inputs[0]);
+                    exit_proj = get_simple_loop_exit(ctx, loop, header, header->inputs[1]->inputs[0]);
                     if (exit_proj) {
                         TB_OPTDEBUG(PASSES)(printf("      * Found rotated loop %%%u\n", header->gvn));
                         latch = exit_proj->inputs[0];
@@ -1618,6 +1618,15 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                     int cont_loop_i = TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
                     TB_NodeIf* br = TB_NODE_GET_EXTRA(header->inputs[1]->inputs[0]);
                     br->prob = cont_loop_i ? taken : 1.0f - taken;
+                } else if (latch == NULL && cfg_is_if(header_end)) {
+                    exit_proj = get_simple_loop_exit(ctx, loop, header, header_end);
+                    if (exit_proj) {
+                        float taken = 0.9f;
+                        int cont_loop_i = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeProj)->index;
+
+                        TB_NodeIf* br = TB_NODE_GET_EXTRA(header_end);
+                        br->prob = cont_loop_i ? taken : 1.0f - taken;
+                    }
                 }
             }
         }

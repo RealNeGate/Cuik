@@ -94,7 +94,7 @@ typedef struct {
 } Rogers;
 
 static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra);
-static void insert_op_at_end(Ctx* ctx, TB_BasicBlock* bb, TB_Node* n);
+static void insert_op_at_end(Ctx* ctx, Rogers* ra, TB_BasicBlock* bb, TB_Node* n);
 
 static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena);
 static void compute_ordinals(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena);
@@ -442,7 +442,7 @@ static void mark_point_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, int reg_class)
     TB_OPTDEBUG(REGALLOC5)(printf("#       %%%u is considered HRP\n", gvn));
 
     int bb_id = ctx->f->scheduled[gvn] - ctx->cfg.blocks;
-    int t = ra->order[gvn];
+    int t = ra->order[gvn] - 1;
 
     HRPRegion* hrp = &ra->hrp[bb_id];
     if (hrp->start[reg_class] < 0) {
@@ -466,12 +466,17 @@ static void mark_node_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, int reg_class) 
 
         int start_t = 0;
         if (scheduled[gvn] == bb) {
-            start_t = ra->order[gvn];
+            if (is_proj(n)) {
+                uint32_t tuple_gvn = n->inputs[0]->gvn;
+                start_t = ra->order[tuple_gvn] - 1;
+            } else {
+                start_t = ra->order[gvn] - 1;
+            }
         } else if (!set_get(&bb->live_in, gvn)) {
             continue;
         }
 
-        int end_t = last_use_in_bb(ctx->cfg.blocks, scheduled, ra, bb, n, gvn);
+        int end_t = last_use_in_bb(ctx->cfg.blocks, scheduled, ra, bb, n, gvn) - 1;
         TB_ASSERT(end_t >= start_t);
 
         HRPRegion* hrp = &ra->hrp[bb_id];
@@ -724,7 +729,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                     }
 
                     // place at the end of the pred BB to the phi, basically the latest point
-                    insert_op_at_end(ctx, pred_bb, move);
+                    insert_op_at_end(ctx, NULL, pred_bb, move);
                     changes = true;
                 } else {
                     rm = new_mask;
