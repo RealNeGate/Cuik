@@ -1228,7 +1228,7 @@ static int last_use_in_bb(TB_BasicBlock* blocks, TB_BasicBlock** scheduled, Roge
     TB_OPTDEBUG(STATS)(stats_miss += 1);
 
     // printf(" Miss.\n");
-    int l = 0;
+    int l = 1;
     if (scheduled[n->gvn] == bb) {
         l = ra->order[n->gvn];
     }
@@ -1245,7 +1245,7 @@ static int last_use_in_bb(TB_BasicBlock* blocks, TB_BasicBlock** scheduled, Roge
     if (set_get(&bb->live_out, n->gvn)) {
         // if there's no uses, we'll assume it's live out so the
         // "last use" is the BB end
-        int end = aarray_length(bb->items) - 1;
+        int end = aarray_length(bb->items);
         l = TB_MAX(l, end);
     }
 

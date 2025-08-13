@@ -6,6 +6,10 @@
 #include <stdbool.h>
 #include <inttypes.h>
 
+uint64_t lshl(uint64_t x, uint64_t y) {
+    return y > 63 ? 0 : x << y;
+}
+
 // U+0000   U+007F   0yyyzzzz
 // U+0080   U+07FF   110xxxyy 10yyzzzz
 // U+0800   U+FFFF   1110wwww 10xxxxyy 10yyzzzz

@@ -1198,6 +1198,15 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
         // Clobber FLAGS
         kills[kill_count++] = ctx->normie_mask[REG_CLASS_FLAGS];
         return kill_count;
+    } else if (n->type == TB_ICONST) {
+        uint64_t x = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
+        if (x != 0) {
+            return 0;
+        }
+
+        // xor DST, DST causes a reg to be clobbered
+        kills[kill_count++] = ctx->normie_mask[REG_CLASS_FLAGS];
+        return 1;
     } else {
         return 0;
     }
@@ -2164,6 +2173,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             TB_X86_DataType dt;
             if (n->type == x86_test || n->type == x86_cmp || n->dt.type == TB_TAG_MEMORY) {
                 dt = legalize_int(op->extra_dt);
+            } else if (n->type == x86_mov && op->mode == MODE_REG) {
+                dt = legalize_int(n->inputs[2]->dt);
             } else {
                 dt = legalize_int(n->dt);
             }

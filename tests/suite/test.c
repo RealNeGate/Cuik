@@ -1,3 +1,4 @@
+// https://github.com/RealNeGate/Cuik/issues/49
 #include <stdint.h>
 
 struct String {
