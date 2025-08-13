@@ -1026,7 +1026,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
 
             Param* params = func_type->func.param_list;
             int param_count = func_type->func.param_count;
-            bool has_varargs = func_type->func.has_varargs;
+            bool has_varargs = func_type->has_varargs;
 
             // we need at least enough arguments for the parameters
             int arg_count = e->call.param_count;

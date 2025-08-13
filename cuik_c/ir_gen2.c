@@ -950,7 +950,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 func_type = cuik_canonical_type(func_type->ptr_to);
             }
 
-            if (func_type->func.has_varargs) {
+            if (func_type->has_varargs) {
                 varargs_cutoff = 1 + func_type->func.param_count;
             }
 
@@ -993,7 +993,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             TB_Node** out = tb_builder_call(g, call_prototype, 0, target_node, real_arg_count, ir_args);
             tb_arena_free(muh_tmp_arena, ir_args, real_arg_count * sizeof(TB_Node*));
 
-            if (func_type->func.noret) {
+            if (func_type->noret) {
                 tb_builder_unreachable(g, 0);
             }
 
@@ -1591,6 +1591,10 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
 
         TB_Function* func = s->backing.f;
         tb_function_set_features(func, features);
+
+        if (s->decl.attrs.is_noinline) {
+            tb_function_set_attrs(func, TB_FUNCTION_NOINLINE);
+        }
 
         // we'll be using the debug info to construct our ABI compliant prototype
         TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, type);

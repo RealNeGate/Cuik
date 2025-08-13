@@ -109,7 +109,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
 
         case KIND_FUNC: {
             bool has_return = cuik_canonical_type(t->func.return_type)->kind != KIND_VOID;
-            result = tb_debug_create_func(mod, TB_STDCALL, t->func.param_count, has_return, t->func.has_varargs);
+            result = tb_debug_create_func(mod, TB_STDCALL, t->func.param_count, has_return, t->has_varargs);
 
             if (has_return) {
                 *tb_debug_func_returns(result) = cuik__as_tb_debug_type(mod, cuik_canonical_type(t->func.return_type));
@@ -824,7 +824,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                 func_type = cuik_canonical_type(func_type->ptr_to);
             }
 
-            if (func_type->func.has_varargs) {
+            if (func_type->has_varargs) {
                 varargs_cutoff = func_type->func.param_count;
             }
 

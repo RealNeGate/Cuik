@@ -439,6 +439,10 @@ const char* tb_symbol_get_name(TB_Symbol* s) {
     return s->name;
 }
 
+void tb_function_set_attrs(TB_Function* f, TB_FunctionAttribs attrs) {
+    f->attrs = attrs;
+}
+
 void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p) {
     TB_ASSERT(f->prototype == NULL);
     size_t param_count = p->param_count;

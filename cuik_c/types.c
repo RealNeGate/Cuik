@@ -183,7 +183,7 @@ bool type_equal(Cuik_Type* ty1, Cuik_Type* ty2) {
         if (param_count1 != param_count2) return false;
 
         // match var args
-        if (ty1->func.has_varargs != ty2->func.has_varargs) return false;
+        if (ty1->has_varargs != ty2->has_varargs) return false;
 
         // match paramaeters exactly
         Param* param_list1 = ty1->func.param_list;

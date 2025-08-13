@@ -800,6 +800,10 @@ typedef struct {
 
 #endif
 
+typedef enum TB_FunctionAttribs {
+    TB_FUNCTION_NOINLINE = 1,
+} TB_FunctionAttribs;
+
 // defined in common/arena.h
 #ifndef TB_OPAQUE_ARENA_DEF
 #define TB_OPAQUE_ARENA_DEF
@@ -1118,6 +1122,7 @@ TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int l
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage);
 TB_API void tb_function_set_features(TB_Function* f, const TB_FeatureSet* features);
+TB_API void tb_function_set_attrs(TB_Function* f, TB_FunctionAttribs attrs);
 TB_API void tb_function_destroy(TB_Function* f);
 
 TB_API TB_FeatureSet tb_features_from_profile_str(TB_Module* m, const char* name);

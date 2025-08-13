@@ -276,13 +276,11 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
         type_layout2(parser, tokens, type->clone.of);
 
         Atom name = type->also_known_as;
-        bool noret = type->clone.noret;
+        bool noret    = type->noret;
+
         *type = *type->clone.of;
-        if (noret) {
-            assert(type->kind == KIND_FUNC);
-            type->func.noret = true;
-        }
         type->also_known_as = name;
+        type->noret = noret;
     } else if (type->kind == KIND_ARRAY) {
         if (type->array.count_lexer_pos) {
             assert(parser != NULL && "Parserless type checker!!!");

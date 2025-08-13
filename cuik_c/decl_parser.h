@@ -1089,11 +1089,11 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
                 .size  = 1,
                 .align = 1,
                 .flags = parser->is_in_global_scope ? 0 : CUIK_TYPE_FLAG_COMPLETE,
+                .has_varargs = has_varargs,
                 .func = {
                     .return_type = type,
                     .param_list = copy_out_temporary(parser->arena, params, param_count, sizeof(Param)),
                     .param_count = param_count,
-                    .has_varargs = has_varargs
                 }
             };
 

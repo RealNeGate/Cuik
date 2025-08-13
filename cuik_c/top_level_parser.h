@@ -148,15 +148,21 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             tokens_next(s);
 
             expect_closing_paren(s, opening_loc);
+        } else if (tokens_match(s, sizeof("noinline")-1, "noinline")) {
+            attr.is_noinline = true;
+            tokens_next(s);
+
+            expect_closing_paren(s, opening_loc);
         } else {
             // TODO(NeGate): Correctly parse declspec instead of
             // ignoring them.
             int depth = 1;
             while (depth) {
-                if (tokens_get(s)->type == '(')
+                if (tokens_get(s)->type == '(') {
                     depth++;
-                else if (tokens_get(s)->type == ')')
+                } else if (tokens_get(s)->type == ')') {
                     depth--;
+                }
 
                 tokens_next(s);
             }
@@ -200,7 +206,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
         dyn_array_put(parser->top_level_stmts, n);
 
-        if (attr.is_noret) {
+        if (attr.is_noinline || attr.is_noret) {
             if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
                 diag_err(s, decl.loc, "this declaration isn't a function, it can't be no-return");
             } else {
@@ -209,7 +215,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     type_clone(&parser->types, cuik_canonical_type(n->decl.type), decl.name),
                     cuik_get_quals(n->decl.type)
                 );
-                cuik_canonical_type(n->decl.type)->clone.noret = true;
+                cuik_canonical_type(n->decl.type)->noret = attr.is_noret;
             }
         }
 

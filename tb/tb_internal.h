@@ -360,6 +360,7 @@ struct TB_Function {
     TB_DebugType* dbg_type;
     TB_FunctionPrototype* prototype;
     TB_FeatureSet features;
+    TB_FunctionAttribs attrs;
 
     // raw parameters
     size_t param_count;
@@ -380,7 +381,7 @@ struct TB_Function {
     TB_Trace trace;
     TB_Node* last_loc;
 
-    // Bookkeeping in certain opts
+    // Bookkeeping in certain interprocedural opts
     int uid;
 
     // Optimizer related data
@@ -417,9 +418,6 @@ struct TB_Function {
 
         // IPO lock
         Futex ipo_lock;
-
-        // Inlining info
-        bool no_inline;
 
         #if TB_OPTDEBUG_SERVER
         int dbg_server_t;

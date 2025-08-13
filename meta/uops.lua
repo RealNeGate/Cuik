@@ -1,10 +1,12 @@
 local xmlparser = require "meta/xmlparser"
 local inspect = require "meta/inspect"
+bit = require "bit"
+ffi = require "ffi"
 
-doc, err = xmlparser.parseFile("Y:/Workspace/instructions.xml", false)
+if false then
+doc, err = xmlparser.parseFile("C:/Workspace/instructions.xml", false)
 
 local insts = {}
-
 for k,v in pairs(doc.children[1].children) do
     -- find extensions we care about
     print(v.attrs.name)
@@ -62,11 +64,151 @@ for k,v in pairs(doc.children[1].children) do
     end
 end
 
-function compile_inst(inst)
-
+print(inspect(insts.ADD))
 end
 
-compile_inst(insts["ADD"])
+-- Construct Bundling DFA based on which ops can be issued each cycle
+--   Port0: INT ALU
+--   local inst_class = {
+--   ["int_rr"] = { tp=1, lat=1, uops="1*p0156B" },
+--   ["int_mr"] = { tp=1, lat=1, uops="1*p0156B+1*p23A+1*p49+1*p78" },
+--   ["int_rm"] = { tp=1, lat=1, uops="1*p0156B+1*p23A" },
+--   }
+local inst_class = {
+    ["i"]  = "id",
+    ["f"]  = "fd",
+    ["ls"] = "id+mem mem",
+}
 
-print(inspect(insts.ADD))
+local function lexer(str)
+    local i = 1
+    return function()
+        -- skip whitespace
+        while str:byte(i) == 32 do
+            i = i + 1
+        end
+
+        if i > #str then
+            return nil
+        end
+
+        if str:byte(i) == 43 then
+            i = i + 1
+            return "+"
+        end
+
+        local start = i
+        i = i + 1
+        while i <= #str and str:byte(i) ~= 32 and str:byte(i) ~= 43 do
+            i = i + 1
+        end
+        return str:sub(start, i - 1)
+    end
+end
+
+function Set(w, h)
+    local t = {}
+    t.data = ffi.new("uint32_t[?]", w*h)
+    t.w = w
+    t.h = h
+
+    function t.put(self, i, j)
+        assert(i < self.w and j < self.h)
+        i = bit.tobit(i)
+        j = bit.tobit(j)
+
+        local pos = j*self.w + i
+        local a = math.floor(i / 32)
+        local b = math.floor(i % 32)
+        self.data[a] = bit.bor(self.data[a], bit.lshift(1, b))
+    end
+
+    function t.get(self, i, j)
+        assert(i < self.w and j < self.h)
+        i = bit.tobit(i)
+        j = bit.tobit(j)
+
+        local pos = j*self.w + i
+        local a = math.floor(i / 32)
+        local b = math.floor(i % 32)
+        return bit.band(t.data[a], bit.lshift(1, b))
+    end
+
+    function t.print(self)
+        print(t)
+
+        local str = ffi.new("char[?]", w+1)
+        for j=0,self.h-1 do
+            -- fill bits
+            for i=0,self.w-1 do
+                local k = j*self.w + i
+                local a = math.floor(k / 32)
+                local b = math.floor(k % 32)
+
+                print(a, b)
+                local x = bit.band(bit.rshift(self.data[a], b), 1)
+                str[i] = 48 + x
+            end
+
+            print(ffi.string(str))
+        end
+    end
+
+    return t
+end
+
+local n_resources = 0
+local resources = {}
+
+local pipeline_len = 0
+
+-- find the machine resources
+for k,v in pairs(inst_class) do
+local plus = false
+    local l = 0
+    for t in lexer(v) do
+        if t == "+" then
+            plus = true
+        else
+            if not resources[t] then
+                resources[t] = n_resources
+                n_resources = n_resources + 1
+            end
+
+            if not plus then
+                l = l + 1
+            end
+            plus = false
+        end
+    end
+    pipeline_len = math.max(pipeline_len, l)
+end
+
+print(n_resources, pipeline_len, inspect(resources))
+
+for k,v in pairs(inst_class) do
+    print(v)
+    local reserves = Set(n_resources, pipeline_len)
+
+    -- construct resource reservation table
+    local l = 0
+    for t in lexer(v) do
+        if t == "+" then
+            plus = true
+        else
+            if not plus then
+                l = l + 1
+            end
+            plus = false
+
+            local r = resources[t]
+            print("PUT", t, r, l-1)
+            reserves:put(r, l-1)
+        end
+    end
+
+    reserves:print()
+end
+
+print(inspect(inst_class))
 

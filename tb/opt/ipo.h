@@ -263,7 +263,7 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
             printf("Call cycle (depth=%d, %zu):\n", depth, scc->stk_cnt - head);
 
             is_cycle = true;
-            f->no_inline = true;
+            f->attrs |= TB_FUNCTION_NOINLINE;
         }
 
         TB_Function* kid_f;
