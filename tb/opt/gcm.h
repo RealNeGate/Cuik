@@ -460,7 +460,6 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                                 // asked for from the previous block, but it should be "killed" in the PHI's block
                                 // to avoid propagating it further
                                 set_put(&pred_bb->gen, in->gvn);
-                                set_put(&bb->kill, in->gvn);
                             }
                         }
                     } else {

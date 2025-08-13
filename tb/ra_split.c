@@ -456,7 +456,6 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
     ////////////////////////////////
     // 2. Insert spills and reloads
     ////////////////////////////////
-    TB_OPTDEBUG(REGSPLIT)(rogers_dump_sched(ctx, old_node_count));
     #if TB_OPTDEBUG_REGSPLIT
     printf("== INSERT NODES ==\n");
     #endif
