@@ -80,6 +80,13 @@ local inst_class = {
     ["ls"] = "id+mem mem",
 }
 
+local sorted_classes = {}
+for k,v in pairs(inst_class) do
+    sorted_classes[#sorted_classes + 1] = k
+end
+table.sort(sorted_classes)
+print(inspect(sorted_classes))
+
 local function lexer(str)
     local i = 1
     return function()
@@ -108,44 +115,37 @@ end
 
 function Set(w, h)
     local t = {}
-    t.data = ffi.new("uint32_t[?]", w*h)
+    local rows = math.floor((w + 31) / 32)
+    t.stride = rows * 32
     t.w = w
     t.h = h
+    t.data = ffi.new("uint32_t[?]", rows * h)
 
     function t.put(self, i, j)
         assert(i < self.w and j < self.h)
-        i = bit.tobit(i)
-        j = bit.tobit(j)
-
-        local pos = j*self.w + i
-        local a = math.floor(i / 32)
-        local b = math.floor(i % 32)
+        local pos = j*self.stride + i
+        local a = math.floor(pos / 32)
+        local b = math.floor(pos % 32)
         self.data[a] = bit.bor(self.data[a], bit.lshift(1, b))
     end
 
     function t.get(self, i, j)
         assert(i < self.w and j < self.h)
-        i = bit.tobit(i)
-        j = bit.tobit(j)
-
-        local pos = j*self.w + i
-        local a = math.floor(i / 32)
-        local b = math.floor(i % 32)
+        local pos = j*self.stride + i
+        local a = math.floor(pos / 32)
+        local b = math.floor(pos % 32)
         return bit.band(t.data[a], bit.lshift(1, b))
     end
 
     function t.print(self)
-        print(t)
-
         local str = ffi.new("char[?]", w+1)
         for j=0,self.h-1 do
             -- fill bits
             for i=0,self.w-1 do
-                local k = j*self.w + i
+                local k = j*self.stride + i
                 local a = math.floor(k / 32)
                 local b = math.floor(k % 32)
 
-                print(a, b)
                 local x = bit.band(bit.rshift(self.data[a], b), 1)
                 str[i] = 48 + x
             end
@@ -163,8 +163,10 @@ local resources = {}
 local pipeline_len = 0
 
 -- find the machine resources
-for k,v in pairs(inst_class) do
-local plus = false
+for i,name in pairs(sorted_classes) do
+    local v = inst_class[name]
+
+    local plus = false
     local l = 0
     for t in lexer(v) do
         if t == "+" then
@@ -186,9 +188,12 @@ end
 
 print(n_resources, pipeline_len, inspect(resources))
 
-for k,v in pairs(inst_class) do
-    print(v)
+local reserve_table = {}
+for i,name in pairs(sorted_classes) do
+    local v = inst_class[name]
     local reserves = Set(n_resources, pipeline_len)
+
+    print(v)
 
     -- construct resource reservation table
     local l = 0
@@ -202,12 +207,25 @@ for k,v in pairs(inst_class) do
             plus = false
 
             local r = resources[t]
-            print("PUT", t, r, l-1)
             reserves:put(r, l-1)
         end
     end
 
     reserves:print()
+    reserve_table[name] = reserves
+end
+
+local dfa = {}
+local ws = {}
+
+-- initial state
+local F0 = {}
+
+ws[#ws + 1] = F0
+
+while #ws > 0 do
+    local n = ws[#ws]
+    print(inspect(n))
 end
 
 print(inspect(inst_class))
