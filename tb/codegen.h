@@ -284,19 +284,19 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
 static double get_node_spill_cost(Ctx* restrict ctx, TB_Node* n) {
     if (n->type == TB_MACH_TEMP) {
         return 1.0;
-    } else if (can_remat(ctx, n)) {
-        return -1.0;
     } else if (n->type == TB_MACH_FRAME_PTR || n->user_count == 0) {
         // no users? probably a projection that can't be spilled
         return INFINITY;
     } else {
-        double c = 0.0f;
+        // remats grow slower
+        double scale = can_remat(ctx, n) ? 0.5 : 1.0;
 
         // sum of (block_freq * uses_in_block)
+        double c = 0.0f;
         FOR_USERS(u, n) {
             TB_Node* un = USERN(u);
             if (ctx->f->scheduled[un->gvn] == NULL) { continue; }
-            c += ctx->f->scheduled[un->gvn]->freq;
+            c += ctx->f->scheduled[un->gvn]->freq * scale;
         }
 
         return c;

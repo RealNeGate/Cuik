@@ -128,8 +128,35 @@ static int rogers_insert_op(Ctx* ctx, int bb_id, TB_Node* n, int pos) {
     return pos;
 }
 
+static double rogers_get_spill_cost(Ctx* restrict ctx, Rogers* restrict ra, VReg* vreg) {
+    if (isnan(vreg->spill_cost)) {
+        int leader = uf_find(ra->uf, ra->uf_len, vreg->n->gvn);
+        ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
+
+        double c = 0.0;
+        if (set) {
+            aarray_for(i, set) {
+                c += get_node_spill_cost(ctx, set[i]);
+            }
+        } else {
+            c = get_node_spill_cost(ctx, vreg->n);
+        }
+
+        vreg->spill_cost = c + vreg->spill_bias;
+    }
+
+    // no area? this means it's used right after def
+    if (vreg->area == 0) {
+        // printf("spill_cost(%zu) = %f\n", vreg - ctx->vregs, INFINITY);
+        return INFINITY;
+    }
+
+    // printf("spill_cost(%zu) = %f\n", vreg - ctx->vregs, vreg->spill_cost / vreg->area);
+    return vreg->spill_cost / vreg->area;
+}
+
 static void rogers_print_vreg(Ctx* restrict ctx, Rogers* restrict ra, VReg* vreg) {
-    double cost = get_spill_cost(ctx, vreg);
+    double cost = rogers_get_spill_cost(ctx, ra, vreg);
     printf("# V%-4"PRIdPTR" cost=%.2f ", vreg - ctx->vregs, cost);
     tb__print_regmask(vreg->mask);
     printf("\n");
@@ -199,33 +226,6 @@ static void rogers_coalesce(Ctx* restrict ctx, Rogers* restrict ra, int x, int y
             aarray_push(*new_set, old_set[i]);
         }
     }
-}
-
-static double rogers_get_spill_cost(Ctx* restrict ctx, Rogers* restrict ra, VReg* vreg) {
-    if (isnan(vreg->spill_cost)) {
-        int leader = uf_find(ra->uf, ra->uf_len, vreg->n->gvn);
-        ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
-
-        double c = 0.0;
-        if (set) {
-            aarray_for(i, set) {
-                c += get_node_spill_cost(ctx, set[i]);
-            }
-        } else {
-            c = get_node_spill_cost(ctx, vreg->n);
-        }
-
-        vreg->spill_cost = c + vreg->spill_bias;
-    }
-
-    // no area? this means it's used right after def
-    if (vreg->area <= 1) {
-        // printf("spill_cost(%zu) = %f\n", vreg - ctx->vregs, INFINITY);
-        return INFINITY;
-    }
-
-    // printf("spill_cost(%zu) = %f\n", vreg - ctx->vregs, vreg->spill_cost / vreg->area);
-    return vreg->spill_cost / vreg->area;
 }
 
 static void rogers_update_mask(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* n, int vreg_id) {
@@ -456,6 +456,13 @@ static void mark_point_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, int reg_class)
 
 static void mark_node_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, int reg_class) {
     TB_ASSERT(reg_class > 0);
+    TB_ASSERT(ctx->vreg_map[gvn]);
+
+    // we're gonna spill it, so that's not really increasing HRP
+    if (ctx->vregs[ctx->vreg_map[gvn]].mask->may_spill) {
+        return;
+    }
+
     TB_OPTDEBUG(REGALLOC5)(printf("#       %%%u is considered HRP range\n", gvn));
 
     TB_BasicBlock** scheduled = ctx->f->scheduled;
@@ -715,6 +722,9 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
                     TB_Node* move = rogers_hard_split(ctx, &ra, n, in, rm, vreg_id);
                     set_input(f, n, move, k);
+
+                    rm = tb__reg_mask_meet(ctx, rm, ctx->constraint(ctx, move, NULL));
+                    TB_ASSERT(rm != &TB_REG_EMPTY);
 
                     TB_Node* pred = cfg_get_pred(&ctx->cfg, n->inputs[0], k - 1);
                     TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
@@ -1395,7 +1405,7 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
     VReg* vreg = &ctx->vregs[vreg_id];
 
     // if we've spilled we shouldn't be able to wake up again.
-    if (vreg_id == 0 || set_get(&ra->been_spilled, n->gvn)) {
+    if (vreg_id == 0 || set_get(&ra->been_spilled, vreg_id)) {
         return false;
     }
 
@@ -1639,6 +1649,10 @@ static void compute_ordinals(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* a
     ra->gvn2node = tb_arena_alloc(arena, new_cap * sizeof(TB_Node*));
     ra->order_cap = new_cap;
 
+    // just give the root node a fake ordinal
+    TB_ASSERT(ctx->f->root_node->gvn == 0);
+    ra->order[0] = 1;
+
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         int timeline = 1;
@@ -1733,20 +1747,6 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                     array[n->gvn] = -1;
                 }
 
-                // start intervals
-                if (n->type != TB_PHI) {
-                    FOR_N(k, 1, n->input_count) {
-                        TB_Node* in = n->inputs[k];
-                        if (in && ctx->vreg_map[in->gvn] > 0) {
-                            // alive
-                            if (array[in->gvn] < 0) {
-                                array[in->gvn] = aarray_length(stack);
-                                aarray_push(stack, in->gvn);
-                            }
-                        }
-                    }
-                }
-
                 #if TB_OPTDEBUG_REGALLOC4
                 printf("# ");
                 #endif
@@ -1767,6 +1767,20 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 #if TB_OPTDEBUG_REGALLOC4
                 printf("\n");
                 #endif
+
+                // start intervals
+                if (n->type != TB_PHI) {
+                    FOR_N(k, 1, n->input_count) {
+                        TB_Node* in = n->inputs[k];
+                        if (in && ctx->vreg_map[in->gvn] > 0) {
+                            // alive
+                            if (array[in->gvn] < 0) {
+                                array[in->gvn] = aarray_length(stack);
+                                aarray_push(stack, in->gvn);
+                            }
+                        }
+                    }
+                }
             }
         }
         tb_arena_restore(arena, sp);

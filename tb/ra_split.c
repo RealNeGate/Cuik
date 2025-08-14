@@ -6,9 +6,8 @@ typedef struct {
 
     uint64_t* W_entry;
     uint64_t* W_exit;
-    // uint64_t* S_entry;
-    // uint64_t* S_exit;
 
+    uint64_t* live_in;
     uint64_t* live_out;
 
     RegMask** spill_mask;
@@ -52,7 +51,13 @@ static TB_Node** coalesce_set_array(Ctx* ctx, Rogers* ra, TB_Node** n_ptr, size_
 static TB_Node* alloc_spill_node(Ctx* ctx, Rogers* ra, RegMask* spill_mask, TB_Node* def) {
     TB_Function* f = ctx->f;
     RegMask* def_mask = ctx->constraint(ctx, def, NULL);
-    TB_ASSERT(!reg_mask_is_stack(def_mask));
+    TB_ASSERT(def_mask->class != REG_CLASS_STK);
+
+    // remove may_spill if it was there
+    if (def_mask->may_spill) {
+        TB_ASSERT(def_mask->count == 1);
+        def_mask = intern_regmask(ctx, def_mask->class, false, def_mask->mask[0]);
+    }
 
     TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, def->dt, 2, sizeof(TB_NodeMachCopy));
     set_input(f, cpy, def, 1);
@@ -233,6 +238,11 @@ static void update_phi_edges(Ctx* ctx, Rogers* ra, RegSplitter* splitter, TB_Nod
     FOR_N(k, 0, num_spills) {
         TB_Node* pred_def = pred_defs[k];
 
+        if (!((splitter->live_in[bb_id] >> k) & 1)) {
+            TB_OPTDEBUG(REGSPLIT)(printf("  BB%d: SPILL%zu: the spill doesn't actually live through this block\n", bb_id, k));
+            continue;
+        }
+
         if (pred_def) {
             if ((insert_reloads >> k) & 1) {
                 pred_def = insert_reload(ctx, ra, splitter, &ctx->cfg.blocks[pred_id], pred_def, k, NULL);
@@ -382,8 +392,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
     // W means it's in a register right now
     splitter.W_entry  = arena_zalloc(ra->arena, ctx->bb_count * sizeof(uint64_t));
     splitter.W_exit   = arena_zalloc(ra->arena, ctx->bb_count * sizeof(uint64_t));
-    // splitter.S_entry  = arena_zalloc(ra->arena, ctx->bb_count * sizeof(uint64_t));
-    // splitter.S_exit   = arena_zalloc(ra->arena, ctx->bb_count * sizeof(uint64_t));
+    splitter.live_in  = arena_zalloc(ra->arena, ctx->bb_count * sizeof(uint64_t));
     splitter.live_out = arena_zalloc(ra->arena, ctx->bb_count * sizeof(uint64_t));
 
     ////////////////////////////////
@@ -406,16 +415,16 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
         // append the liveness info
         FOR_N(k, 0, ctx->bb_count) {
             TB_BasicBlock* bb = &ctx->cfg.blocks[k];
-            bool live_out = false;
+            bool live_in = false, live_out = false;
 
             FOR_N(j, 0, cnt) {
                 TB_Node* n = arr[j];
+                live_in  |= set_get(&bb->live_in, n->gvn);
                 live_out |= set_get(&bb->live_out, n->gvn);
             }
 
-            if (live_out) {
-                splitter.live_out[k] |= 1ull << spill_i;
-            }
+            splitter.live_in[k]  |= ((uint64_t)live_in) << spill_i;
+            splitter.live_out[k] |= ((uint64_t)live_out) << spill_i;
         }
 
         if (cnt == 1) {
@@ -580,8 +589,8 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
                     TB_Node* phi = phis[bb_id*num_spills + k];
                     if (phi == NULL) {
                         TB_Node* same = bb_defs[k];
-                        if (same == NULL) {
-                            TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%zu: spill isn't alive during this loop\n", bb_id, k));
+                        if (same == NULL || !((splitter.live_in[bb_id] >> k) & 1)) {
+                            TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%zu: the spill doesn't actually live through this block\n", bb_id, k));
                             continue;
                         }
 
@@ -685,41 +694,36 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
                             __debugbreak();
                         } */
                     } else {
-                        // if a SpillCopy encounters another SpillCopy, we don't want to reload and spill again
-                        // just extend the lifetime of the original spill.
-                        if (n->type == TB_MACH_COPY && def->type == TB_MACH_COPY) {
+                        if (n->type == TB_MACH_COPY) {
                             TB_NodeMachCopy* dst = TB_NODE_GET_EXTRA(n);
-                            TB_NodeMachCopy* src = TB_NODE_GET_EXTRA(def);
-                            if (reg_mask_is_stack(dst->def) && reg_mask_is_stack(src->def)) {
+                            if (reg_mask_is_stack(dst->def) && !can_remat(ctx, def)) {
+                                // we're asking to spill something that's already spilled, just extend the range.
                                 TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%d: connecting spill range at %%%u with %%%u\n", bb_id, spill, n->gvn, def->gvn));
+                                RegMask* def_mask = splitter.spill_mask[spill];
 
                                 // update any copy masks, the users of a spill can only really be copies
                                 // or folded reload uses
                                 FOR_USERS(u, n) {
                                     if (USERN(u)->type == TB_MACH_COPY) {
                                         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(USERN(u));
-                                        cpy->use = src->def;
+                                        cpy->use = def_mask;
                                     }
                                 }
 
                                 subsume_node2(f, n, def);
                                 vaporized = true;
                                 TB_ASSERT(n->user_count == 0);
-                                continue;
-                            }
-
-                            // folded reload
-                            if (!reg_mask_is_stack(dst->def)) {
-                                // TB_ASSERT(n->dt.raw == def->dt.raw);
-                                if (reg_mask_is_stack(src->use)) {
-                                    dst->use = src->use;
+                            } else {
+                                // convert copy into reload
+                                if (def->type == TB_MACH_COPY && reg_mask_is_stack(TB_NODE_GET_EXTRA_T(def, TB_NodeMachCopy)->use)) {
+                                    dst->use = TB_NODE_GET_EXTRA_T(def, TB_NodeMachCopy)->use;
                                     set_input(f, n, def->inputs[1], k);
                                 } else {
-                                    dst->use = src->def;
+                                    dst->use = splitter.spill_mask[spill];
                                     set_input(f, n, def, k);
                                 }
-                                continue;
                             }
+                            continue;
                         }
 
                         RegMask* in_mask = constraint_in(ctx, n, k);
@@ -727,10 +731,16 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
 
                         // if we could do a folded reload but the destination can't, we
                         // fail to do perform it (since we couldn't coalesce).
-                        if (can_fold && ctx->node_2addr(n) == k) {
-                            RegMask* rm = ctx->constraint(ctx, n, NULL);
-                            if (!rm->may_spill) {
+                        if (can_fold) {
+                            if (can_remat(ctx, def)) {
+                                // this would just neither spill or reload the original range and thus
+                                // not shrink it, so we force a "reload" here.
                                 can_fold = false;
+                            } else if (ctx->node_2addr(n) == k) {
+                                RegMask* rm = ctx->constraint(ctx, n, NULL);
+                                if (!rm->may_spill) {
+                                    can_fold = false;
+                                }
                             }
                         }
 
@@ -806,14 +816,6 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
             }
         }
 
-        // forget definitions
-        FOR_N(j, 0, num_spills) {
-            if (!((splitter.live_out[bb_id] >> j) & 1) && bb_defs[j]) {
-                TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%td: forget %%%u\n", bb_id, j, bb_defs[j]->gvn));
-                bb_defs[j] = NULL;
-            }
-        }
-
         TB_OPTDEBUG(REGSPLIT)(dump_split_state(bb_defs, bb_id, num_spills, W, 0));
 
         splitter.W_exit[bb_id] = W;
@@ -863,9 +865,15 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
                 if (leader != phi) {
                     TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%td: phi %%%u (pruned to %%%u)\n", bb_id, k, phi->gvn, leader->gvn));
 
-                    if (defs[head*num_spills + k] == phi) {
-                        defs[head*num_spills + k] = leader;
+                    // replace all def sites that use it, these could
+                    // only exist within the loop itself so we can avoid
+                    // checking unnecessary blocks.
+                    FOR_N(i, head, bb_id+1) {
+                        if (defs[i*num_spills + k] == phi) {
+                            defs[i*num_spills + k] = leader;
+                        }
                     }
+
                     subsume_node(f, phi, leader);
                     tb__remove_node(ctx, f, phi);
 
@@ -950,6 +958,9 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
         rogers_resize_uf(ctx, ra, new_len);
     }
 
+    // make sure there's enough room for the vreg_map
+    ctx->vreg_map = aarray__reserve2(ctx->vreg_map, sizeof(*ctx->vreg_map), f->node_count);
+
     for (size_t i = 0; i < aarray_length(splitter.all_defs);) {
         TB_Node* n = splitter.all_defs[i];
         if (n->user_count == 0) {
@@ -969,6 +980,8 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
         TB_ASSERT(n->gvn < ra->uf_len);
         ra->uf[n->gvn] = n->gvn;
         ra->uf_size[n->gvn] = 1;
+
+        TB_ASSERT(n->gvn < aarray_length(ctx->vreg_map));
         ctx->vreg_map[n->gvn] = 0;
 
         #if TB_OPTDEBUG_REGSPLIT
@@ -985,9 +998,6 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
     #if TB_OPTDEBUG_REGSPLIT
     printf("\n");
     #endif
-
-    // make sure there's enough room for the vreg_map
-    ctx->vreg_map = aarray__reserve2(ctx->vreg_map, sizeof(*ctx->vreg_map), f->node_count);
 
     // we can now aggressively coalesce nodes without
     // worry... unless it's a copy node, we assume those
@@ -1066,7 +1076,10 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
         // PHIs better coalesce with their direct inputs
         if (n->type == TB_PHI) {
             FOR_N(j, 1, n->input_count) {
-                TB_ASSERT(ctx->vreg_map[n->gvn] == ctx->vreg_map[n->inputs[j]->gvn]);
+                if (ctx->vreg_map[n->gvn] != ctx->vreg_map[n->inputs[j]->gvn]) {
+                    TB_OPTDEBUG(REGSPLIT)(rogers_dump_sched(ctx, old_node_count));
+                    TB_ASSERT(ctx->vreg_map[n->gvn] == ctx->vreg_map[n->inputs[j]->gvn]);
+                }
             }
         }
         #endif

@@ -1290,7 +1290,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 return &TB_REG_EMPTY;
             }
 
-            RegMask* rm = TB_IS_VECTOR_TYPE(n->dt) || TB_IS_FLOAT_TYPE(n->dt) ? ctx->normie_mask[REG_CLASS_XMM] : ctx->normie_mask[REG_CLASS_GPR];
+            int class = TB_IS_VECTOR_TYPE(n->dt) || TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR;
+            RegMask* rm = ctx->mayspill_mask[class];
+            // some classes don't have mayspills
+            if (rm == NULL) {
+                rm = ctx->normie_mask[class];
+            }
+
             if (ins) {
                 FOR_N(i, 1, n->input_count) { ins[i] = rm; }
             }
@@ -1768,7 +1774,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_SAFEPOINT:
         COMMENT("safepoint");
         EMIT1(e, 0x90);
-        // TB_OPTDEBUG(REGALLOC2)(EMIT1(e, 0x90));
         break;
 
         case x86_jmp_MULTI: {
@@ -2371,32 +2376,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             tb_emit_rel32(e, &e->labels[succ_bb->fwd], GET_CODE_POS(e) - 4, 0xFFFFFFFF, 0);
             break;
         }
-
-        /*case x86_movsx8:
-        case x86_movzx8:
-        case x86_movsx16:
-        case x86_movzx16:
-        case x86_movsx32: {
-            static int ops[] = {
-                MOVSXB, MOVZXB,
-                MOVSXW, MOVZXW,
-                MOVSXD,
-            };
-
-            TB_X86_DataType dt = legalize_int(n->inputs[2]->dt);
-            if (n->type == x86_movzx8 || n->type == x86_movzx16) {
-                dt = TB_X86_DWORD;
-            } else if (n->type == x86_movsx32) {
-                dt = TB_X86_QWORD;
-            }
-
-            Val dst = op_at(ctx, n);
-            Val src = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
-
-            int op_type = ops[n->type - x86_movsx8];
-            __(op_type, dt, &dst, &src);
-            break;
-        }*/
 
         case TB_MEMSET: {
             EMIT1(e, 0xF3);
