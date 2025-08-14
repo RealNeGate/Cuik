@@ -32,12 +32,46 @@ configs = {
 local passed = 0
 local total = 0
 
+N = 20
+samples = {}
+for i=1,N do
+    samples[i] = 0
+end
+
+function perf_test(cmd, args)
+    os.execute(cmd)
+
+    local exec_cmd = exe_name.." "..args
+    if is_windows then
+        exec_cmd = exec_cmd.." > NUL 2>&1"
+    end
+
+    local mean = 0
+    for i=1,N do
+        local x = os.clock()
+        os.execute(exec_cmd)
+        local t = os.clock() - x
+
+        samples[i] = t
+        mean = mean + t
+    end
+    mean = mean / N
+
+    local var = 0
+    for i=1,N do
+        var = var + math.pow(samples[i] - mean, 2)
+    end
+    var = var / (N - 1)
+
+    print(string.format("  Average: %fs +- %f ('%s')", mean, var, cmd))
+end
+
 for i=1,#x do
     total = total + 1
 
     local args = ""
     if x[i] == "nbody.c" then
-        args = "50000000"
+        args = "100000"
     end
 
     print("Testing... "..x[i])
@@ -75,6 +109,16 @@ for i=1,#x do
     if diff == 0 then
         print("    Pass!")
         passed = passed + 1
+
+        -- we're doing the real deal now
+        if x[i] == "nbody.c" then
+            args = "1000000"
+        end
+
+        perf_test(string.format("clang %s", x[i]), args)
+        perf_test(string.format("cuik %s", x[i]), args)
+        perf_test(string.format("clang %s -O1", x[i]), args)
+        perf_test(string.format("cuik %s -O", x[i]), args)
     else
         print("    BAD!!!")
     end
