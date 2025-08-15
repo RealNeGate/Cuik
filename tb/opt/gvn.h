@@ -89,6 +89,8 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_SPLITMEM:
         case TB_VBROADCAST:
         case TB_BLACKHOLE:
+        case TB_X86INTRIN_SQRT:
+        case TB_X86INTRIN_RSQRT:
         return 0;
 
         case TB_SYMBOL_TABLE:

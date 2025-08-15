@@ -1505,6 +1505,14 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return &TB_REG_EMPTY;
         }
 
+        case TB_X86INTRIN_SQRT:
+        {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_XMM];
+            }
+            return ctx->normie_mask[REG_CLASS_XMM];
+        }
+
         case TB_MEMSET:
         {
             if (ins) {
@@ -2115,6 +2123,14 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
+        case TB_X86INTRIN_SQRT: {
+            Val dst = op_at(ctx, n);
+            Val src = op_at(ctx, n->inputs[1]);
+            TB_X86_DataType dt = legalize_float(n->dt);
+            __(FP_SQRT, dt, &dst, &src);
+            break;
+        }
+
         case TB_VSHUFFLE: {
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
@@ -2529,6 +2545,8 @@ static int get_pipe_latency(TB_Node* n) {
         case x86_vadd: lat = 4; break;
         case x86_vsub: lat = 4; break;
         case x86_vmul: lat = 4; break;
+
+        case TB_X86INTRIN_SQRT: lat = 13; break;
     }
 
     if (lat == 0) {

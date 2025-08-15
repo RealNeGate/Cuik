@@ -729,7 +729,7 @@ TB_ExportChunk* tb_export_make_chunk(TB_Arena* arena, size_t size);
 void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 
 int uf_find(int* uf, int uf_len, int a);
-void uf_union(int* uf, int x, int y);
+int uf_union(int* uf, int x, int y);
 
 int tb_data_type_bit_size(TB_Module* m, uint8_t type);
 int tb_data_type_byte_size(TB_Module* m, uint8_t type);

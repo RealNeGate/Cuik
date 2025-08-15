@@ -60,7 +60,7 @@ int uf_find(int* uf, int uf_len, int a) {
     return l;
 }
 
-void uf_union(int* uf, int x, int y) {
+int uf_union(int* uf, int x, int y) {
     x = uf_find(uf, INT_MAX, x);
     y = uf_find(uf, INT_MAX, y);
 
@@ -72,6 +72,7 @@ void uf_union(int* uf, int x, int y) {
     if (x != y) {
         uf[y] = x;
     }
+    return x;
 }
 
 // Platform layer

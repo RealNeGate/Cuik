@@ -429,11 +429,13 @@ typedef enum TB_NodeTypeEnum {
     // variadic
     TB_VA_START,
 
+    // Extra float math
+    TB_X86INTRIN_SQRT,
+    TB_X86INTRIN_RSQRT,
+
     // x86 intrinsics
     TB_X86INTRIN_LDMXCSR,
     TB_X86INTRIN_STMXCSR,
-    TB_X86INTRIN_SQRT,
-    TB_X86INTRIN_RSQRT,
 
     // general machine nodes:
     TB_MACH_COPY,

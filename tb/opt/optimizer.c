@@ -33,6 +33,7 @@ static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int6
 // node creation helpers
 TB_Node* make_poison(TB_Function* f, TB_DataType dt);
 TB_Node* dead_node(TB_Function* f);
+TB_Node* make_f64_node(TB_Function* f, double x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_Node* rhs);
 TB_Node* make_ptr_offset(TB_Function* f, TB_Node* lhs, TB_Node* rhs);
@@ -710,6 +711,18 @@ TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x) {
         latuni_set(f, n, value_int(f, n));
     }
     return tb__gvn(f, n, sizeof(TB_NodeInt));
+}
+
+TB_Node* make_f64_node(TB_Function* f, double x) {
+    TB_Node* n = tb_alloc_node(f, TB_F64CONST, TB_TYPE_F64, 1, sizeof(TB_NodeFloat64));
+    TB_NodeFloat64* i = TB_NODE_GET_EXTRA(n);
+    i->value = x;
+
+    set_input(f, n, f->root_node, 0);
+    if (f->types) {
+        latuni_set(f, n, value_f64(f, n));
+    }
+    return tb__gvn(f, n, sizeof(TB_NodeFloat64));
 }
 
 TB_Node* dead_node(TB_Function* f) {

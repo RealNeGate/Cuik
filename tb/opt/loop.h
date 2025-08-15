@@ -1082,11 +1082,16 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
 
     aarray_for(i, cfg->blocks) {
         TB_BasicBlock* bb = &cfg->blocks[i];
+        bb->freq = 1.0;
+    }
+
+    aarray_for(i, cfg->blocks) {
+        TB_BasicBlock* bb = &cfg->blocks[i];
         TB_LoopTree* loop = nl_table_get(&ctx.loop_map, bb->start);
 
         // 8^depth
         int depth = loop ? loop->depth : 0;
-        bb->freq = 1 << (depth * 3);
+        bb->freq *= 1 << (depth * 3);
 
         TB_Node* fallthru = bb->end;
         if (!cfg_is_terminator(fallthru)) {
@@ -1094,6 +1099,20 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
             // inherit it's frequency if it's low.
             fallthru = cfg_next_control(fallthru);
             fallthru = nl_map_get_checked(cfg->node_to_block, fallthru)->end;
+        } else if (cfg_is_if(fallthru)) {
+            TB_NodeIf* br = TB_NODE_GET_EXTRA(fallthru);
+
+            // if the projections are blocks, they're single-pred so they inherit a simple freq
+            FOR_USERS(u, fallthru) {
+                TB_Node* un = USERN(u);
+                if (!is_proj(un)) { continue; }
+
+                int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+                TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, un);
+
+                float prob = index ? 1.0 - br->prob : br->prob;
+                succ_bb->freq *= bb->freq * prob;
+            }
         }
 
         // return/trap/unreachable paths are always marked as statically unlikely

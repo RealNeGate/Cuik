@@ -52,23 +52,28 @@ typedef struct {
     Trace** block_to_trace;
 
     // linked list
+    int* uf;
     int* next_block;
 
     ArenaArray(Edge) edges;
 } TraceScheduler;
 
-static Trace* trace_of(TraceScheduler* traces, TB_BasicBlock* bb) {
-    return traces->block_to_trace[bb - traces->cfg->blocks];
+static Trace* trace_of(TraceScheduler* traces, int bb) {
+    bb = uf_find(traces->uf, aarray_length(traces->cfg->blocks), bb);
+    return traces->block_to_trace[bb];
 }
 
-static void trace_append(TraceScheduler* traces, int a, int b) {
+static void trace_join(TraceScheduler* traces, int a, int b) {
     TB_ASSERT(traces->block_to_trace[a]->last_bb == a);
     TB_ASSERT(traces->block_to_trace[b]->first_bb == b);
 
-    traces->next_block[a] =  b;
-    traces->next_block[b] = -1;
-    traces->block_to_trace[b] = traces->block_to_trace[a];
-    traces->block_to_trace[b]->last_bb = b;
+    int first = trace_of(traces, a)->first_bb;
+    int last  = trace_of(traces, b)->last_bb;
+    traces->next_block[a] = b;
+
+    int head = uf_union(traces->uf, a, b);
+    traces->block_to_trace[head]->first_bb = first;
+    traces->block_to_trace[head]->last_bb = last;
 }
 
 static TB_BasicBlock* best_successor_of(TB_CFG* cfg, TB_Node* n) {
@@ -173,6 +178,7 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     traces.block_to_trace = tb_arena_alloc(arena, bb_count * sizeof(Trace*));
     traces.next_block = tb_arena_alloc(arena, bb_count * sizeof(int));
     traces.edges = aarray_create(arena, Edge, bb_count);
+    traces.uf = tb_arena_alloc(arena, bb_count * sizeof(int));
 
     TB_OPTDEBUG(PLACEMENT)(printf("== EDGES ==\n"));
 
@@ -181,6 +187,7 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     FOR_N(i, 0, bb_count) {
         if (cfg->blocks[i].fwd != i) {
             // forwarding blocks don't go into traces
+            traces.uf[i] = cfg->blocks[i].fwd;
             traces.block_to_trace[i] = NULL;
         } else {
             TB_BasicBlock* bb = &cfg->blocks[i];
@@ -189,6 +196,8 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
             trace->id = trace_count++;
             trace->first_bb = trace->last_bb = i;
             trace->freq = bb->freq;
+
+            traces.uf[i] = i;
             traces.block_to_trace[i] = trace;
 
             // add edges
@@ -232,14 +241,14 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
         // try to join these two traces
         TB_BasicBlock* start_bb = &cfg->blocks[curr->last_bb];
         TB_BasicBlock* end_bb   = &cfg->blocks[next->first_bb];
-        trace_append(&traces, curr->last_bb, next->first_bb);
+        trace_join(&traces, curr->last_bb, next->first_bb);
     }
 
     int order_cnt = 0;
     Trace** order = tb_arena_alloc(arena, bb_count * sizeof(Trace*));
 
     FOR_N(i, 0, bb_count) {
-        if (cfg->blocks[i].fwd == i && traces.block_to_trace[i]->first_bb == i) {
+        if (traces.uf[i] == i) {
             order[order_cnt++] = traces.block_to_trace[i];
         }
     }
