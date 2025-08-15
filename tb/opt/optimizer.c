@@ -1634,6 +1634,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             ////////////////////////////////
             // 6. Loop strength reduction
             ////////////////////////////////
+            TB_OPTDEBUG(LOOP)(tb_print(f));
             STATS_ENTER(STRENGTH_REDUCE);
             CUIK_TIMED_BLOCK("induction vars") {
                 aarray_for(i, ctx.cfg.loops) {

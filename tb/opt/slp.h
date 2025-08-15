@@ -536,13 +536,13 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         bool bad = false;
         TB_DataType elem_dt = slp_node_data_type(first);
         if (!TB_IS_INTEGER_TYPE(elem_dt) && !TB_IS_FLOAT_TYPE(elem_dt)) {
-            TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this type. %%%u ", first->gvn), print_type(elem_dt), printf("\n"));
+            TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this type. %%%u ", first->gvn), print_type(&OUT_STREAM_DEFAULT, elem_dt), printf("\n"));
             bad = true;
             goto done;
         }
 
         if (!codegen->is_pack_op_supported(f, elem_dt, op->ops[0], op->width)) {
-            TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this operation. %%%u [", first->gvn), print_type(elem_dt), printf(" x %d]\n", op->width));
+            TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this operation. %%%u [", first->gvn), print_type(&OUT_STREAM_DEFAULT, elem_dt), printf(" x %d]\n", op->width));
             bad = true;
             goto done;
         }

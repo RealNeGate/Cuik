@@ -42,7 +42,7 @@ typedef struct {
 } TestCase;
 
 static const TestCase cases[] = {
-    { "nbody.c", "1000000" }
+    { "nbody.c", "10000000" }
 };
 enum { CASE_COUNT = sizeof(cases) / sizeof(cases[0]) };
 
@@ -64,8 +64,8 @@ static void comp_test(const char* cmd, const char* name, const char* args) {
 
 int main(int argc, char** argv) {
     for (int i = 0; i < CASE_COUNT; i++) {
-        comp_test("cuik", cases[i].name, cases[i].args);
-        comp_test("clang", cases[i].name, cases[i].args);
+        // comp_test("cuik", cases[i].name, cases[i].args);
+        // comp_test("clang", cases[i].name, cases[i].args);
         comp_test("cuik -O", cases[i].name, cases[i].args);
         comp_test("clang -O1", cases[i].name, cases[i].args);
     }

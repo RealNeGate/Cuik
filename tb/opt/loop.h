@@ -855,7 +855,7 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
             printf(" = %%%u ", var->init->gvn);
         }
 
-        printf(" + %"PRId64"*x\n", var->step->_int.min);
+        printf(" + %"PRId64"*x (%d uses)\n", var->step->_int.min, var->uses);
         #endif
 
         TB_Node* stepper = n->type == TB_PHI ? n->inputs[2] : NULL;
@@ -925,7 +925,8 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
                 new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
                 new_var.good = true;
 
-                var->uses -= new_var.uses;
+                TB_ASSERT(var->uses >= 1);
+                var->uses -= 1;
                 aarray_push(vars, new_var);
 
                 rewrite = true;
@@ -946,7 +947,8 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
                 new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
                 new_var.good = true;
 
-                var->uses -= new_var.uses;
+                TB_ASSERT(var->uses >= 1);
+                var->uses -= 1;
                 aarray_push(vars, new_var);
 
                 rewrite = true;
@@ -968,7 +970,8 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
                 new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
                 new_var.good = true;
 
-                var->uses -= new_var.uses;
+                TB_ASSERT(var->uses >= 1);
+                var->uses -= 1;
                 aarray_push(vars, new_var);
 
                 rewrite = true;
@@ -1066,6 +1069,9 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         mark_node_n_users(f, latch);
     }
 
+    // TB_OPTDEBUG(LOOP)(tb_print(f));
+    // TB_OPTDEBUG(LOOP)(__debugbreak());
+
     return true;
 }
 
@@ -1111,7 +1117,7 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
                 TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, un);
 
                 float prob = index ? 1.0 - br->prob : br->prob;
-                succ_bb->freq *= bb->freq * prob;
+                succ_bb->freq *= prob;
             }
         }
 

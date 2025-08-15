@@ -76,7 +76,7 @@ static TB_Node* ideal_libcall(TB_Function* f, TB_Node* n) {
             set_input(f, br, n->inputs[0], 0);
             set_input(f, br, cmp_node, 1);
             mark_node(f, br);
-            TB_NODE_SET_EXTRA(br, TB_NodeIf, .prob = 0.999f);
+            TB_NODE_SET_EXTRA(br, TB_NodeIf, .prob = 0.001f);
 
             TB_Node* ift = make_proj_node(f, TB_TYPE_CONTROL, br, 0);
             TB_Node* iff = make_proj_node(f, TB_TYPE_CONTROL, br, 1);

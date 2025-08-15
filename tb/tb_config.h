@@ -5,7 +5,7 @@
 #define TB_OPTDEBUG_PASSES    0
 #define TB_OPTDEBUG_PEEP      0
 #define TB_OPTDEBUG_SCCP      0
-#define TB_OPTDEBUG_LOOP      0
+#define TB_OPTDEBUG_LOOP      1
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
 #define TB_OPTDEBUG_SLP       0
@@ -17,7 +17,7 @@
 #define TB_OPTDEBUG_ISEL3     0
 #define TB_OPTDEBUG_EMIT      0
 #define TB_OPTDEBUG_DATAFLOW  0
-#define TB_OPTDEBUG_PLACEMENT 1
+#define TB_OPTDEBUG_PLACEMENT 0
 #define TB_OPTDEBUG_INLINE    0
 #define TB_OPTDEBUG_INLINE2   0
 #define TB_OPTDEBUG_INLINE3   0

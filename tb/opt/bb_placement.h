@@ -130,7 +130,10 @@ static TB_BasicBlock* best_successor_of(TB_CFG* cfg, TB_Node* n) {
 static int edge_cmp(const void* a, const void* b) {
     const Edge* aa = (const Edge*) a;
     const Edge* bb = (const Edge*) b;
-    return bb->freq - aa->freq;
+    if (aa->freq != bb->freq) {
+        return aa->freq > bb->freq ? -1 : 1;
+    }
+    return 0;
 }
 
 static int trace_cmp(const void* a, const void* b) {
@@ -142,9 +145,9 @@ static int trace_cmp(const void* a, const void* b) {
         // it's not unsurprising to get the exact same
         // frequency, synthetic frequencies do it all the
         // time and it which case we'll order by the RPO.
-        /*if (aa->freq != bb->freq) {
+        if (aa->freq != bb->freq) {
             return aa->freq > bb->freq ? -1 : 1;
-        }*/
+        }
     }
 
     return aa->first_bb - bb->first_bb;
@@ -180,8 +183,6 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     traces.edges = aarray_create(arena, Edge, bb_count);
     traces.uf = tb_arena_alloc(arena, bb_count * sizeof(int));
 
-    TB_OPTDEBUG(PLACEMENT)(printf("== EDGES ==\n"));
-
     // initialize the most degen traces
     size_t trace_count = 0;
     FOR_N(i, 0, bb_count) {
@@ -201,8 +202,8 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
             traces.block_to_trace[i] = trace;
 
             // add edges
+            float freq = bb->freq;
             if (cfg_is_fork(bb->end)) {
-                float freq = bb->freq;
                 FOR_SUCC(it, bb->end) {
                     TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, it.succ);
 
@@ -211,9 +212,16 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
                     edge.end_bb   = succ_bb->fwd;
                     edge.freq     = freq * edge_prob(it.succ);
                     aarray_push(traces.edges, edge);
-
-                    TB_OPTDEBUG(PLACEMENT)(printf("  BB%-3d -> BB%-3d (%f)\n", edge.start_bb, edge.end_bb, edge.freq));
                 }
+            } else if (!cfg_is_endpoint(bb->end)) {
+                TB_Node* succ = USERN(cfg_next_user(bb->end));
+                TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, succ);
+
+                Edge edge;
+                edge.start_bb = i;
+                edge.end_bb   = succ_bb->fwd;
+                edge.freq     = freq;
+                aarray_push(traces.edges, edge);
             }
         }
         traces.next_block[i] = -1;
@@ -223,6 +231,14 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     // sort by hottest edge
     qsort(traces.edges, aarray_length(traces.edges), sizeof(Edge), edge_cmp);
 
+    #if TB_OPTDEBUG_PLACEMENT
+    printf("== EDGES ==\n");
+    for (int i = 0; i < aarray_length(traces.edges); i++) {
+        Edge edge = traces.edges[i];
+        printf("  BB%-3d -> BB%-3d (%f)\n", edge.start_bb, edge.end_bb, edge.freq);
+    }
+    #endif
+
     for (int i = 0; i < aarray_length(traces.edges); i++) {
         Edge e = traces.edges[i];
 
@@ -231,8 +247,8 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
             continue;
         }
 
-        Trace* curr = traces.block_to_trace[e.start_bb];
-        Trace* next = traces.block_to_trace[e.end_bb];
+        Trace* curr = trace_of(&traces, e.start_bb);
+        Trace* next = trace_of(&traces, e.end_bb);
         // we've already been placed in the middle of a trace
         if (curr->last_bb != e.start_bb || next->first_bb != e.end_bb) {
             continue;

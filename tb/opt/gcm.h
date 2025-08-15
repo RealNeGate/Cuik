@@ -20,7 +20,7 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
     // ideally we don't place things into the backedge of a rotated loop
     if (is_proj(late->start) && late->start == late->end) {
         TB_Node* next = cfg_next_control(late->end);
-        if (cfg_is_region(next)) {
+        if (cfg_is_natural_loop(next)) {
             return early != late ? late->dom : late;
         }
     }
