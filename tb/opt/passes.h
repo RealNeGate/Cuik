@@ -57,7 +57,7 @@ struct Lattice {
         LATTICE_INT,
         LATTICE_TUPLE,
 
-        // float (each float type has it's own separate set of these btw):
+        // float (each float type has its own separate set of these btw):
         //
         //        top
         //       /   \

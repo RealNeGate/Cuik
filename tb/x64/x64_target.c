@@ -291,13 +291,13 @@ static TB_Node* insert_range_check(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node
     TB_Node* early_exit = make_proj_node(f, TB_TYPE_CONTROL, chk_jcc, 1);
 
     // early_out needs to be hooked to whatever default_case's successor is
-    TB_User* default_succ = cfg_next_user(default_case);
-    if (USERN(default_succ)->type == TB_REGION) {
+    TB_User default_succ = *cfg_next_user(default_case);
+    if (USERN(&default_succ)->type == TB_REGION) {
         // clone the path, replace the ctrl
-        TB_Node* region = USERN(default_succ);
+        TB_Node* region = USERN(&default_succ);
         add_input_late(f, region, early_exit);
 
-        int path = 1 + USERI(default_succ);
+        int path = 1 + USERI(&default_succ);
         FOR_USERS(u, region) {
             TB_Node* phi = USERN(u);
             if (phi->type == TB_PHI) {
@@ -305,7 +305,10 @@ static TB_Node* insert_range_check(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node
             }
         }
     } else {
-        __debugbreak();
+        TB_Node* r = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
+        set_input(f, r, default_case, 0);
+        set_input(f, r, early_exit,   1);
+        set_input(f, USERN(&default_succ), r, USERI(&default_succ));
     }
 
     return into_table;
@@ -651,7 +654,24 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             printf(": %s = ", reg_class_name(cpy->def->class));
             print_pretty_edge(ctx, n->inputs[1]);
         } else {
-            printf("  copy ");
+            int bytes;
+            switch (n->dt.type) {
+                case TB_TAG_BOOL:bytes = 1; break;
+                case TB_TAG_I8:  bytes = 1; break;
+                case TB_TAG_I16: bytes = 2; break;
+                case TB_TAG_I32: bytes = 4; break;
+                case TB_TAG_I64: bytes = 8; break;
+                case TB_TAG_F32: bytes = 4; break;
+                case TB_TAG_F64: bytes = 8; break;
+                case TB_TAG_PTR: bytes = 8; break;
+                case TB_TAG_V64: bytes = 8; break;
+                case TB_TAG_V128: bytes = 16; break;
+                case TB_TAG_V256: bytes = 32; break;
+                case TB_TAG_V512: bytes = 64; break;
+                default: tb_todo();
+            }
+
+            printf("  copy%d ", bytes);
             print_pretty_edge(ctx, n);
             printf(": ");
             tb__print_regmask(cpy->def);
@@ -2496,47 +2516,16 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
     return 0b11101111;
 }
 
-static int node_latency(TB_Function* f, TB_Node* n, int i) {
-    #if 0
-    if (n->type == x86_idiv || n->type == x86_div) {
-        return 30;
-    } else if (n->type == x86_imul || n->type == TB_UMULPAIR || n->type == TB_SMULPAIR) {
-        return 3;
-    } else if (n->type == x86_lea) {
-        return 1;
-    } else if (n->type == x86_test || n->type == x86_cmp) {
-        return 1;
-    } else if (n->type == x86_call) {
-        return 100;
-    }
-
-    X86MemOp* op = TB_NODE_GET_EXTRA(n);
-    int lat = 0;
-    if (n->type == x86_vadd || n->type == x86_vmul) {
-        lat = 4;
-    } else if (n->type != x86_vmov && n->type != x86_mov) {
-        lat = 1;
-    }
-
-    return lat;
-    #endif
-
+static int get_pipe_latency(TB_Node* n) {
     // fixed latency, regardless of who's asking it's gonna
     // take a while.
     if (n->type == x86_call) {
         return 100;
     }
 
-    if (is_proj(n)) {
-        return 0;
-    }
-
-    // skylake:
-    //   addps  1*p01
-    //
     int lat = 0;
     switch (n->type) {
-        // input latencies
+        // result latencies
         case x86_vadd: lat = 4; break;
         case x86_vsub: lat = 4; break;
         case x86_vmul: lat = 4; break;
@@ -2550,13 +2539,23 @@ static int node_latency(TB_Function* f, TB_Node* n, int i) {
 
     // reads:  1*p23        (+5 latency)
     // writes: 1*p237+1*p4  (+1 latency)
-    if (op->mode == MODE_LD) {
+    if ((op->mode == MODE_ST && n->type != x86_mov && n->type != x86_vmov) || op->mode == MODE_LD) {
         lat += 5;
-    } else if (op->mode == MODE_ST) {
+    }
+
+    if (op->mode == MODE_ST) {
         lat += 1;
     }
 
     return lat;
+}
+
+static int node_latency(TB_Function* f, TB_Node* n, int i) {
+    if (is_proj(n)) {
+        return 0;
+    }
+
+    return get_pipe_latency(n->inputs[i]);
 }
 
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
@@ -2764,7 +2763,7 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
 
             // you can't do relocations across sections
             if (src_section == dst_section) {
-                assert(patch->pos < out_f->code_size);
+                TB_ASSERT(patch->pos < out_f->code_size);
 
                 // x64 thinks of relative addresses as being relative
                 // to the end of the instruction or in this case just

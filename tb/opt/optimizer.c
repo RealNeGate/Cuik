@@ -389,19 +389,21 @@ static TB_Node* ideal_location(TB_Function* f, TB_Node* n) {
     TB_ASSERT(n->type == TB_DEBUG_LOCATION);
     if (n->user_count == 0) { return NULL; }
 
-    TB_Node* cproj = USERN(proj_with_index(n, 0));
-    TB_Node* mproj = USERN(proj_with_index(n, 1));
+    if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_DEBUG_LOCATION) {
+        TB_Node* cproj = USERN(proj_with_index(n, 0));
+        TB_Node* mproj = USERN(proj_with_index(n, 1));
 
-    set_input(f, cproj, NULL, 0);
-    set_input(f, mproj, NULL, 0);
+        set_input(f, cproj, NULL, 0);
+        set_input(f, mproj, NULL, 0);
 
-    mark_users(f, cproj);
-    mark_users(f, mproj);
+        mark_users(f, cproj);
+        mark_users(f, mproj);
 
-    subsume_node(f, cproj, n->inputs[0]);
-    subsume_node(f, mproj, n->inputs[1]);
-
-    return n;
+        subsume_node(f, cproj, n->inputs[0]);
+        subsume_node(f, mproj, n->inputs[1]);
+        return n;
+    }
+    return NULL;
 }
 
 static Lattice* value_phi(TB_Function* f, TB_Node* n) {
@@ -1220,6 +1222,12 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
         DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 5) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
 
+    // idealize ops could kill a node
+    if (n->user_count == 0) {
+        TB_OPTLOG(PEEP, printf(" => \x1b[93mKILL\x1b[0m"));
+        return NULL;
+    }
+
     // pessimistic constant prop
     {
         #ifndef NDEBUG
@@ -1436,7 +1444,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPT_LOG_ENABLED
-    if (strcmp(f->super.name, "foo") == 0) {
+    if (strcmp(f->super.name, "main") == 0) {
         f->enable_log = true;
     }
     #endif

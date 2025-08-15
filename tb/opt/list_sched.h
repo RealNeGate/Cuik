@@ -110,8 +110,8 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
         }
 
         // score things which decrease pressure higher
-        int dt = pressure_delta(sched, n);
-        score -= dt * 10;
+        // int dt = pressure_delta(sched, n);
+        // score -= dt * 10;
 
         // if we have a single use and it's waiting on us? then we
         // really wanna schedule, if it's waiting on a lot of others then
@@ -307,7 +307,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
                     if (in) {
                         if (is_proj(in)) { in = in->inputs[0]; }
                         if (in->type != TB_MACH_TEMP && f->scheduled[in->gvn] == bb) {
-                            int edge_latency = sched.get_lat(sched.f, in, i);
+                            int edge_latency = sched.get_lat(sched.f, n, i);
                             int curr_latency = edge_latency + use_latency;
                             if (curr_latency > sched.latency[in->gvn]) {
                                 sched.latency[in->gvn] = curr_latency;

@@ -513,12 +513,12 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
 
     // control just flows through
     Lattice* in_ctrl = l->elems[0] = latuni_get(f, n->inputs[0]);
-    if (in_ctrl != &LIVE_IN_THE_SKY) {
+    Lattice* target = latuni_get(f, n->inputs[2]);
+    if (in_ctrl != &LIVE_IN_THE_SKY || target == &TOP_IN_THE_SKY) {
         FOR_N(i, 1, c->proj_count) {
             l->elems[i] = &TOP_IN_THE_SKY;
         }
     } else {
-        Lattice* target = latuni_get(f, n->inputs[2]);
         Lattice* rets = NULL;
         if (
             target->tag == LATTICE_PTRCON &&

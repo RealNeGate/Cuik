@@ -67,7 +67,7 @@ static Option options[] = {
     Z("backend"),
     X(BOOL,     "O",          NULL, optimize,          "enable the optimizer"),
     X(BOOL,     "emit-ir",    NULL, emit_ir,           "print IR into stdout"),
-    X(PATH,     "o",          NULL, output_name,       "set the output filepath"),
+    X(STR,      "o",          NULL, output_name,       "set the output filepath"),
     X(BOOL,     "c",          NULL, flavor,            "output object file"),
     X(BOOL,     "S",          NULL, assembly,          "output assembly to stdout"),
     X(BOOL,     "g",          NULL, debug_info,        "compile with debug information"),
@@ -326,14 +326,14 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
         void* dst = &dst_base[opt->offset];
         const char* oldstr = NULL;
         if (opt->type != ARG_BOOL) {
-            if (len == 1 && first[2] == 0) {
+            if (len > 1 && first[2] != 0) {
                 // short names for args might be directly followed by the
                 // arg value (e.g. "-j5")
                 oldstr = first+2;
             } else if (opt == &options[0]) {
                 oldstr = first;
             } else {
-                if (i + 1 >= argc || argv[i + 1][0] == '-') {
+                if (i >= argc || argv[i][0] == '-') {
                     fprintf(stderr, "\x1b[31merror\x1b[0m: expected argument after %s\n", first);
                     return false;
                 } else {

@@ -32,24 +32,17 @@ configs = {
 local passed = 0
 local total = 0
 
-N = 20
+N = 5
 samples = {}
 for i=1,N do
     samples[i] = 0
 end
 
-function perf_test(cmd, args)
-    os.execute(cmd)
-
-    local exec_cmd = exe_name.." "..args
-    if is_windows then
-        exec_cmd = exec_cmd.." > NUL 2>&1"
-    end
-
+function perf_test(cmd)
     local mean = 0
     for i=1,N do
         local x = os.clock()
-        os.execute(exec_cmd)
+        os.execute(cmd)
         local t = os.clock() - x
 
         samples[i] = t
@@ -62,8 +55,27 @@ function perf_test(cmd, args)
         var = var + math.pow(samples[i] - mean, 2)
     end
     var = var / (N - 1)
+    return mean, var
+end
 
-    print(string.format("  Average: %fs +- %f ('%s')", mean, var, cmd))
+function comp_test(cmd, args)
+    local mean, var = perf_test(cmd.." -c")
+
+    print("  Test: ")
+    print(string.format("    Compile: %fs +- %f ('%s')", mean, var, cmd.." -c"))
+
+    if is_windows then
+        exec_cmd = "a.exe "..args.." > NUL 2>&1"
+    else
+        exec_cmd = "./a.out "..args.." > NUL 2>&1"
+    end
+
+    if true then
+        os.execute(cmd)
+
+        local mean, var = perf_test(exec_cmd)
+        print(string.format("    Runtime: %fs +- %f ('%s')", mean, var, exec_cmd))
+    end
 end
 
 for i=1,#x do
@@ -110,15 +122,17 @@ for i=1,#x do
         print("    Pass!")
         passed = passed + 1
 
-        -- we're doing the real deal now
-        if x[i] == "nbody.c" then
-            args = "1000000"
-        end
+        if false then
+            -- we're doing the real deal now
+            if x[i] == "nbody.c" then
+                args = "10000000"
+            end
 
-        perf_test(string.format("clang %s", x[i]), args)
-        perf_test(string.format("cuik %s", x[i]), args)
-        perf_test(string.format("clang %s -O1", x[i]), args)
-        perf_test(string.format("cuik %s -O", x[i]), args)
+            comp_test(string.format("clang %s", x[i]), args)
+            comp_test(string.format("cuik %s", x[i]), args)
+            comp_test(string.format("clang %s -O1", x[i]), args)
+            comp_test(string.format("cuik %s -O", x[i]), args)
+        end
     else
         print("    BAD!!!")
     end
