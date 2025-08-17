@@ -152,7 +152,7 @@ static double rogers_get_spill_cost(Ctx* restrict ctx, Rogers* restrict ra, VReg
     }
 
     // printf("spill_cost(%zu) = %f\n", vreg - ctx->vregs, vreg->spill_cost / vreg->area);
-    return vreg->spill_cost / vreg->area;
+    return vreg->spill_cost - vreg->area*0.2;
 }
 
 static void rogers_print_vreg(Ctx* restrict ctx, Rogers* restrict ra, VReg* vreg) {
@@ -439,7 +439,7 @@ static void clean_single_bb_ordinals(Ctx* ctx, Rogers* ra, TB_BasicBlock* bb) {
 // mark program point as HRP
 static void mark_point_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, int reg_class) {
     TB_ASSERT(reg_class > 0);
-    TB_OPTDEBUG(REGALLOC5)(printf("#       %%%u is considered HRP\n", gvn));
+    TB_OPTDEBUG(REGALLOC6)(printf("#       %%%u is considered HRP\n", gvn));
 
     int bb_id = ctx->f->scheduled[gvn] - ctx->cfg.blocks;
     int t = ra->order[gvn] - 1;
@@ -454,7 +454,30 @@ static void mark_point_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, int reg_class)
     }
 }
 
-static void mark_node_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, int reg_class) {
+static void gimme_lifetime(Ctx* ctx, Rogers* ra, TB_BasicBlock** scheduled, TB_BasicBlock* bb, TB_Node* n, int* range) {
+    uint32_t gvn = n->gvn;
+    int start_t = 0;
+    if (scheduled[gvn] == bb) {
+        if (is_proj(n)) {
+            uint32_t tuple_gvn = n->inputs[0]->gvn;
+            start_t = ra->order[tuple_gvn] - 1;
+        } else {
+            start_t = ra->order[gvn] - 1;
+        }
+    } else if (!set_get(&bb->live_in, gvn)) {
+        range[0] = INT_MAX;
+        range[1] = -1;
+        return;
+    }
+
+    int end_t = last_use_in_bb(ctx->cfg.blocks, scheduled, ra, bb, n, gvn) - 1;
+    TB_ASSERT(end_t >= start_t);
+
+    range[0] = start_t;
+    range[1] = end_t;
+}
+
+static void mark_node_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, uint32_t failed_gvn, int reg_class) {
     TB_ASSERT(reg_class > 0);
     TB_ASSERT(ctx->vreg_map[gvn]);
 
@@ -463,28 +486,26 @@ static void mark_node_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, int reg_class) 
         return;
     }
 
-    TB_OPTDEBUG(REGALLOC5)(printf("#       %%%u is considered HRP range\n", gvn));
+    TB_OPTDEBUG(REGALLOC6)(printf("#       %%%u /\\ %%%u (%s) is considered HRP range\n", gvn, failed_gvn, reg_class_name(reg_class)));
 
     TB_BasicBlock** scheduled = ctx->f->scheduled;
     TB_Node* n = ra->gvn2node[gvn];
+    TB_Node* failed = ra->gvn2node[failed_gvn];
 
     FOR_N(bb_id, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[bb_id];
 
-        int start_t = 0;
-        if (scheduled[gvn] == bb) {
-            if (is_proj(n)) {
-                uint32_t tuple_gvn = n->inputs[0]->gvn;
-                start_t = ra->order[tuple_gvn] - 1;
-            } else {
-                start_t = ra->order[gvn] - 1;
-            }
-        } else if (!set_get(&bb->live_in, gvn)) {
+        int A[2], B[2];
+        gimme_lifetime(ctx, ra, scheduled, bb, n,      A);
+        gimme_lifetime(ctx, ra, scheduled, bb, failed, B);
+
+        int start_t = TB_MAX(A[0], B[0]);
+        int end_t   = TB_MIN(A[1], B[1]);
+        if (end_t < 0) {
             continue;
         }
 
-        int end_t = last_use_in_bb(ctx->cfg.blocks, scheduled, ra, bb, n, gvn) - 1;
-        TB_ASSERT(end_t >= start_t);
+        TB_OPTDEBUG(REGALLOC6)(printf("#         BB%zu [%d (%%%u), %d (%%%u)]\n", bb_id, start_t, bb->items[start_t]->gvn, end_t, bb->items[end_t]->gvn));
 
         HRPRegion* hrp = &ra->hrp[bb_id];
         if (hrp->start[reg_class] < 0) {
@@ -1393,13 +1414,13 @@ static SplitDecision choose_best_spill(Ctx* restrict ctx, Rogers* restrict ra, T
     if (us_score < best_score) {
         // mark the second best as the HRP region to split around it
         if (best_spill > 0) {
-            mark_node_as_hrp(ctx, ra, best_gvn, useful_class);
+            mark_node_as_hrp(ctx, ra, best_gvn, attempted_n->gvn, useful_class);
         }
 
         best_spill = us;
         best_score = us_score;
     } else {
-        mark_node_as_hrp(ctx, ra, attempted_n->gvn, useful_class);
+        mark_node_as_hrp(ctx, ra, attempted_n->gvn, best_gvn, useful_class);
     }
 
     TB_ASSERT(best_spill > 0);
@@ -1892,10 +1913,10 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             if (kill_count) {
             }
 
-            bool hrp_point = false;
             FOR_N(k, 0, kill_count) {
                 TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mCLOBBERING "), tb__print_regmask(kills[k]), printf("\x1b[0m\n"));
 
+                bool hrp_point = false;
                 int kill_class = kills[k]->class;
                 int nr = ctx->num_regs[kills[k]->class];
                 int* active = ra->active[kills[k]->class];
@@ -1923,6 +1944,8 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                                 int best_spill = in_use_vreg_id;
                                 double best_cost = rogers_get_spill_cost(ctx, ra, &ctx->vregs[in_use_vreg_id]);
 
+                                TB_OPTDEBUG(REGALLOC5)(printf("#     %%%u V%u (", in_use, in_use_vreg_id), print_reg_name(kill_class, l), printf(") is us! %f\n", best_cost));
+
                                 // if we can split an existing cheaper VReg (which isn't clobbered)
                                 // around ourselves, we can steal its register.
                                 double split_bias = 0.0;
@@ -1942,17 +1965,17 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                                     if (other_vreg->class == kill_class && !within_reg_mask(kills[k], other_vreg->assigned)) {
                                         double cost = rogers_get_spill_cost(ctx, ra, other_vreg);
                                         if (cost < best_cost) {
-                                            // TB_OPTDEBUG(REGALLOC)(printf("#     %%%u (", gvn), print_reg_name(other_vreg->class, other_vreg->assigned), printf(") is a good eviction! %f\n", score));
+                                            TB_OPTDEBUG(REGALLOC5)(printf("#     %%%u V%u (", gvn, other_vreg_id), print_reg_name(other_vreg->class, other_vreg->assigned), printf(") is a good eviction! %f\n", cost));
 
                                             best_spill = other_vreg_id;
                                             best_cost  = cost;
                                         } else {
-                                            // TB_OPTDEBUG(REGALLOC)(printf("#     %%%u (", gvn), print_reg_name(other_vreg->class, other_vreg->assigned), printf(") is a bad eviction! %f\n", score));
+                                            TB_OPTDEBUG(REGALLOC5)(printf("#     %%%u V%u (", gvn, other_vreg_id), print_reg_name(other_vreg->class, other_vreg->assigned), printf(") is a bad eviction! %f\n", cost));
                                         }
                                     }
                                 }
 
-                                TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mSPILLING V%u (CLOBBERED BY %%%u)\x1b[0m\n", ctx->vreg_map[in_use], n->gvn));
+                                TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mSPILLING V%u FOR %%%u (CLOBBERED BY %%%u)\x1b[0m\n", best_spill, in_use, n->gvn));
 
                                 if (best_spill != in_use_vreg_id && !set_get(&ra->been_spilled, best_spill)) {
                                     set_put(&ra->been_spilled, best_spill);
@@ -1967,34 +1990,6 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                                     SplitDecision s = { .target = in_use_vreg_id, .clobber = kills[k] };
                                     dyn_array_put(ra->splits, s);
                                 }
-
-                                #if 0
-                                TB_Node* leader = rogers_pick_leader(ctx, ra, in_use_n);
-                                if (!set_get(&ra->been_spilled, leader->gvn)) {
-                                    TB_Node* split_around_guy = best_spill != leader->gvn ? ra->gvn2node[best_spill] : n;
-
-                                    SplitDecision s = { 0 };
-                                    s.target = leader;
-                                    s.failed = split_around_guy;
-                                    s.clobber = kills[k];
-                                    TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mGONNA SPLIT %%%u AROUND %%%u\x1b[0m\n", s.target->gvn, s.failed->gvn));
-
-                                    set_put(&ra->been_spilled, leader->gvn);
-                                    dyn_array_put(ra->splits, s);
-
-                                    if (best_spill != leader->gvn) {
-                                        // we're gonna evict someone
-                                        s.target = split_around_guy;
-                                        s.failed = n;
-                                        TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mGONNA SPILL %%%u TO AVOID CLOBBERING %%%u\x1b[0m\n", s.target->gvn, s.failed->gvn));
-
-                                        if (!set_get(&ra->been_spilled, s.target->gvn)) {
-                                            set_put(&ra->been_spilled, s.target->gvn);
-                                            dyn_array_put(ra->splits, s);
-                                        }
-                                    }
-                                }
-                                #endif
                             }
                         }
 

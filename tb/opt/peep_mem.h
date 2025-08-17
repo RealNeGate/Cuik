@@ -2,6 +2,14 @@
 enum { MEM_REF_MAX_INDICES = 2 };
 
 typedef struct {
+    TB_Node* base;
+    int64_t stride;
+
+    int32_t offset;
+    int32_t size;
+} ArrayAccess;
+
+typedef struct {
     TB_Node* mem;
     TB_Node* base;
     int32_t offset;
@@ -11,6 +19,45 @@ typedef struct {
     TB_Node* index[MEM_REF_MAX_INDICES];
     int32_t stride[MEM_REF_MAX_INDICES];
 } MemRef;
+
+static ArrayAccess compute_array_access(TB_Function* f, TB_Node* mem) {
+    ArrayAccess r = { mem->inputs[2] };
+
+    if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_ICONST) {
+        int64_t offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
+        if (offset == (int32_t) offset) {
+            r.base = r.base->inputs[1];
+            r.offset = offset;
+        }
+    }
+
+    if (r.base->type == TB_PHI && cfg_is_natural_loop(r.base->inputs[0])) {
+        TB_Node* step = r.base->inputs[2];
+        if (step->type == TB_PTR_OFFSET && step->inputs[2]->type == TB_ICONST) {
+            r.base = r.base->inputs[1];
+            r.stride = TB_NODE_GET_EXTRA_T(step->inputs[2], TB_NodeInt)->value;
+        }
+    } else if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_MUL && r.base->inputs[2]->inputs[2]->type == TB_ICONST) {
+        TB_Node* step = r.base->inputs[2]->inputs[2];
+        r.base = r.base->inputs[1];
+        r.stride = TB_NODE_GET_EXTRA_T(step, TB_NodeInt)->value;
+    } else if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_SHL && r.base->inputs[2]->inputs[2]->type == TB_ICONST) {
+        TB_Node* step = r.base->inputs[2]->inputs[2];
+        r.base = r.base->inputs[1];
+        r.stride = 1ull << TB_NODE_GET_EXTRA_T(step, TB_NodeInt)->value;
+    }
+
+    if (mem->type == TB_LOAD) {
+        r.size = tb_data_type_byte_size(f->super.module, mem->dt.type);
+    } else {
+        r.size = tb_data_type_byte_size(f->super.module, mem->inputs[3]->dt.type);
+    }
+    return r;
+}
+
+static void dump_array_access(ArrayAccess a) {
+    printf("%%%u [X*%"PRId64" + %d, %d]\n", a.base->gvn, a.stride, a.offset, a.size);
+}
 
 static MemRef compute_mem_ref(TB_Function* f, TB_Node* mem) {
     MemRef r = { mem, mem->inputs[2] };
@@ -255,12 +302,34 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
         int curr_bytes = tb_data_type_byte_size(f->super.module, n->dt.type);
         KnownPointer curr_ptr = known_pointer(addr);
 
-        if (no_alias_with(f->super.module, curr_ptr, curr_bytes, mem, mem->inputs[3]->dt)) {
+        /* if (no_alias_with(f->super.module, curr_ptr, curr_bytes, mem, mem->inputs[3]->dt)) {
             set_input(f, n, mem->inputs[1], 1);
 
             // mark potential anti-deps
             mark_node_n_users(f, mem);
             return n;
+        } */
+
+        ArrayAccess A = compute_array_access(f, n);
+        ArrayAccess B = compute_array_access(f, n->inputs[1]);
+
+        if (A.base == B.base && A.stride == B.stride) {
+            int64_t A_limit = A.offset+A.size;
+            int64_t B_limit = B.offset+B.size;
+            if (
+                A.offset > 0 && A_limit <= A.stride &&
+                B.offset > 0 && B_limit <= B.stride
+            ) {
+                if (!(B.offset < A_limit && A.offset < B_limit)) {
+                    dump_array_access(A);
+                    dump_array_access(B);
+
+                    set_input(f, n, mem->inputs[1], 1);
+                    // mark potential anti-deps
+                    mark_node_n_users(f, mem);
+                    return n;
+                }
+            }
         }
     }
 

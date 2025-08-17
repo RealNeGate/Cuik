@@ -243,7 +243,6 @@ static void print_help(void) {
         for (int j = len; j < round_up; j++) printf(" ");
         printf("%s\n", options[i].desc);
     }
-    __debugbreak();
 
     /*size_t split = 24;
     for (int i = 1; i < ARG_DESC_COUNT; i++) {

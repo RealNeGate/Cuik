@@ -663,7 +663,9 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
                     continue;
                 }
 
-                if (j >= ra->hrp[bb_id].start[class] && j <= ra->hrp[bb_id].end[class]) {
+                if (j == ra->hrp[bb_id].start[class]) { // && j <= ra->hrp[bb_id].end[class]) {
+                    TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: %%%u: entered HRP region\n", bb_id, n->gvn));
+
                     FOR_N(spill, 0, num_spills) {
                         TB_Node* def = bb_defs[spill];
                         if (((class2vreg[class] & W) >> spill) & 1) {
@@ -814,10 +816,23 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
 
                     TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%d: def %%%u\n", bb_id, spill, n->gvn));
 
+                    bool should_spill_immediately = (spill_aggro >> spill) & 1;
+                    int class = splitter.reload_mask[spill]->class;
+                    if (j >= ra->hrp[bb_id].start[class] && j <= ra->hrp[bb_id].end[class]) {
+                        should_spill_immediately = true;
+                    }
+
+                    // if the value is coalesced with the node right below, we'd rather
+                    // spill after such a chain.
+                    if (j+1 < aarray_length(bb->items) && ctx->vreg_map[bb->items[j+1]->gvn] == dst_vreg) {
+                        printf("SKIPP!! %d\n", spill);
+                        should_spill_immediately = false;
+                    }
+
                     // spill immediately
-                    if ((spill_aggro >> spill) & 1) {
+                    if (should_spill_immediately) {
                         if (!can_remat(ctx, n)) {
-                            size_t t = j - 1;
+                            size_t t = j+1;
                             bb_defs[spill] = insert_spill(ctx, ra, &splitter, bb, n, spill, &t);
                             j += t <= j;
                         } else if (n->type == TB_MACH_COPY && !reg_mask_is_stack(TB_NODE_GET_EXTRA_T(n, TB_NodeMachCopy)->use)) {
