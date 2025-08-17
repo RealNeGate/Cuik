@@ -367,6 +367,7 @@ bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);
 bool cfg_is_terminator(TB_Node* n);
 bool cfg_is_endpoint(TB_Node* n);
+bool tb_node_is_compare(TB_Node* n);
 
 // debug server
 void dbg_submit_event(TB_Function* f, const char* desc, ...);

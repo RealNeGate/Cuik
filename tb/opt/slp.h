@@ -527,6 +527,52 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         TB_OPTDEBUG(SLP)(printf("\n"));
     }
 
+    #if 0
+    // regardless of the SLP vectorized completing the rest of the work, we can split the stores
+    dyn_array_for(i, schedule) {
+        VectorOp* op = schedule[i];
+        if (op->ops[0]->type != TB_STORE || op->width <= 1) {
+            continue;
+        }
+
+        int loads_in_between = 0;
+        FOR_N(i, 0, op->width) {
+            FOR_USERS(u, op->ops[i]) {
+                if (tb_node_mem_in(USERN(u)) && nl_table_get(&ops, USERN(u)) != op) {
+                    loads_in_between++;
+                }
+            }
+        }
+
+        if (loads_in_between > 0) {
+            continue;
+        }
+
+        TB_Node* split = tb_alloc_node(f, TB_SPLITMEM, TB_TYPE_MEMORY, 2, 0);
+        set_input(f, split, op->ops[0]->inputs[0], 0);
+        set_input(f, split, op->ops[0]->inputs[1], 1);
+
+        TB_Node* merge = tb_alloc_node(f, TB_MERGEMEM, TB_TYPE_MEMORY, 2 + op->width, 0);
+        set_input(f, merge, op->ops[0]->inputs[0], 0);
+        set_input(f, merge, split, 1);
+
+        FOR_N(i, 0, op->width) {
+            // move all the loads up to the split
+            // subsume_node2(f, op->ops[i], );
+
+            set_input(f, op->ops[i], split, 1);
+            set_input(f, merge, op->ops[i], 2+i);
+
+            mark_node(f, op->ops[i]);
+        }
+        mark_node(f, split);
+        mark_node(f, merge);
+
+        tb_print_dumb(f);
+        __debugbreak();
+    }
+    #endif
+
     size_t i = dyn_array_length(schedule);
     while (i--) {
         VectorOp* op = schedule[i];

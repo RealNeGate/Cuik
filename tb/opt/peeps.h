@@ -172,6 +172,7 @@ bool cfg_is_terminator(TB_Node* n)    { return cfg_flags(n) & NODE_TERMINATOR; }
 bool cfg_is_endpoint(TB_Node* n)      { return cfg_flags(n) & NODE_END; }
 bool tb_node_is_safepoint(TB_Node* n) { return cfg_flags(n) & NODE_SAFEPOINT; }
 bool tb_node_has_mem_out(TB_Node* n)  { return cfg_flags(n) & NODE_MEMORY_OUT; }
+bool tb_node_is_compare(TB_Node* n)   { return n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE; }
 
 bool tb_node_mem_read_only(TB_Node* n) {
     uint32_t f = cfg_flags(n);

@@ -10,6 +10,10 @@
 
 static void node_add_tmps(Ctx* restrict ctx, TB_Node* n);
 
+// Machine-level peepholes happen once we're emitting ops, you can prune or edit the graph while
+// that's going on, if this function returns true we skip the node we're on.
+static bool node_peephole(Ctx* restrict ctx, TB_Node* n, TB_BasicBlock* bb, int i);
+
 // RA constraints:
 //   TODO
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
@@ -677,6 +681,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 if (!is_proj(n) && n->user_count == 0) {
                     TB_OPTDEBUG(ISEL3)(printf(" => \x1b[31mKILL\x1b[0m\n"));
                     worklist_push(ws, n);
+                    tb__gvn_remove(f, n);
                     continue;
                 }
 
@@ -1076,6 +1081,11 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                 // projections cannot emit code
                 if (is_proj(n) || cfg_is_region(n)) {
+                    continue;
+                }
+
+                // skip nodes which were peephole'd away
+                if (node_peephole(&ctx, n, bb, i)) {
                     continue;
                 }
 

@@ -388,8 +388,25 @@ static TB_Node* ideal_ptr_offset(TB_Function* f, TB_Node* n) {
     TB_Node* offset = n->inputs[2];
 
     // reassociate:
+    //   off(a, b + CON) => off(off(a, b), CON)
+    if (offset->type == TB_ADD && offset->inputs[2]->type == TB_ICONST) {
+        TB_Node* lhs = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
+        set_input(f, lhs, base,              1);
+        set_input(f, lhs, offset->inputs[1], 2);
+        mark_node(f, lhs);
+
+        // give it a good type to avoid monotonicity problems
+        Lattice* lhs_type = value_of(f, lhs);
+        latuni_set(f, lhs, lhs_type);
+
+        set_input(f, n, base->inputs[1], 1);
+        set_input(f, n, lhs,             2);
+        return n;
+    }
+
+    // reassociate:
     //   off(off(a, b), c) => off(a, b + c)
-    if (base->type == TB_PTR_OFFSET) {
+    if (base->type == TB_PTR_OFFSET && offset->type != TB_ICONST) {
         TB_Node* rhs = tb_alloc_node(f, TB_ADD, offset->dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, rhs, base->inputs[2], 1);
         set_input(f, rhs, offset,          2);

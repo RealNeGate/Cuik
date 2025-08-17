@@ -368,26 +368,6 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
         leaders[i] = to_spill->n;
     }
 
-    #if TB_OPTDEBUG_REGSPLIT
-    printf("== TO BE SPILLED ==\n");
-    FOR_N(i, 0, num_spills) {
-        uint32_t vreg_id = ra->splits[i].target;
-        double cost = rogers_get_spill_cost(ctx, ra, &ctx->vregs[vreg_id]);
-
-        printf("  V%-5u %f\n", vreg_id, cost);
-
-        size_t cnt;
-        TB_Node** arr = coalesce_set_array(ctx, ra, &leaders[i], &cnt);
-        FOR_N(j, 0, cnt) {
-            TB_Node* n = arr[j];
-
-            printf("  * ");
-            ctx->print_pretty(ctx, n);
-            printf("\n");
-        }
-    }
-    #endif
-
     // [def_i*num_spills + spill_i]
     TB_Node** defs = arena_zalloc(ra->arena, num_spills * ctx->bb_count * sizeof(TB_Node*));
     TB_Node** phis = arena_zalloc(ra->arena, num_spills * ctx->bb_count * sizeof(TB_Node*));
@@ -449,6 +429,30 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
             }
         }
     }
+
+    #if TB_OPTDEBUG_REGSPLIT
+    printf("== TO BE SPILLED ==\n");
+    FOR_N(i, 0, num_spills) {
+        uint32_t vreg_id = ra->splits[i].target;
+        double cost = rogers_get_spill_cost(ctx, ra, &ctx->vregs[vreg_id]);
+
+        printf("  V%-5u %f", vreg_id, cost);
+        if ((spill_aggro >> i) & 1) {
+            printf(" (SPILL AGGRO)");
+        }
+        printf("\n");
+
+        size_t cnt;
+        TB_Node** arr = coalesce_set_array(ctx, ra, &leaders[i], &cnt);
+        FOR_N(j, 0, cnt) {
+            TB_Node* n = arr[j];
+
+            printf("  * ");
+            ctx->print_pretty(ctx, n);
+            printf("\n");
+        }
+    }
+    #endif
 
     #if TB_OPTDEBUG_REGSPLIT
     printf("== DEF-USE INFO ==\n");

@@ -189,6 +189,38 @@ static TB_Node* redundant_and_63(TB_Node* n) {
     return NULL;
 }
 
+/* static TB_Node* isel_op_jcc(Ctx* ctx, TB_Function* f, TB_Node* n) {
+    if (n->inputs[1]->type != TB_ADD) {
+        return NULL;
+    }
+
+    int used_as_data = n->inputs[1]->user_count - 1;
+    if (used_as_data == 0) {
+        // we can use the normal patterns here
+        return NULL;
+    }
+
+    // we want the results of the operation, not just the FLAGS
+    TB_Node* op = tb_alloc_node(f, x86_add, TB_TYPE_PTR, 4, sizeof(X86MemOp));
+    set_input(f, op, n->inputs[1]->inputs[1], 2);
+    if (fits_into_int32(n->inputs[1]->dt, n->inputs[1]->inputs[2])) {
+        TB_NODE_SET_EXTRA(op, X86MemOp, .flags = OP_IMMEDIATE, .imm = as_int32(n->inputs[1]->inputs[2]));
+    } else {
+        set_input(f, op, n->inputs[1]->inputs[1], 3);
+        TB_NODE_SET_EXTRA(op, X86MemOp, .imm = as_int32(n->inputs[1]->inputs[2]));
+    }
+
+    TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+    set_input(f, proj, op, 0);
+    TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = 0, .def = ctx->normie_mask[REG_CLASS_FLAGS]);
+
+    TB_Node* jcc = tb_alloc_node(f, x86_jcc, TB_TYPE_TUPLE, 2, sizeof(X86MemOp));
+    set_input(f, jcc, n->inputs[0], 0);
+    set_input(f, jcc, proj,         1);
+    TB_NODE_SET_EXTRA(jcc, X86MemOp, .cond = NE);
+    return jcc;
+} */
+
 static TB_Node* isel_peep_shift(Ctx* ctx, TB_Function* f, TB_Node* n) {
     /*X86MemOp* op = TB_NODE_GET_EXTRA(n);
     if (op->mode != MODE_REG && n->dt.type == TB_TAG_I64) {
@@ -544,7 +576,11 @@ static void print_extra(OutStream* s, TB_Node* n) {
     static const char* modes[] = { "reg", "ld", "st" };
 
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
-    s_writef(s, "scale=%d, disp=%d, mode=%s", 1u<<op->scale, op->disp, modes[op->mode]);
+    s_writef(s, "mode=%s", modes[op->mode]);
+    if (op->mode) {
+        s_writef(s, ", scale=%d, disp=%d", 1u<<op->scale, op->disp, modes[op->mode]);
+    }
+
     if (op->flags & OP_IMMEDIATE) {
         s_writef(s, ", imm=%d", op->imm);
     }
@@ -1743,6 +1779,28 @@ static Val parse_cisc_operand(Ctx* restrict ctx, TB_Node* n, Val* rx, X86MemOp* 
     return rm;
 }
 
+static bool node_peephole(Ctx* restrict ctx, TB_Node* n, TB_BasicBlock* bb, int i) {
+    // add  RAX, 1
+    //   flags = PROJ
+    // test RAX, RAX # we can remove it
+    // jne  LOOP
+    if (n->type == x86_test && n->user_count == 1 && n->inputs[2] == n->inputs[3] && n->inputs[2]->type == x86_add) {
+        TB_Node* jcc = USERN(&n->users[0]);
+        if (jcc->type != x86_jcc) { return false; }
+        X86MemOp* op = TB_NODE_GET_EXTRA(jcc);
+        if (op->cond != NE && op->cond != E) { return false; }
+
+        TB_ASSERT(i > 0);
+        TB_Node* flags = bb->items[i - 1];
+        if (flags->type == TB_MACH_PROJ && flags->inputs[0] == n->inputs[2]) {
+            set_input(ctx->f, jcc, flags, 1);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
     TB_ASSERT(bundle->count == 1);
     TB_Node* n = bundle->arr[0];
@@ -2843,8 +2901,6 @@ int max_pack_width_for_op(TB_Function* f, TB_DataType dt, TB_Node* n) {
 
     int i = 0;
     if (f->features.x64 & TB_FEATURE_X64_AVX) {
-        i = 2;
-    } else if (f->features.x64 & TB_FEATURE_X64_SSE2) {
         i = 1;
     }
 
