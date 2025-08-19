@@ -321,8 +321,8 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
                 B.offset > 0 && B_limit <= B.stride
             ) {
                 if (!(B.offset < A_limit && A.offset < B_limit)) {
-                    dump_array_access(A);
-                    dump_array_access(B);
+                    // dump_array_access(A);
+                    // dump_array_access(B);
 
                     set_input(f, n, mem->inputs[1], 1);
                     // mark potential anti-deps

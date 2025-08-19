@@ -577,7 +577,7 @@ static void print_extra(OutStream* s, TB_Node* n) {
 
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
     s_writef(s, "mode=%s", modes[op->mode]);
-    if (op->mode) {
+    if (op->mode || n->type == x86_MEMORY) {
         s_writef(s, ", scale=%d, disp=%d", 1u<<op->scale, op->disp, modes[op->mode]);
     }
 

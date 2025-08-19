@@ -364,6 +364,8 @@ function write_node(strs, ids, n)
         strs[#strs + 1] = string.format("    k%d->input_count = k%d_i;", ids[n], ids[n])
     end
 
+    -- apply GVN
+    strs[#strs + 1] = string.format("    k%d = tb_opt_gvn_node(f, k%d);", ids[n], ids[n])
     strs[#strs + 1] = ""
 end
 
@@ -667,7 +669,7 @@ else
 static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n) {
     TB_Node* new_n = tb_alloc_node(f, x86_MEMORY, TB_TYPE_VOID, 1, sizeof(X86MemOp));
     set_input(f, new_n, n, 0);
-    return new_n;
+    return tb_opt_gvn_node(f, new_n);
 }
 
 ]])

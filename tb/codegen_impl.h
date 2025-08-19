@@ -360,7 +360,7 @@ static void indent(int depth) {
 }
 
 // root is at depth=1
-static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws, int depth) {
+static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int depth) {
     TB_ASSERT(n->type != TB_PHI);
     if (depth == 1 && mach_is_subpat[n->type]) {
         return NULL;
@@ -378,79 +378,85 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
         // fetch current edge
         TB_Node* in = curr ? (index < curr->input_count ? curr->inputs[index] : NULL) : n;
         TB_NodeTypeEnum in_type = in ? in->type : TB_NULL;
-        if (in) {
-            TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
 
-            // either matches against COND or MEMORY
+        uint32_t next = node_grammar_get(state<<16 | (in_type+1));
+        // if there's no specific match
+        if (next == 0) {
+            // try general operand matching and if not, we do the ANY case.
             int wants_operand = 0;
-            if (node_grammar_get(state << 16 | (256+1)) > 0) {
-                wants_operand = 1; // MEMORY
-            } else if (node_grammar_get(state << 16 | (257+1)) > 0) {
-                wants_operand = 2; // COND
-            }
+            if (in) {
+                // either matches against COND or MEMORY
+                if (node_grammar_get(state << 16 | (256+1)) > 0) {
+                    wants_operand = 1; // MEMORY
+                } else if (node_grammar_get(state << 16 | (257+1)) > 0) {
+                    wants_operand = 2; // COND
+                }
 
-            if (in->type != n->type && wants_operand) {
-                if (mach_is_operand[in->type]) {
-                    bool pushed_already = worklist_test_n_set(walker_ws, in);
+                if (wants_operand ) {
+                    if (depth == 1 && mach_is_operand[in->type]) {
+                        TB_OPTDEBUG(ISEL2)(printf("\n"));
 
-                    TB_OPTDEBUG(ISEL2)(printf("\n"));
-                    TB_Node* new_in = node_isel_raw(ctx, f, in, walker_ws, depth + 1);
-                    if (new_in && new_in != in) {
-                        // we can GVN machine nodes :)
-                        if (!mach_is_subpat[in->type]) {
-                            subsume_node(f, in, new_in);
-                        } else {
-                            // tb__gvn_remove(f, curr);
+                        TB_Node* new_in = node_isel_raw(ctx, f, in, depth + 1);
+                        if (new_in && new_in != in) {
+                            // we can GVN machine nodes :)
+                            /* if (!mach_is_subpat[in->type]) {
+                                subsume_node(f, in, new_in);
+                            } else {
+                                // tb__gvn_remove(f, curr);
+                            } */
+
                             set_input(f, curr, new_in, index);
+                            worklist_push(f->worklist, new_in);
+
+                            in = new_in;
+                            in_type = in ? in->type : TB_NULL;
                         }
 
-                        // don't walk the replacement
-                        worklist_push(walker_ws, new_in);
-
-                        in = new_in;
-                        in_type = in ? in->type : TB_NULL;
-                    } else if (!pushed_already) {
-                        // node failed but hasn't been processed, treat it as a node of its own
-                        dyn_array_put(walker_ws->items, in);
-                    }
-
-                    #if TB_OPTDEBUG_ISEL2
-                    indent(depth);
-                    printf("    => ");
-                    tb_print_dumb_node(NULL, in);
-                    printf("\n");
-                    #endif
-                } else {
-                    uint32_t next = node_grammar_get(state << 16 | (in_type+1));
-                    if (next == 0) { next = node_grammar_get(state<<16); }
-
-                    // if there's no non-memory match, we'll take it as a last resort
-                    if (wants_operand == 1 && next == 0) {
-                        TB_Node* new_in = mach_dfa_bare_memory(ctx, f, in);
-                        set_input(f, curr, new_in, index);
-
-                        in = new_in;
-                        in_type = in ? in->type : TB_NULL;
-                        TB_ASSERT(in_type == 256);
-
                         #if TB_OPTDEBUG_ISEL2
-                        printf("\n    %%%u treated as MEMORY node\n    ", in->gvn);
-                        tb_print_dumb_node(NULL, new_in);
+                        indent(depth);
+                        printf("    => ");
+                        tb_print_dumb_node(NULL, in);
                         printf("\n");
                         #endif
+                    } else if (depth != 1) {
+                        uint32_t next = node_grammar_get(state << 16 | (in_type+1));
+                        if (next == 0) { next = node_grammar_get(state<<16); }
 
-                        TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
+                        // if there's no non-memory match, we'll take it as a last resort
+                        if (wants_operand == 1 && next == 0) {
+                            TB_Node* new_in = mach_dfa_bare_memory(ctx, f, in);
+                            set_input(f, curr, new_in, index);
+
+                            in = new_in;
+                            in_type = in ? in->type : TB_NULL;
+                            TB_ASSERT(in_type == 256);
+
+                            #if TB_OPTDEBUG_ISEL2
+                            printf("\n    %%%u treated as MEMORY node\n    ", in->gvn);
+                            tb_print_dumb_node(NULL, new_in);
+                            printf("\n");
+                            #endif
+
+                            TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
+                        }
                     }
                 }
             }
-        } else {
-            TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(      %-16s, %3d): ", "___", state));
+
+            next = node_grammar_get(state<<16 | (in_type+1));
+            // no match? try any case now
+            if (next == 0) {
+                next = node_grammar_get(state<<16);
+            }
         }
-        uint32_t next = node_grammar_get(state<<16 | (in_type+1));
-        // if there's no specific match, try general
-        if (next == 0) { next = node_grammar_get(state<<16); }
+
+        if (in_type != TB_NULL) {
+            TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
+        } else {
+            TB_OPTDEBUG(ISEL2)(indent(depth), printf("  step(%-22s, %3d): ", "___", state));
+        }
+
         // if there's no match, try to resolve the input then go
-        TB_OPTDEBUG(ISEL2)(indent(depth));
         if (next == 0) {
             TB_OPTDEBUG(ISEL2)(printf("failed!\n"));
             return NULL;
@@ -486,10 +492,11 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
     size_t old_node_count = f->node_count;
     TB_Node* k = mach_dfa_accept(ctx, f, n, state);
 
-    if (k && k->gvn >= old_node_count) {
+    /* if (k && k->gvn >= old_node_count) {
         // we can GVN machine nodes :)
         k = tb_opt_gvn_node(f, k);
-    }
+    } */
+
     return k;
 }
 
@@ -640,10 +647,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         TB_ArenaSavepoint pins_sp = tb_arena_save(&f->tmp_arena);
         ArenaArray(TB_Node*) pins = aarray_create(&f->tmp_arena, TB_Node*, (f->node_count / 32) + 16);
 
-        TB_Worklist walker_ws = { 0 };
-        worklist_alloc(&walker_ws, f->node_count);
-
-        ctx.walker_ws = &walker_ws;
+        Set visited = set_create_in_arena(&f->tmp_arena, f->node_count);
 
         // find all nodes
         worklist_clear(ws);
@@ -652,6 +656,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             TB_Node* n = ws->items[i];
             if (tb_node_is_pinned(n) && !is_proj(n)) {
                 aarray_push(pins, n);
+                set_put(&visited, n->gvn);
             }
 
             FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
@@ -667,83 +672,124 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             }
         }
 
-        // greedy instruction selector does bottom-up rewrites from the pinned nodes
+        ArenaArray(NodeCursor) walker = aarray_create(&f->tmp_arena, NodeCursor, 128);
+
+        // compute topological sort of sub-DAGs
         aarray_for(i, pins) {
             TB_Node* pin_n = pins[i];
 
-            TB_OPTDEBUG(ISEL3)(printf("PIN    t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
-            worklist_push(&walker_ws, pin_n);
+            TB_OPTDEBUG(ISEL3)(printf("PIN  t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
+            aarray_push(walker, (NodeCursor){ pin_n, pin_n->input_count });
 
-            while (dyn_array_length(walker_ws.items) > 0) {
-                TB_Node* n = dyn_array_pop(walker_ws.items);
-                TB_OPTDEBUG(ISEL3)(printf("ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+            while (aarray_length(walker)) {
+                NodeCursor c = walker[aarray_length(walker) - 1];
 
-                if (!is_proj(n) && n->user_count == 0) {
-                    TB_OPTDEBUG(ISEL3)(printf(" => \x1b[31mKILL\x1b[0m\n"));
-                    worklist_push(ws, n);
-                    tb__gvn_remove(f, n);
-                    continue;
-                }
-
-                // memory out nodes are *notorious* for having unused loads, we wanna prune these
-                if (n->dt.type == TB_TAG_MEMORY) {
-                    FOR_USERS(u, n) {
-                        if (USERN(u)->user_count == 0) {
-                            worklist_push(ws, USERN(u));
-                        }
+                bool ready = true;
+                while (c.index > 0) {
+                    TB_Node* in = c.n->inputs[--c.index];
+                    if (in == NULL) { continue; }
+                    if (!set_get(&visited, in->gvn)) {
+                        set_put(&visited, in->gvn);
+                        aarray_push(walker, (NodeCursor){ in, in->input_count });
+                        ready = false;
+                        break;
                     }
                 }
 
-                // replace with machine op
-                TB_OPTDEBUG(ISEL3)(printf("\n"));
-                if (n->type == TB_PHI) {
-                    worklist_test_n_set(&walker_ws, n);
-                } else {
-                    tb__gvn_remove(f, n);
+                if (ready) {
+                    // push to ordered list
+                    worklist_push(ws, c.n);
+                    aarray_pop(walker);
 
-                    bool progress;
-                    do {
-                        TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws, 1);
-                        progress = k != NULL;
-
-                        if (k) {
-                            TB_OPTDEBUG(ISEL3)(printf("  => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
-
-                            if (k != n) {
-                                subsume_node(f, n, k);
-                            }
-
-                            // don't walk the replacement
-                            worklist_test_n_set(&walker_ws, k);
-                            n = k;
-                        }
-                    } while (progress);
-                }
-                TB_OPTDEBUG(ISEL2)(printf("\n"));
-
-                node_add_tmps(&ctx, n);
-
-                FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
-                    worklist_push(&walker_ws, n->inputs[i]);
+                    TB_OPTDEBUG(ISEL3)(printf("TOPO t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, c.n), printf("\n"));
                 }
             }
         }
-        worklist_free(&walker_ws);
+
+        set_clear(&visited);
+        aarray_clear(walker);
+
+        // as we do instruction selection, the graph will have small trees introduced, there's
+        // no need to check patterns for anything by the root of the tree.
+        while (worklist_count(ws)) {
+            int start = worklist_count(ws);
+            TB_Node* n = ws->items[start - 1];
+            if (n->type == TB_PHI) {
+                worklist_pop(ws);
+                continue;
+            } else if (n->user_count == 0 && !is_proj(n)) {
+                worklist_pop(ws);
+
+                tb__gvn_remove(f, n);
+                tb_kill_node(f, n);
+                continue;
+            }
+
+            TB_OPTDEBUG(ISEL3)(printf("ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+            tb__gvn_remove(f, n);
+            bool progress;
+            do {
+                TB_Node* k = node_isel_raw(&ctx, f, n, 1);
+                progress = k != NULL;
+
+                if (k) {
+                    TB_OPTDEBUG(ISEL3)(printf(" => "), tb_print_dumb_node(NULL, k));
+                    if (k != n) {
+                        subsume_node(f, n, k);
+                    }
+                    n = k;
+                }
+            } while (progress);
+
+            n = tb_opt_gvn_node(f, n);
+
+            TB_OPTDEBUG(ISEL3)(printf("\n"));
+
+            // kill any nodes on the right side of the node
+            while (worklist_count(ws) >= start) {
+                TB_Node* k = worklist_pop(ws);
+                if (k->user_count == 0 && !is_proj(k)) {
+                    TB_OPTDEBUG(ISEL3)(printf("KILL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, k), printf("\n"));
+                    tb__gvn_remove(f, k);
+                    tb_kill_node(f, k);
+                }
+            }
+
+            node_add_tmps(&ctx, n);
+        }
 
         if (ctx.frame_ptr->user_count == 0) {
             tb_kill_node(f, ctx.frame_ptr);
             ctx.frame_ptr = NULL;
         }
 
-        // dead node elim
-        CUIK_TIMED_BLOCK("dead node elim") {
+        /*CUIK_TIMED_BLOCK("GVN & DCE") {
             for (TB_Node* n; n = worklist_pop(ws), n;) {
+                TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
                 if (n->user_count == 0 && !is_proj(n)) {
-                    TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
+                    TB_OPTDEBUG(ISEL3)(printf(" => \x1b[31mKILL\x1b[0m"));
                     tb_kill_node(f, n);
+                } else {
+                    TB_Node* k = tb_opt_gvn_node(f, n);
+                    if (k && k != n) {
+                        TB_OPTDEBUG(ISEL3)(printf(" => "), tb_print_dumb_node(NULL, k));
+
+                        // invalidate the GVN on these nodes
+                        FOR_USERS(u, n) {
+                            tb__gvn_remove(f, USERN(u));
+                            worklist_push(ws, USERN(u));
+                        }
+
+                        subsume_node(f, n, k);
+                    } else {
+                        // replace the operand with a proper materialized form
+                        if (mach_is_operand[n->type]) {
+                        }
+                    }
                 }
+                TB_OPTDEBUG(ISEL3)(printf("\n"));
             }
-        }
+        }*/
 
         tb_arena_restore(&f->tmp_arena, pins_sp);
         log_phase_end(f, og_size, "isel");

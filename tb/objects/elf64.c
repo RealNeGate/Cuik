@@ -195,7 +195,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
     // write relocation arrays
     size_t local_sym_count = local_symtab.count / sizeof(TB_Elf64_Sym);
     dyn_array_for(i, sections) if (sections[i].reloc_count > 0) {
-        assert(sections[i].reloc_pos == write_pos);
+        TB_ASSERT(sections[i].reloc_pos == write_pos);
         TB_Elf64_Rela* relocs = (TB_Elf64_Rela*) &output[write_pos];
         DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
         DynArray(TB_Global*) globals = sections[i].globals;
@@ -236,10 +236,10 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
         write_pos += sections[i].reloc_count * sizeof(TB_Elf64_Rela);
     }
 
-    assert(write_pos == strtab.offset);
+    TB_ASSERT(write_pos == strtab.offset);
     WRITE(strtbl.data, strtbl.count);
 
-    assert(write_pos == symtab.offset);
+    TB_ASSERT(write_pos == symtab.offset);
     WRITE(local_symtab.data, local_symtab.count);
     WRITE(global_symtab.data, global_symtab.count);
 
@@ -283,6 +283,6 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
         WRITE(&sec, sizeof(sec));
     }
 
-    assert(write_pos == output_size);
+    TB_ASSERT(write_pos == output_size);
     return (TB_ExportBuffer){ .total = output_size, .head = chunk, .tail = chunk };
 }
