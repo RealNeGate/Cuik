@@ -672,7 +672,11 @@ void cuikpp_dump_tokens(TokenStream* s) {
             printf("L");
         }
 
-        printf("%*s", r.column - last_spot, "");
+        if (last_spot != r.column) {
+            printf(" ");
+            // printf("%*s", r.column - last_spot, "");
+        }
+
         printf("%.*s", (int) t->content.length, t->content.data);
         last_spot = r.column + t->content.length;
     }

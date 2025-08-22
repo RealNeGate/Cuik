@@ -247,7 +247,9 @@ Token lexer_read(Lexer* restrict l) {
     }
 
     // quit, we're done
-    if (__builtin_expect(*current == '\0', 0)) return (Token){ 0 };
+    if (__builtin_expect(*current == '\0', 0)) {
+        return (Token){ .content = { 0, current } };
+    }
 
     // eval DFA for token
     unsigned char* start = current;

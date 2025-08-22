@@ -1,6 +1,6 @@
 
 CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]) {
-    Cuik_IncludeDir d = { is_system, gimme_the_shtuffs(ctx, sizeof(Cuik_Path)) };
+    Cuik_IncludeDir d = { is_system, tb_arena_alloc(&ctx->tmp_arena, sizeof(Cuik_Path)) };
     cuik_path_set(d.path, dir);
 
     char last = d.path->data[d.path->length - 1];
@@ -13,7 +13,7 @@ CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const 
 }
 
 CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const char* fmt, ...) {
-    Cuik_IncludeDir d = { is_system, gimme_the_shtuffs(ctx, sizeof(Cuik_Path)) };
+    Cuik_IncludeDir d = { is_system, tb_arena_alloc(&ctx->tmp_arena, sizeof(Cuik_Path)) };
 
     va_list ap;
     va_start(ap, fmt);

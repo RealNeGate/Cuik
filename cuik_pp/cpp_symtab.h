@@ -41,7 +41,7 @@ void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
-    char* newkey = gimme_the_shtuffs(ctx, pad_len);
+    char* newkey = tb_arena_alloc(&ctx->tmp_arena, pad_len);
     memcpy(newkey, key, keylen);
 
     // Hash name, name doesn't include parenthesis part btw
@@ -59,7 +59,7 @@ void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen,
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
-    char* newkey = gimme_the_shtuffs(ctx, pad_len);
+    char* newkey = tb_arena_alloc(&ctx->tmp_arena, pad_len);
     memcpy(newkey, key, keylen);
 
     // Hash name, name doesn't include parenthesis part btw
@@ -67,10 +67,10 @@ void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen,
     while ((paren - newkey) < keylen && *paren != '(') paren++;
     size_t len = *paren == '(' ? paren - newkey : keylen;
 
-    char* newvalue;
+    unsigned char* newvalue;
     {
         pad_len = (vallen + 15) & ~15;
-        newvalue = gimme_the_shtuffs(ctx, pad_len);
+        newvalue = tb_arena_alloc(&ctx->tmp_arena, pad_len);
         memcpy(newvalue, value, vallen);
 
         size_t rem = pad_len - vallen;
@@ -78,7 +78,7 @@ void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen,
     }
 
     size_t i = insert_symtab(ctx, len, newkey);
-    ctx->macros.vals[i] = (MacroDef){ { vallen, (const unsigned char*) newvalue } };
+    ctx->macros.vals[i] = (MacroDef){ { vallen, newvalue } };
 }
 
 bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
