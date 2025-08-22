@@ -163,26 +163,30 @@ typedef struct InvokeCursor {
 
 static InvokeCursor advance(InvokeCursor c) {
     c.pos += 1;
-    if (c.pos == c.elem->end) {
+    if (c.elem && c.pos == c.elem->end) {
         c.elem = c.elem->prev;
         c.pos = c.elem ? c.elem->curr : 0;
     }
     return c;
 }
 
-static bool invoke_eat(Cuik_CPP* restrict ctx, Lexer* in, InvokeCursor* c, TknType type) {
+static bool invoke_eat(Cuik_CPP* restrict ctx, Lexer* in, Token* out_t, InvokeCursor* c, TknType type) {
     InvokeCursor next = advance(*c);
     if (c->elem == NULL) {
+        if (in == NULL) {
+            return false;
+        }
+
         // read from lexer
         unsigned char* savepoint = in->current;
-        Token t = lexer_read(in);
-        if (t.type != type) {
+        *out_t = lexer_read(in);
+        if (out_t->type != type) {
             in->current = savepoint;
             return false;
         }
     } else {
-        Token t = ctx->tokens.list.tokens[c->pos];
-        if (t.type != type) {
+        *out_t = ctx->tokens.list.tokens[c->pos];
+        if (out_t->type != type) {
             return false;
         }
     }
@@ -243,20 +247,14 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
     int read_tail = read_head+1;
     ptrdiff_t dt = 0;
     if (*param_str == '(') {
-        // ignore this expansion if we're missing the opening paren
-        if (!invoke_eat(ctx, in, &cursor, '(')) {
-            if (out_read_tail) { *out_read_tail = read_tail; }
-            return 0;
-        }
-
-        // populate the token array with the
-
-        if (t.type != '(') {
-            if (out_read_tail) { *out_read_tail = read_tail; }
-            return 0;
-        }
-
         cursor = advance(cursor);
+
+        // ignore this expansion if we're missing the opening paren
+        Token arg_t;
+        if (!invoke_eat(ctx, in, &arg_t, &cursor, '(')) {
+            if (out_read_tail) { *out_read_tail = read_tail; }
+            return 0;
+        }
 
         // Construct substitution table
         Lexer param_lexer = {
@@ -264,21 +262,6 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
             .current = (unsigned char*) param_str + 1,
         };
 
-        int parens = 1;
-        // make sure the entire arg list is in the expanded array
-        while (parens && i < end_token) {
-            arg_t = read_one(ctx, in, &cursor);
-            if (arg_t.type == 0) { break; }
-            if (arg_t.type == '(') { parens++; }
-            if (arg_t.type == ')') { parens--; }
-        }
-        assert(arg_t.type == ')');
-
-        dt += dyn_array_length(ctx->tokens.list.tokens) - read_tail;
-        read_tail = dyn_array_length(ctx->tokens.list.tokens);
-        end_token = read_tail;
-
-        assert(parens == 0);
         args = aarray_create(&ctx->tmp_arena, MacroArg, 8);
 
         ////////////////////////////////
@@ -294,42 +277,88 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         // identifier-list:
         //   identifier
         //   identifier-list , identifier
-        arg_t = lexer_read(&param_lexer);
-        while (arg_t.type && arg_t.type != ')') {
+        //
+        Token param_t = lexer_read(&param_lexer);
+        while (param_t.type && param_t.type != ')') {
             // expect comma
             if (aarray_length(args)) {
-                if (arg_t.type != TOKEN_COMMA) {
+                if (param_t.type != TOKEN_COMMA) {
                     __debugbreak();
                 }
-                arg_t = lexer_read(&param_lexer);
+                param_t = lexer_read(&param_lexer);
             }
 
             // arg name
-            MacroArg a = { .key = arg_t.content };
+            MacroArg a = { .key = param_t.content };
             aarray_push(args, a);
-
-            arg_t = lexer_read(&param_lexer);
+            param_t = lexer_read(&param_lexer);
         }
-        assert(arg_t.type == ')');
+        assert(param_t.type == ')');
 
+        ////////////////////////////////
+        // Parse args
+        ////////////////////////////////
+        // scan the items in the top of the arg list right now
+        int arg_head = read_head+1;
+
+        int parens = -1;
+        if (arg_head < end_token) {
+            parens = 0;
+
+            DynArray(Token) tokens = ctx->tokens.list.tokens;
+            arg_t = tokens[arg_head++];
+            do {
+                if (arg_t.type == 0) { break; }
+                if (arg_t.type == '(') { parens++; }
+                if (arg_t.type == ')') { parens--; }
+                arg_t = tokens[arg_head++];
+            } while (arg_head <= end_token);
+            read_tail = arg_head - 1;
+        }
+
+        // if the expanded array didn't contain the entire arg list, we'll fill in the remaining bits
+        if (parens != 0) {
+            if (parens < 0) {
+                parens = 0;
+            }
+
+            for (;;) {
+                if (arg_t.type == 0) { break; }
+                if (arg_t.type == '(') { parens++; }
+                if (arg_t.type == ')') { parens--; }
+
+                push_token(ctx, arg_t);
+                if (parens == 0) {
+                    break;
+                }
+
+                arg_t = read_one(ctx, in, &cursor);
+            }
+
+            dt += dyn_array_length(ctx->tokens.list.tokens) - read_tail;
+            read_tail = dyn_array_length(ctx->tokens.list.tokens);
+            end_token = read_tail;
+        }
+        assert(parens == 0);
+
+        // token array is stable at the moment, let's cache the pointer
         DynArray(Token) tokens = ctx->tokens.list.tokens;
-        int arg_head = read_head+2;
+
+        arg_head = read_head+2;
         arg_t = tokens[arg_head++];
 
         int arg_c = 0;
-        while (arg_head <= end_token && arg_t.type != ')') {
+        while (arg_t.type && arg_t.type != ')') {
             // expect comma
             if (arg_c > 0) {
                 if (arg_t.type != TOKEN_COMMA) {
                     __debugbreak();
                 }
-
-                assert(arg_head < end_token);
                 arg_t = tokens[arg_head++];
             }
 
             MacroArg a = { .key = arg_t.content };
-            args[arg_c].token_start = arg_head-1;
+            args[arg_c].token_start = arg_head - 1;
             args[arg_c].val.data = arg_t.content.data;
 
             int parens = 0;
@@ -346,19 +375,16 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                     uint32_t pos = arg_t.location.raw & ((1u << SourceLoc_FilePosBits) - 1);
                     arg_t.location = encode_macro_loc(macro_id, pos);
                 }
-
-                assert(arg_head < end_token);
                 arg_t = tokens[arg_head++];
             }
             assert(parens == 0);
 
             args[arg_c].val.length = (arg_t.content.data - args[arg_c].val.data);
-            args[arg_c].token_end = arg_head-1;
+            args[arg_c].token_end = arg_head - 1;
             arg_c += 1;
         }
-        read_tail = arg_head;
-
         assert(arg_t.type == ')');
+
         args_to_expand = aarray_create(&ctx->tmp_arena, int, 8);
     }
 
@@ -494,7 +520,6 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                         local_end += kid_dt;
                         assert(end >= start);
 
-                        // these nodes are fully resolved at this point, don't walk them again
                         j = kid_read_tail + kid_dt;
                         continue;
                     } else {

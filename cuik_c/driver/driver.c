@@ -672,6 +672,12 @@ void cuikpp_dump_tokens(TokenStream* s) {
             printf("L");
         }
 
+        int macro_offset = 0;
+        if (t->location.raw & SourceLoc_IsMacro) {
+            macro_offset += t->location.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
+        }
+        r.column += macro_offset;
+
         if (last_spot != r.column) {
             printf(" ");
             // printf("%*s", r.column - last_spot, "");
