@@ -22,6 +22,7 @@ enum {
 
 typedef struct {
     uint32_t imm;
+    TB_Symbol* sym;
 } A64Op;
 
 #include "a64_gen.h"
@@ -89,7 +90,16 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) {
-    return 0;
+    switch (n->type) {
+        case a64_call:
+        case TB_CALL: {
+            int kill_count = 0;
+            kills[kill_count++] = intern_regmask2(ctx, REG_CLASS_GPR, false, LR);
+            return kill_count;
+        }
+        default:
+            return 0;
+    }
 }
 
 static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
@@ -105,6 +115,7 @@ static size_t extra_bytes(TB_Node* n) {
 }
 
 static uint32_t node_flags(TB_Node* n) {
+    if (n->type == a64_call) return NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT;
     return 0;
 }
 
@@ -214,10 +225,11 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     return intern_regmask2(ctx, type, false, i - 3);
                 }
             } else {
-                if (n->inputs[0]->type == TB_CALL) {
+                if (n->inputs[0]->type == TB_CALL || n->inputs[0]->type == a64_call) {
                     return intern_regmask2(ctx, REG_CLASS_GPR, false, 0);
                 }
             }
+            tb_todo();
         }
 
         case TB_MACH_FRAME_PTR:
@@ -304,15 +316,19 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         ////////////////////////////////
         // CONTROL + MEMORY
         ////////////////////////////////
+        case a64_call:
         case TB_CALL: {
             // (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
             if (ins) {
+                int ins_idx = 1;
                 // control
-                ins[1] = &TB_REG_EMPTY;
+                ins[ins_idx++] = &TB_REG_EMPTY;
                 // memory
-                ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+                ins[ins_idx++] = ctx->normie_mask[REG_CLASS_GPR];
                 // ptr
-                ins[3] = ctx->normie_mask[REG_CLASS_GPR];
+                if (n->type == TB_CALL) {
+                    ins[ins_idx++] = ctx->normie_mask[REG_CLASS_GPR];
+                }
                 // data
                 int ngrn = 0; // next gpr number
                 int nsrn = 0; // next fpr and simd number
@@ -321,7 +337,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 //?? stage B - pre-padding and extension of arguments
                 //!! TODO: composite types
                 // stage C - assignment of args to registers and stack
-                FOR_N(i, 4, n->input_count) {
+                FOR_N(i, ins_idx, n->input_count) {
                     int type = n->inputs[i]->dt.type;
                     bool is_single = type == TB_TAG_F32;
                     bool is_double = type == TB_TAG_F64;
@@ -411,6 +427,9 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         ////////////////////////////////
         // POINTERS
         ////////////////////////////////
+        case TB_LOCAL: {
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
         case TB_SYMBOL: {
             return ctx->normie_mask[REG_CLASS_GPR];
         }
@@ -733,29 +752,42 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         ////////////////////////////////
         // POINTERS
         ////////////////////////////////
-        // case TB_LOCAL:         // () & (Int, Int) -> Ptr
+        case TB_LOCAL: {          // () & (Int, Int) -> Ptr
+            TB_NodeLocal* l = TB_NODE_GET_EXTRA_T(n, TB_NodeLocal);
+            // l->stack_pos;
+            tb_todo();
+            break;
+        }
         case TB_SYMBOL: {         // () & case TB_Symbol: -> Ptr
             /* relocation and patching
             set patterns are able to be patched
                 - ADRP + ADD
-                - ADRP + LDR
+                - CALL
                 - MOV(Z,K)
+                - PLT32
             ?? for now these should be confined to patterns as used by ELF and COFF
             */
+            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
             int dst = op_reg_at(ctx, n, REG_CLASS_GPR);
-            dpimm_pcreladdr(e, ADRP, dst, 0);
-            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_Symbol);
-            //?? is it this simple to add a patch
-            tb_emit_symbol_patch(e->output, sym, e->count, TB_OBJECT_RELOC_REL21);
             if (sym->tag == TB_SYMBOL_FUNCTION) {
                 //?? i don't know all the places i need ldr instead of add
                 // maybe when i need to use the global offset table
-                bool wide = true, fp = false;
-                ldst_loadlit(e, wide, fp, dst, 0);
+                tb_todo();
+                // bool wide = true, fp = false;
+                // ldst_loadlit(e, wide, fp, dst, 0);
             } else {
+                tb_emit_symbol_patch(e->output, sym, e->count, TB_OBJECT_RELOC_REL21);
+                dpimm_pcreladdr(e, ADRP, dst, 0);
+                tb_emit_symbol_patch(e->output, sym, e->count, TB_OBJECT_RELOC_REL12);
                 bool wide = true, shift = false, set_flags = false;
                 dpimm_addsub_imm(e, wide, ADD, dst, dst, 0, shift, set_flags);
             }
+            break;
+        }
+        case a64_call: {
+            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, A64Op)->sym;
+            tb_emit_symbol_patch(e->output, sym, e->count, TB_OBJECT_RELOC_BRANCH26);
+            control_branch_imm(e, 0, true);
             break;
         }
         // case TB_PTR_OFFSET:    // (Ptr, Int) -> Ptr
@@ -1003,7 +1035,7 @@ static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb) {
 }
 
 static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f) {
-    return 0;
+    return out_f->patch_count;
 }
 
 ////////////////////////////////

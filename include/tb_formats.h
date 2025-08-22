@@ -26,7 +26,8 @@ typedef enum {
 
     // Aarch64 only
     TB_OBJECT_RELOC_BRANCH26, // 26bit displacement for B and BL instructions
-    TB_OBJECT_RELOC_REL21,    // for ADR instructions
+    TB_OBJECT_RELOC_REL21,    // for ADRP instructions
+    TB_OBJECT_RELOC_REL12,    // for ADD instructions following ADRP
 
     // TODO(NeGate): fill in the rest of this later
 } TB_ObjectRelocType;

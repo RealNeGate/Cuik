@@ -221,6 +221,9 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
                 switch (p->type) {
                     case TB_OBJECT_RELOC_REL32: type = TB_ELF_X86_64_PC32;  break;
                     case TB_OBJECT_RELOC_PLT32: type = TB_ELF_X86_64_PLT32; break;
+                    case TB_OBJECT_RELOC_REL21:    addend = 4; type = TB_ELF_A64_ADR_PREL_PG_HI21; break;
+                    case TB_OBJECT_RELOC_REL12:    addend = 4; type = TB_ELF_A64_ADD_ABS_LO12_NC;  break;
+                    case TB_OBJECT_RELOC_BRANCH26: addend = 4; type = TB_ELF_A64_CALL26;           break;
                     default: tb_todo();
                 }
 

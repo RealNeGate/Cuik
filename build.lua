@@ -67,7 +67,7 @@ local modules = {
 }
 
 local ldflags = ""
-local cflags = " -g -march=haswell -I include -I common -Wall -Werror -Wno-unused -Wno-microsoft-enum-forward-reference -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
+local cflags = " -g -I include -I common -Wall -Werror -Wno-unused -Wno-microsoft-enum-forward-reference -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
 
 local supported_archs = {
     x64 = "-DTB_HAS_X64",

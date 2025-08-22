@@ -83,6 +83,10 @@ typedef enum {
 
     TB_ELF_X86_64_GOTPCRELX = 41,
     TB_ELF_X86_64_REX_GOTPCRELX = 42,
+
+    TB_ELF_A64_ADR_PREL_PG_HI21 = 275,
+    TB_ELF_A64_ADD_ABS_LO12_NC  = 277,
+    TB_ELF_A64_CALL26           = 283,
 } TB_ELF_RelocType;
 
 // ST_TYPE

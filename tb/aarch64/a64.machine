@@ -28,3 +28,6 @@ pat (TB_SMOD dt=$dt ___ $lhs $rhs) =>
 
 node (add_imm12)
 // pat (TB_ADD dt=$dt ___ $a (TB_ICONST ... value=$b)) where "($b == ($b & 07777)) || ($b == ($b & 077770000))" => (a64_add_imm12 dt=$dt ___ $a imm=$b)
+
+node (call)
+pat (TB_CALL $ctrl $mem $target $REST) => (a64_call dt=TB_TYPE_TUPLE $ctrl $mem $REST sym="TB_NODE_GET_EXTRA_T($target, TB_NodeSymbol)->sym")
