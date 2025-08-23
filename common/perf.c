@@ -15,6 +15,8 @@
 #include "spall.h"
 #endif
 
+#include "thread_id.h"
+
 #if defined(_AMD64_) || defined(__amd64__)
 static double rdtsc_freq;
 static uint64_t timer_start;
@@ -165,7 +167,7 @@ void cuikperf_thread_start(void) {
     #if _WIN32
     uint32_t tid = GetCurrentThreadId();
     #else
-    uint32_t tid = pthread_self();
+    uint32_t tid = thread_id32();
     #endif
 
     if (profiling) {
@@ -201,7 +203,7 @@ void cuikperf_region_start(const char* label, const char* extra) {
         #if _WIN32
         uint32_t tid = GetCurrentThreadId();
         #else
-        uint32_t tid = pthread_self();
+        uint32_t tid = thread_id32();
         #endif
 
         spall_buffer_begin_args(&ctx, &muh_buffer, label, strlen(label), extra, extra ? strlen(extra) : 0, nanos, tid, 0);
@@ -217,7 +219,7 @@ void cuikperf_region_start2(const char* label, size_t extra_len, const char* ext
         #if _WIN32
         uint32_t tid = GetCurrentThreadId();
         #else
-        uint32_t tid = pthread_self();
+        uint32_t tid = thread_id32();
         #endif
 
         spall_buffer_begin_args(&ctx, &muh_buffer, label, strlen(label), extra, extra_len, nanos, tid, 0);
@@ -233,7 +235,7 @@ void cuikperf_region_end(void) {
         #if _WIN32
         uint32_t tid = GetCurrentThreadId();
         #else
-        uint32_t tid = pthread_self();
+        uint32_t tid = thread_id32();
         #endif
 
         spall_buffer_end_ex(&ctx, &muh_buffer, nanos, tid, 0);
