@@ -23,6 +23,7 @@
 // https://github.com/colrdavidson/workpool/blob/main/pool.h
 #include "pool.h"
 #include <threads.h>
+#include <pthread.h>
 
 #ifdef ENABLE_TRACING
 #include "spall_native_auto.h"
