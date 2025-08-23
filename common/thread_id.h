@@ -13,7 +13,6 @@
 
   static inline uint32_t thread_id32(void) {
     uintptr_t p = (uintptr_t)pthread_self();
-    // Mix high/low bits; good enough for IDs/logging.
     return (uint32_t)(p ^ (p >> 32));
   }
 #endif
