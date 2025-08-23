@@ -13,5 +13,4 @@
 #define    r(x,y)     x ## y
 #define    str(x)     # x
 
-f(f(z))
-
+t(t(g)(0) + t)(1);

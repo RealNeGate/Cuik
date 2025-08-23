@@ -84,15 +84,21 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
 }
 
 static void dump_tokens(Cuik_CPP* restrict ctx, const char* tag, int start, int end, int depth) {
-    FOR_N(i, 0, depth) {
+    /*FOR_N(i, 0, depth) {
         printf("  ");
     }
     printf("TOKENS %-20s [%d, %d): ", tag, start, end);
     FOR_N(i, start, end) {
         Token t = ctx->tokens.list.tokens[i];
+        if (t.expanded) {
+            printf("\x1b[32m");
+        }
         printf("%.*s ", (int)t.content.length, t.content.data);
+        if (t.expanded) {
+            printf("\x1b[0m");
+        }
     }
-    printf("\n");
+    printf("\n");*/
 }
 
 static Token quote_token_array(Cuik_CPP* restrict ctx, SourceLoc loc, int start, int end) {
@@ -212,6 +218,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         return 0;
     }
 
+    assert(end_token <= dyn_array_length(ctx->tokens.list.tokens));
     InvokeElem invoke_elem = { parent, read_head, end_token };
     InvokeCursor cursor = { &invoke_elem, read_head };
 
@@ -221,9 +228,6 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
     SourceLoc def_site = ctx->macros.vals[def_i].loc;
 
     // printf("EXPAND %.*s\n", (int) macro_name.length, macro_name.data);
-    if (string_equals_cstr(&macro_name, "_Group_")) {
-        __debugbreak();
-    }
 
     // create macro invoke site
     uint32_t macro_id = dyn_array_length(ctx->tokens.invokes);
@@ -240,6 +244,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         .current = (unsigned char*) def.data,
     };
 
+    TB_ArenaSavepoint sp = tb_arena_save(&ctx->tmp_arena);
     ArenaArray(MacroArg) args = NULL;
     ArenaArray(int) args_to_expand = NULL;
     bool has_varargs = false;
@@ -311,9 +316,15 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                 if (arg_t.type == 0) { break; }
                 if (arg_t.type == '(') { parens++; }
                 if (arg_t.type == ')') { parens--; }
+
+                if (parens == 0) {
+                    break;
+                }
                 arg_t = tokens[arg_head++];
             } while (arg_head <= end_token);
-            read_tail = arg_head - 1;
+
+            read_tail = arg_head;
+            dump_tokens(ctx, "With args", read_head, read_tail, depth);
         }
 
         // if the expanded array didn't contain the entire arg list, we'll fill in the remaining bits
@@ -400,6 +411,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         }
         dt += -(read_tail - read_head);
         dyn_array_set_length(ctx->tokens.list.tokens, start + dt);
+        tb_arena_restore(&ctx->tmp_arena, sp);
         return dt;
     }
 
@@ -504,9 +516,10 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
     // Expand arguments
     if (args_to_expand) {
+        int shift = 0;
         FOR_N(i, 0, aarray_length(args_to_expand)/2) {
-            int local_start = args_to_expand[i*2 + 0];
-            int local_end   = args_to_expand[i*2 + 1];
+            int local_start = shift+args_to_expand[i*2 + 0];
+            int local_end   = shift+args_to_expand[i*2 + 1];
             for (int j = local_start; j < local_end;) {
                 Token* t = &ctx->tokens.list.tokens[j];
 
@@ -514,11 +527,15 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                 if (!t->expanded && t->type == TOKEN_IDENTIFIER) {
                     // if it failed to expand, it can't expand later during the rescan
                     if (find_define(ctx, &def_i, t->content.data, t->content.length)) {
+                        int old_top = dyn_array_length(ctx->tokens.list.tokens);
+
                         int kid_read_tail;
                         ptrdiff_t kid_dt = expand_identifier(ctx, NULL, NULL, j, local_end, macro_id, def_i, depth+1, &kid_read_tail);
                         end += kid_dt;
                         local_end += kid_dt;
+                        shift += kid_dt;
                         assert(end >= start);
+                        assert(dyn_array_length(ctx->tokens.list.tokens) == old_top + kid_dt);
 
                         j = kid_read_tail + kid_dt;
                         continue;
@@ -588,5 +605,6 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
     dyn_array_set_length(ctx->tokens.list.tokens, start + diff);
     dump_tokens(ctx, "Copied", 0, dyn_array_length(ctx->tokens.list.tokens), depth);
+    tb_arena_restore(&ctx->tmp_arena, sp);
     return dt + diff;
 }
