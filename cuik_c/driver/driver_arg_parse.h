@@ -12,6 +12,33 @@ static once_flag arg_global_init = ONCE_FLAG_INIT;
 static bool arg_global_init;
 #endif
 
+#ifndef DEBUGBREAK
+  #ifdef _WIN32
+    #if defined(_MSC_VER) || defined(__clang__)
+      #include <intrin.h>
+      #define DEBUGBREAK() __debugbreak()
+    #else
+      #include <windows.h>
+      #define DEBUGBREAK() DebugBreak()
+    #endif
+  #else
+    #if defined(__has_builtin)
+      #if __has_builtin(__builtin_debugtrap)
+        #define DEBUGBREAK() __builtin_debugtrap()
+      #elif __has_builtin(__builtin_trap)
+        #define DEBUGBREAK() __builtin_trap()
+      #else
+        #include <signal.h>
+        #define DEBUGBREAK() raise(SIGTRAP)
+      #endif
+    #else
+      #include <signal.h>
+      #define DEBUGBREAK() raise(SIGTRAP)
+    #endif
+  #endif
+#endif
+
+
 typedef struct {
     const char* key;
     void* val;
@@ -243,7 +270,7 @@ static void print_help(void) {
         for (int j = len; j < round_up; j++) printf(" ");
         printf("%s\n", options[i].desc);
     }
-    __debugbreak();
+    DEBUGBREAK();
 
     /*size_t split = 24;
     for (int i = 1; i < ARG_DESC_COUNT; i++) {
