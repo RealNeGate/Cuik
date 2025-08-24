@@ -8,6 +8,7 @@
 #include <cuik.h>
 #include <assert.h>
 #include <arena_array.h>
+#include <new_hash_map.h>
 #include <str.h>
 #include "diagnostic.h"
 
@@ -35,6 +36,7 @@ enum {
 };
 
 typedef struct {
+    String key;
     String value;
     SourceLoc loc;
 } MacroDef;
@@ -84,12 +86,7 @@ struct Cuik_CPP {
 
     // how deep into directive scopes (#if, #ifndef, #ifdef) is it
     int depth;
-
-    struct {
-        size_t exp, len;
-        String* keys;   // [1 << exp]
-        MacroDef* vals; // [1 << exp]
-    } macros;
+    NL_HashSet macros;
 
     // tells you if the current scope has had an entry evaluated,
     // this is important for choosing when to check #elif and #endif
@@ -291,17 +288,12 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
         .fs        = desc->fs,
         .user_data = desc->fs_data,
         .case_insensitive = desc->case_insensitive,
-
         .stack = cuik__valloc(MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
-        .macros = {
-            .exp = 24,
-            .keys = cuik__valloc((1u << 24) * sizeof(String)),
-            .vals = cuik__valloc((1u << 24) * sizeof(MacroDef)),
-        },
     };
 
     tb_arena_create(&ctx->tmp_arena, NULL);
     tb_arena_create(&ctx->perm_arena, NULL);
+    ctx->macros = nl_hashset_alloc(2048);
 
     // initialize dynamic arrays
     ctx->system_include_dirs = dyn_array_create(char*, 64);
@@ -378,25 +370,20 @@ void cuikpp_finalize(Cuik_CPP* ctx) {
     #endif
 
     CUIK_TIMED_BLOCK("cuikpp_finalize") {
-        cuik__vfree(ctx->macros.keys, (1u << ctx->macros.exp) * sizeof(String));
-        cuik__vfree(ctx->macros.vals, (1u << ctx->macros.exp) * sizeof(MacroDef));
+        nl_hashset_free(ctx->macros);
         cuik__vfree(ctx->stack, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot));
-
-        ctx->macros.keys = NULL;
-        ctx->macros.vals = NULL;
         ctx->stack = NULL;
     }
 
+    // tb_arena_destroy(&ctx->tmp_arena);
     nl_map_free(ctx->include_once);
 }
 
 void cuikpp_free(Cuik_CPP* ctx) {
     dyn_array_destroy(ctx->system_include_dirs);
-
-    if (ctx->macros.keys) {
+    if (ctx->stack != NULL) {
         cuikpp_finalize(ctx);
     }
-
     // cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
     cuik_free(ctx);
 }
@@ -633,11 +620,14 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                 if (first.type == TOKEN_HASH) {
                     break;
                 } else if (first.type == TOKEN_IDENTIFIER) {
-                    size_t def_i;
-                    if (find_define(ctx, &def_i, first.content.data, first.content.length)) {
+                    MacroDef* def = find_define(ctx, first.content.data, first.content.length);
+                    if (def != NULL) {
                         int start = dyn_array_length(ctx->tokens.list.tokens);
                         push_token(ctx, first);
-                        expand_identifier(ctx, in, NULL, start, start+1, 0, def_i, 0, NULL);
+
+                        cuikperf_region_start2("expand", first.content.length, (const char*) first.content.data);
+                        expand_identifier(ctx, in, NULL, start, start+1, 0, def, 0, NULL);
+                        cuikperf_region_end();
 
                         // classify any newly-generated identifiers
                         DynArray(Token) tokens = ctx->tokens.list.tokens;
@@ -670,6 +660,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
             }
 
             // all the directives go here
+            cuikperf_region_start2("directive", first.content.length, (const char*) first.content.data);
             switch (directive.length) {
                 case 2:
                 MATCH(if);
@@ -705,6 +696,10 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                 break;
             }
             #undef MATCH
+
+            if (result != DIRECTIVE_YIELD && cuikperf_is_active()) {
+                cuikperf_region_end();
+            }
 
             if (result == DIRECTIVE_YIELD) {
                 goto yield;
@@ -747,7 +742,7 @@ TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx) {
 }
 
 void cuikpp_dump_defines(Cuik_CPP* ctx) {
-    int count = 0;
+    /*int count = 0;
 
     size_t cap = 1u << ctx->macros.exp;
     for (size_t i = 0; i < cap; i++) {
@@ -759,7 +754,8 @@ void cuikpp_dump_defines(Cuik_CPP* ctx) {
         }
     }
 
-    printf("\n// Macro defines active: %d\n", count);
+    printf("\n// Macro defines active: %d\n", count);*/
+    assert(0 && "TODO");
 }
 
 static void* gimme_the_shtuffs_fill(Cuik_CPP* restrict c, const char* str) {

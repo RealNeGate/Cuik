@@ -67,40 +67,11 @@ CUIK_API size_t cuikpp_get_include_dir_count(Cuik_CPP* ctx) {
 }
 
 Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx) {
-    size_t cap = 1u << ctx->macros.exp;
-    for (size_t i = 0; i < cap; i++) {
-        if (ctx->macros.keys[i].length != 0 && ctx->macros.keys[i].length != MACRO_DEF_TOMBSTONE) {
-            return (Cuik_DefineIter){
-                .index = i,
-                .key = ctx->macros.keys[i],
-                .value = ctx->macros.vals[i].value,
-                .loc = ctx->macros.vals[i].loc,
-            };
-        }
-    }
-
+    assert(0 && "TODO");
     return (Cuik_DefineIter){ .index = 0 };
 }
 
 bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* it) {
-    size_t cap = 1u << ctx->macros.exp;
-    size_t e = it->index;
-    if (e >= cap) return false;
-
-    it->loc = ctx->macros.vals[e].loc;
-    it->key = ctx->macros.keys[e];
-    it->value = ctx->macros.vals[e].value;
-
-    for (size_t i = it->index + 1; i < cap; i++) {
-        if (ctx->macros.keys[i].length != 0 && ctx->macros.keys[i].length != MACRO_DEF_TOMBSTONE) {
-            it->index = i;
-            it->key = ctx->macros.keys[i];
-            it->value = ctx->macros.vals[i].value;
-            it->loc = ctx->macros.vals[i].loc;
-            return true;
-        }
-    }
-
-    it->index = cap;
+    assert(0 && "TODO");
     return true;
 }

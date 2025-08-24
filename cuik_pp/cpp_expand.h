@@ -213,7 +213,7 @@ static Token read_one(Cuik_CPP* restrict ctx, Lexer* in, InvokeCursor* c) {
 }
 
 // returns the number of newly inserted tokens at the read_head
-static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* parent, int read_head, int end_token, uint32_t parent_macro, int def_i, int depth, int* out_read_tail) {
+static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* parent, int read_head, int end_token, uint32_t parent_macro, MacroDef* def, int depth, int* out_read_tail) {
     if (expand_builtin_idents(ctx, &ctx->tokens.list.tokens[read_head])) {
         return 0;
     }
@@ -223,9 +223,9 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
     InvokeCursor cursor = { &invoke_elem, read_head };
 
     Token t = ctx->tokens.list.tokens[read_head];
-    String macro_name = ctx->macros.keys[def_i];
-    String def = ctx->macros.vals[def_i].value;
-    SourceLoc def_site = ctx->macros.vals[def_i].loc;
+    String macro_name = def->key;
+    String def_str = def->value;
+    SourceLoc def_site = def->loc;
 
     // printf("EXPAND %.*s\n", (int) macro_name.length, macro_name.data);
 
@@ -234,14 +234,14 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
     dyn_array_put(ctx->tokens.invokes, (MacroInvoke){
             .name      = t.content,
             .parent    = parent_macro,
-            .def_site  = { def_site, { def_site.raw + def.length } },
+            .def_site  = { def_site, { def_site.raw + def_str.length } },
             .call_site = t.location,
         });
 
-    const unsigned char* param_str = ctx->macros.keys[def_i].data + ctx->macros.keys[def_i].length;
+    const unsigned char* param_str = def->key.data + def->key.length;
     Lexer def_lexer = {
-        .start = (unsigned char*) def.data,
-        .current = (unsigned char*) def.data,
+        .start = (unsigned char*) def_str.data,
+        .current = (unsigned char*) def_str.data,
     };
 
     TB_ArenaSavepoint sp = tb_arena_save(&ctx->tmp_arena);
@@ -404,7 +404,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
     }
 
     // special case, the macro is empty
-    if (def.length == 0) {
+    if (def_str.length == 0) {
         size_t start = dyn_array_length(ctx->tokens.list.tokens);
         if (start != read_tail) {
             memmove(&ctx->tokens.list.tokens[read_head], &ctx->tokens.list.tokens[read_tail], (start - read_tail) * sizeof(Token));
@@ -523,14 +523,14 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
             for (int j = local_start; j < local_end;) {
                 Token* t = &ctx->tokens.list.tokens[j];
 
-                size_t def_i;
                 if (!t->expanded && t->type == TOKEN_IDENTIFIER) {
                     // if it failed to expand, it can't expand later during the rescan
-                    if (find_define(ctx, &def_i, t->content.data, t->content.length)) {
+                    MacroDef* kid_def = find_define(ctx, t->content.data, t->content.length);
+                    if (kid_def != NULL) {
                         int old_top = dyn_array_length(ctx->tokens.list.tokens);
 
                         int kid_read_tail;
-                        ptrdiff_t kid_dt = expand_identifier(ctx, NULL, NULL, j, local_end, macro_id, def_i, depth+1, &kid_read_tail);
+                        ptrdiff_t kid_dt = expand_identifier(ctx, NULL, NULL, j, local_end, macro_id, kid_def, depth+1, &kid_read_tail);
                         end += kid_dt;
                         local_end += kid_dt;
                         shift += kid_dt;
@@ -548,7 +548,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         }
     }
 
-    size_t hidden = hide_macro(ctx, def_i);
+    size_t hidden = hide_macro(ctx, def);
 
     // Rescanning
     for (int i = start; i < end;) {
@@ -556,9 +556,10 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
         size_t def_i;
         if (!t->expanded && t->type == TOKEN_IDENTIFIER) {
-            if (find_define(ctx, &def_i, t->content.data, t->content.length)) {
+            MacroDef* kid_def = find_define(ctx, t->content.data, t->content.length);
+            if (kid_def != NULL) {
                 int kid_read_tail;
-                ptrdiff_t kid_dt = expand_identifier(ctx, in, &invoke_elem, i, end, macro_id, def_i, depth+1, &kid_read_tail);
+                ptrdiff_t kid_dt = expand_identifier(ctx, in, &invoke_elem, i, end, macro_id, kid_def, depth+1, &kid_read_tail);
                 end += kid_dt;
                 assert(end >= start);
 
@@ -570,7 +571,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         }
         i += 1;
     }
-    unhide_macro(ctx, def_i, hidden);
+    unhide_macro(ctx, def, hidden);
 
     dump_tokens(ctx, "Post-expand", start, end, depth);
     dump_tokens(ctx, "Copying into", read_head, read_tail, depth);

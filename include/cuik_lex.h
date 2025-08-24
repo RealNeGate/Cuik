@@ -299,8 +299,8 @@ CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char key[]
 CUIK_API void cuikpp_define_cstr(Cuik_CPP* ctx, const char key[], const char value[]);
 CUIK_API void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char key[], size_t vallen, const char value[]);
 // Basically just `#undef key`
-CUIK_API bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key);
-CUIK_API bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
+CUIK_API void cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key);
+CUIK_API void cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
 
 ////////////////////////////////
 // Preprocessor includes

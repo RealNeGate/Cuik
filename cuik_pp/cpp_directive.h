@@ -136,20 +136,55 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         t = lexer_read(in);
     }
 
-    const unsigned char* start = t.content.data;
     SourceLoc loc = t.location;
+    const unsigned char* start = t.content.data;
+
+    #if USE_INTRIN && CUIK__IS_X64
+    // SIMD whitespace skip
+    const unsigned char* end = t.content.data;
+    if (!t.hit_line) {
+        end += t.content.length;
+
+        for (;;) {
+            if (*end == '\n') {
+                if (end[-1] == '\\' || (end[-1] == '\r' && end[-2] == '\\')) {
+                    end += 1;
+                } else {
+                    break;
+                }
+            }
+
+            __m128i chars = _mm_loadu_si128((__m128i*) end);
+            __m128i mask = _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'));
+
+            uint32_t bits = _mm_movemask_epi8(mask);
+            if (bits == 0) {
+                end += 16;
+                continue;
+            }
+
+            int len = __builtin_ffs(bits);
+            end += len-1;
+        }
+    }
+    #else
     while (t.type && !t.hit_line) {
         t = lexer_read(in);
     }
     const unsigned char* end = t.content.data;
+    #endif
 
     // push back before the newline
     in->current = (unsigned char*) end;
 
-    // printf("%.*s -> %.*s\n", (int)key.content.length, key.content.data, (int)value.length, value.data);
+    // printf("%.*s -> %.*s\n", (int)key.content.length, key.content.data, (int) (end - start), start);
 
-    size_t i = insert_symtab(ctx, key.content.length, (const char*) key.content.data);
-    ctx->macros.vals[i] = (MacroDef){ { end - start, start }, loc };
+    cuikperf_region_start("insert", NULL);
+    MacroDef* def = insert_symtab(ctx, key.content.length, (const char*) key.content.data);
+    def->value = (String){ end - start, start };
+    def->loc = loc;
+    cuikperf_region_end();
+
     return DIRECTIVE_SUCCESS;
 }
 
@@ -279,9 +314,12 @@ static char* parse_directive_path(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
         push_token(ctx, t);
 
         size_t def_i;
-        if (t.type == TOKEN_IDENTIFIER && find_define(ctx, &def_i, t.content.data, t.content.length)) {
-            int head = dyn_array_length(ctx->tokens.list.tokens);
-            expand_identifier(ctx, in, NULL, head-1, head, 0, def_i, 0, NULL);
+        if (t.type == TOKEN_IDENTIFIER) {
+            MacroDef* def = find_define(ctx, t.content.data, t.content.length);
+            if (def != NULL) {
+                int head = dyn_array_length(ctx->tokens.list.tokens);
+                expand_identifier(ctx, in, NULL, head-1, head, 0, def, 0, NULL);
+            }
         }
     }
 
@@ -290,7 +328,7 @@ static char* parse_directive_path(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     in->current = (unsigned char*) t.content.data;
 
     size_t len = 0;
-    char* filename = tb_arena_alloc(&ctx->tmp_arena, FILENAME_MAX);
+    char* filename = tb_arena_alloc(&ctx->perm_arena, FILENAME_MAX);
 
     DynArray(Token) tokens = ctx->tokens.list.tokens;
     if (start == end) {
@@ -372,6 +410,9 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     // check if in include_once list
     ptrdiff_t search = nl_map_get_cstr(ctx->include_once, canonical.data);
     if (search >= 0) {
+        if (cuikperf_is_active()) {
+            cuikperf_region_end();
+        }
         return DIRECTIVE_YIELD;
     }
 
@@ -413,6 +454,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     compute_line_map(ctx, l & LOCATE_SYSTEM, ctx->stack_ptr - 1, new_slot->loc, alloced_filepath->data, next_file.data, next_file.length);
 
     if (cuikperf_is_active()) {
+        cuikperf_region_end();
         cuikperf_region_start("preprocess", filename);
     }
 

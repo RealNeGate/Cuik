@@ -49,8 +49,11 @@ static intmax_t eval(Cuik_CPP* restrict ctx, Lexer* restrict in) {
                         goto error;
                     }
                 }
-            } else if (find_define(ctx, &def_i, t.content.data, t.content.length)) {
-                expand_identifier(ctx, in, NULL, head, head+1, 0, def_i, 0, NULL);
+            } else {
+                MacroDef* def = find_define(ctx, t.content.data, t.content.length);
+                if (def != NULL) {
+                    expand_identifier(ctx, in, NULL, head, head+1, 0, def, 0, NULL);
+                }
             }
 
             // remaining identifiers are converted to 0
