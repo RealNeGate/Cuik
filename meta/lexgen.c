@@ -363,7 +363,7 @@ int main(int argc, char** argv) {
 
         fprintf(file, "TOKEN_KW_%.*s", len, base);
         if (i == 0) {
-            fprintf(file, " = 0x10000000,\n");
+            fprintf(file, " = 0x800000,\n");
         } else {
             fprintf(file, ",\n");
         }

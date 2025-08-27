@@ -108,9 +108,10 @@ typedef struct {
 
 typedef struct Token {
     // it's a TknType but GCC doesn't like incomplete enums
-    int type     : 30;
-    int expanded : 1;
-    int hit_line : 1;
+    int type      : 29;
+    int expanded  : 1;
+    int hit_line  : 1;
+    int has_space : 1;
 
     SourceLoc location;
     String content;

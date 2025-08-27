@@ -629,8 +629,8 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                         FOR_N(i, start, dyn_array_length(tokens)) {
                             if (tokens[i].type == TOKEN_IDENTIFIER) {
                                 tokens[i].type = classify_ident(tokens[i].content.data, tokens[i].content.length, is_glsl);
-                                // diag_note(s, get_token_range(&tokens[i]), "A");
                             }
+                            // diag_note(s, get_token_range(&tokens[i]), "A");
                         }
                     } else {
                         first.type = classify_ident(first.content.data, first.content.length, is_glsl);

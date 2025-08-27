@@ -172,6 +172,7 @@ static size_t dfa_fn(uint8_t ch, size_t state) {
 Token lexer_read(Lexer* restrict l) {
     unsigned char* current = l->current;
     Token t = { 0 };
+    bool leading_space = *current == ' ';
 
     // branchless space skip
     current += (*current == ' ');
@@ -388,6 +389,7 @@ Token lexer_read(Lexer* restrict l) {
     l->current = current;
 
     // encode token
+    t.has_space = leading_space;
     t.content = (String){ current - start, start };
     t.location = encode_file_loc(l->file_id, start - l->start);
     return t;

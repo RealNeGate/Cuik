@@ -82,7 +82,8 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
 }
 
 static void dump_tokens(Cuik_CPP* restrict ctx, const char* tag, int start, int end, int depth) {
-    /*FOR_N(i, 0, depth) {
+    #if 0
+    FOR_N(i, 0, depth) {
         printf("  ");
     }
     printf("TOKENS %-20s [%d, %d): ", tag, start, end);
@@ -96,7 +97,8 @@ static void dump_tokens(Cuik_CPP* restrict ctx, const char* tag, int start, int 
             printf("\x1b[0m");
         }
     }
-    printf("\n");*/
+    printf("\n");
+    #endif
 }
 
 static Token quote_token_array(Cuik_CPP* restrict ctx, SourceLoc loc, int start, int end) {
@@ -436,7 +438,9 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                     break;
                 }
 
+                bool has_space = def_t.has_space;
                 def_t = quote_token_array(ctx, def_t.location, args[arg].token_start, args[arg].token_end);
+                def_t.has_space = has_space;
             } else {
                 // rollback and paste both the # and ##
                 def_lexer.current = (unsigned char*) def_t.content.data + def_t.content.length;
@@ -444,12 +448,18 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         } else if (def_t.type == TOKEN_IDENTIFIER) {
             ptrdiff_t arg = find_arg(args, def_t.content);
             if (arg >= 0) {
-                // subst, just paste all the tokens into the final stream
-                aarray_push(args_to_expand, dyn_array_length(ctx->tokens.list.tokens));
-                FOR_N(i, args[arg].token_start, args[arg].token_end) {
-                    push_token(ctx, ctx->tokens.list.tokens[i]);
+                if (args[arg].token_start != args[arg].token_end) {
+                    // subst, just paste all the tokens into the final stream
+                    size_t first_subst_token = dyn_array_length(ctx->tokens.list.tokens);
+                    aarray_push(args_to_expand, first_subst_token);
+                    FOR_N(i, args[arg].token_start, args[arg].token_end) {
+                        push_token(ctx, ctx->tokens.list.tokens[i]);
+                    }
+
+                    // first token inherits the leading space from the def_t
+                    ctx->tokens.list.tokens[first_subst_token].has_space = def_t.has_space;
+                    aarray_push(args_to_expand, dyn_array_length(ctx->tokens.list.tokens));
                 }
-                aarray_push(args_to_expand, dyn_array_length(ctx->tokens.list.tokens));
                 continue;
             }
         }

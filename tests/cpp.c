@@ -27,11 +27,12 @@ int main() {
 #define    q(x)       x
 #define    r(x,y)     x ## y
 #define    str(x)     # x
-f(y+1) + f(f(z)) % t(t(g)(0) + t)(1);
+f(y+1)
+/*f(y+1) + f(f(z)) % t(t(g)(0) + t)(1);
 g(x+(3,4)-w) | h 5) & m
 (f)^m(m);
 p() i[q()] = { q(1), r(2,3), r(4,), r(,5), r(,) };
-char c[2][6] = { str(hello), str() };
+char c[2][6] = { str(hello), str() };*/
 #else
 #define str(s)      # s
 #define xstr(s)     str(s)

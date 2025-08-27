@@ -626,93 +626,12 @@ bool cuik_driver_does_codegen(const Cuik_DriverArgs* args) {
     return !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
 }
 
-static size_t dump_macro(TokenStream* s, size_t i, uint32_t macro_id, uint32_t base_column) {
+void cuikpp_dump_tokens(TokenStream* s) {
     const char* last_file = NULL;
-    int last_column = base_column;
     int last_line = 0;
 
     Token* tokens = cuikpp_get_tokens(s);
     size_t count = cuikpp_get_token_count(s);
-
-    int depth = macro_id ? s->invokes[macro_id].depth : 0;
-    for (; i < count;) {
-        Token* t = &tokens[i];
-
-        int column = 0;
-        ResolvedSourceLoc r = cuikpp_find_location(s, t->location);
-        if (macro_id == 0) {
-            if (last_file != r.file->filename) {
-                // TODO(NeGate): Kinda shitty but i just wanna duplicate
-                // the backslashes to avoid them being treated as an escape
-                const char* in = (const char*) r.file->filename;
-                char str[FILENAME_MAX], *out = str;
-
-                while (*in) {
-                    if (*in == '\\') {
-                        *out++ = '\\';
-                        *out++ = '\\';
-                        in++;
-                    } else {
-                        *out++ = *in++;
-                    }
-                }
-                *out++ = '\0';
-
-                if (str[0] == 0) {
-                    printf("\n#line %d\n", r.line);
-                } else {
-                    printf("\n#line %d \"%s\"\n", r.line, str);
-                }
-                last_column = 0, last_file = r.file->filename;
-            }
-
-            if (last_line != r.line) {
-                printf("\n/* line %3d */\t", r.line);
-                last_column = 0, last_line = r.line;
-            }
-            column = r.column;
-        }
-
-        int macro_offset = 0;
-        if (t->location.raw & SourceLoc_IsMacro) {
-            uint32_t next_macro_id = (t->location.raw >> SourceLoc_MacroOffsetBits) & ((1u << SourceLoc_MacroIDBits) - 1);
-            uint32_t next_offset = t->location.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
-
-            int next_depth = s->invokes[next_macro_id].depth;
-            if (next_depth > depth) {
-                // Step into
-                i = dump_macro(s, i, next_macro_id, next_offset);
-                continue;
-            } else if (next_depth < depth) {
-                // Step out
-                break;
-            }
-
-            column = next_offset;
-        } else if (macro_id != 0) {
-            // Step out (to depth=0)
-            break;
-        }
-
-        if (last_column != column) {
-            printf(" ");
-            // printf("%*s", column - last_column, "");
-        }
-
-        // Normal token printing
-        printf("%.*s", (int) t->content.length, t->content.data);
-        last_column = column + t->content.length, i += 1;
-    }
-    return i;
-}
-
-void cuikpp_dump_tokens(TokenStream* s) {
-    Token* tokens = cuikpp_get_tokens(s);
-    size_t count = cuikpp_get_token_count(s);
-    dump_macro(s, 0, 0, 0);
-
-    #if 0
-    int last_spot = 0;
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
 
@@ -739,42 +658,44 @@ void cuikpp_dump_tokens(TokenStream* s) {
             } else {
                 printf("\n#line %d \"%s\"\n", r.line, str);
             }
-            last_spot = 0, last_file = r.file->filename;
+            last_file = r.file->filename;
+            last_line = r.line;
         }
 
-        if (last_line != r.line) {
-            printf("\n/* line %3d */\t", r.line);
-            last_spot = 0, last_line = r.line;
+        if (r.line - last_line) {
+            int dt = r.line - last_line;
+
+            // initial indentation for the new line
+            int spaces = 0;
+            const char* line = r.line_str;
+            while (line[spaces] && isspace(line[spaces])) {
+                spaces++;
+            }
+
+            if (dt < 0 || dt > 5) {
+                printf("\n#line %3d\n", r.line);
+                last_line = r.line;
+            } else {
+                while (last_line < r.line) {
+                    printf("\n");
+                    last_line++;
+                }
+            }
+            printf("%*s", spaces, "");
+        }
+
+        if (t->has_space) {
+            printf(" ");
         }
 
         if (t->type == TOKEN_STRING_WIDE_SINGLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
             printf("L");
         }
 
-        int macro_offset = 0;
-        int next_macro_id = -1;
-        if (t->location.raw & SourceLoc_IsMacro) {
-            next_macro_id = (t->location.raw >> SourceLoc_MacroOffsetBits) & ((1u << SourceLoc_MacroIDBits) - 1);
-            r.column = t->location.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
-        }
-
-        if (macro_id != next_macro_id) {
-            macro_id = next_macro_id;
-        } else if (last_spot != r.column) {
-            printf(" ");
-            // printf("%*s", r.column - last_spot, "");
-        }
-
-        if (t->location.raw & SourceLoc_IsMacro) {
-            printf("MACRO%d", next_macro_id);
-        } else {
-            printf("TOKEN");
-        }
-
-        last_spot = r.column + t->content.length;
+        // Normal token printing
+        printf("%.*s", (int) t->content.length, t->content.data);
     }
     printf("\n");
-    #endif
 }
 
 void cuik_free_driver_args(Cuik_DriverArgs* args) {
