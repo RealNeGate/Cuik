@@ -573,6 +573,19 @@ static bool is_vreg_match(Ctx* ctx, TB_Node* a, TB_Node* b) {
     return aa->class == bb->class && aa->assigned == bb->assigned;
 }
 
+static void postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, TB_Node* n, size_t old_node_count) {
+    if (n == NULL || n->gvn < old_node_count || worklist_test_n_set(ws, n)) {
+        return;
+    }
+
+    FOR_N(i, 0, n->input_count) {
+        postorder_isel_walk(ctx, ws, n->inputs[i], old_node_count);
+    }
+
+    TB_OPTDEBUG(ISEL3)(printf("PUSH "), tb_print_dumb_node(NULL, n), printf("\n"));
+    dyn_array_put(ws->items, n);
+}
+
 static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
     #if TB_OPTDEBUG_ISEL
     tb_print_dumb(f);
@@ -711,6 +724,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
         // as we do instruction selection, the graph will have small trees introduced, there's
         // no need to check patterns for anything by the root of the tree.
+        size_t old_node_count = f->node_count;
         while (worklist_count(ws)) {
             int start = worklist_count(ws);
             TB_Node* n = ws->items[start - 1];
@@ -740,10 +754,9 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     n = k;
                 }
             } while (progress);
+            TB_OPTDEBUG(ISEL3)(printf("\n"));
 
             n = tb_opt_gvn_node(f, n);
-
-            TB_OPTDEBUG(ISEL3)(printf("\n"));
 
             // kill any nodes on the right side of the node
             while (worklist_count(ws) >= start) {
@@ -755,6 +768,13 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 }
             }
 
+            // ISel can introduce fresh nodes, we should add these to the worklist
+            // in postorder, I don't mind this using the stack because it's mostly
+            // bounded by the target's code.
+            FOR_N(i, 0, n->input_count) {
+                postorder_isel_walk(&ctx, ws, n->inputs[i], old_node_count);
+            }
+
             node_add_tmps(&ctx, n);
         }
 
@@ -762,34 +782,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             tb_kill_node(f, ctx.frame_ptr);
             ctx.frame_ptr = NULL;
         }
-
-        /*CUIK_TIMED_BLOCK("GVN & DCE") {
-            for (TB_Node* n; n = worklist_pop(ws), n;) {
-                TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
-                if (n->user_count == 0 && !is_proj(n)) {
-                    TB_OPTDEBUG(ISEL3)(printf(" => \x1b[31mKILL\x1b[0m"));
-                    tb_kill_node(f, n);
-                } else {
-                    TB_Node* k = tb_opt_gvn_node(f, n);
-                    if (k && k != n) {
-                        TB_OPTDEBUG(ISEL3)(printf(" => "), tb_print_dumb_node(NULL, k));
-
-                        // invalidate the GVN on these nodes
-                        FOR_USERS(u, n) {
-                            tb__gvn_remove(f, USERN(u));
-                            worklist_push(ws, USERN(u));
-                        }
-
-                        subsume_node(f, n, k);
-                    } else {
-                        // replace the operand with a proper materialized form
-                        if (mach_is_operand[n->type]) {
-                        }
-                    }
-                }
-                TB_OPTDEBUG(ISEL3)(printf("\n"));
-            }
-        }*/
 
         tb_arena_restore(&f->tmp_arena, pins_sp);
         log_phase_end(f, og_size, "isel");

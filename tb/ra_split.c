@@ -720,6 +720,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
 
                 if (j == ra->hrp[bb_id].start[class]) { // && j <= ra->hrp[bb_id].end[class]) {
                     TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: %%%u: entered HRP region\n", bb_id, n->gvn));
+                    is_hrp_rn |= class2vreg[class];
 
                     FOR_N(spill, 0, num_spills) {
                         TB_Node* def = bb_defs[spill];
@@ -739,7 +740,6 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
 
                             // S &= ~(1ull << spill);
                             W &= ~(1ull << spill);
-                            is_hrp_rn |= 1ull << spill;
                         }
                     }
                 }
@@ -818,7 +818,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
                             }
                         }
 
-                        if (!can_fold) { // || (n->type == TB_MACH_COPY && n->dt.raw != def->dt.raw)) {
+                        if (!can_fold) {
                             // should probably place it above any temps
                             size_t t = j;
                             def = insert_reload(ctx, ra, &splitter, bb, bb_defs, spill, W, &t);
@@ -829,8 +829,6 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
                                 bb_defs[spill] = def;
                                 W |= 1ull << spill;
                             }
-
-                            // S |= 1ull << spill;
                         }
                     }
 

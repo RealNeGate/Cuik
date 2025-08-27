@@ -18,5 +18,6 @@ int main() {
         h = murmur_32b(h, ((uint32_t*) key)[i]);
     }
 
-    return printf("Hello! %x\n", h);
+    printf("Hello! %x\n", h);
+    return 0;
 }

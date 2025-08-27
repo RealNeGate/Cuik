@@ -5,13 +5,17 @@ local x = {}
 if is_windows then
     local cmd = io.popen("dir *.c /B")
     for c in cmd:lines() do
-        x[#x + 1] = c
+        if c ~= "run_suite.c" then
+            x[#x + 1] = c
+        end
     end
     cmd:close()
 else
     local cmd = io.popen("find *.c -maxdepth 1")
     for c in cmd:lines() do
-        x[#x + 1] = c
+        if c ~= "run_suite.c" then
+            x[#x + 1] = c
+        end
     end
     cmd:close()
 end

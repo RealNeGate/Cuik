@@ -528,29 +528,6 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
         hash = ((uint64_t) hash * 11400714819323198485llu) >> 32llu;
     }
 
-    #if 0
-    {
-        TB_Node* con0 = tb_alloc_node(f, TB_ICONST, TB_TYPE_I64, 1, sizeof(TB_NodeInt));
-        set_input(f, con0, f->root_node, 0);
-        TB_NODE_SET_EXTRA(con0, TB_NodeInt, .value = sig);
-        con0 = tb_opt_gvn_node(f, con0);
-
-        TB_Node* con1 = tb_alloc_node(f, TB_ICONST, TB_TYPE_I64, 1, sizeof(TB_NodeInt));
-        set_input(f, con1, f->root_node, 0);
-        TB_NODE_SET_EXTRA(con1, TB_NodeInt, .value = shift);
-        con1 = tb_opt_gvn_node(f, con1);
-
-        TB_Node* mul = tb_alloc_node(f, TB_MUL, TB_TYPE_I64, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, mul, src, 1);
-        set_input(f, mul, con0, 2);
-
-        TB_Node* shr = tb_alloc_node(f, TB_SHR, TB_TYPE_I64, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, shr, mul, 1);
-        set_input(f, shr, con1, 2);
-        src = shr;
-    }
-    #endif
-
     return NULL;
 }
 

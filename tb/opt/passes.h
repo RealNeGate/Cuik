@@ -388,6 +388,7 @@ void worklist_clear_visited(TB_Worklist* restrict ws);
 bool worklist_test(TB_Worklist* restrict ws, TB_Node* n);
 bool worklist_test_n_set(TB_Worklist* restrict ws, TB_Node* n);
 void worklist_push(TB_Worklist* restrict ws, TB_Node* restrict n);
+void worklist_remove(TB_Worklist* restrict ws, TB_Node* n);
 int worklist_count(TB_Worklist* ws);
 TB_Node* worklist_pop(TB_Worklist* ws);
 
