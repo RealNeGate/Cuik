@@ -21,9 +21,7 @@
 #include <x86intrin.h>
 #endif
 
-#define THE_SHTUFFS_SIZE (32 << 20)
 #define CUIK__CPP_STATS 0
-
 #define MACRO_DEF_TOMBSTONE SIZE_MAX
 
 typedef struct PragmaOnceEntry {
@@ -116,8 +114,6 @@ typedef enum {
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length);
 static void expect(TokenArray* restrict in, char ch);
 static intmax_t eval(Cuik_CPP* restrict c, Lexer* restrict in);
-
-static void* gimme_the_shtuffs_fill(Cuik_CPP* restrict c, const char* str);
 
 static bool push_scope(Cuik_CPP* restrict ctx, SourceRange r, bool initial);
 static bool pop_scope(Cuik_CPP* restrict ctx, SourceRange r);
@@ -384,7 +380,6 @@ void cuikpp_free(Cuik_CPP* ctx) {
     if (ctx->stack != NULL) {
         cuikpp_finalize(ctx);
     }
-    // cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
     cuik_free(ctx);
 }
 
@@ -634,6 +629,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                         FOR_N(i, start, dyn_array_length(tokens)) {
                             if (tokens[i].type == TOKEN_IDENTIFIER) {
                                 tokens[i].type = classify_ident(tokens[i].content.data, tokens[i].content.length, is_glsl);
+                                // diag_note(s, get_token_range(&tokens[i]), "A");
                             }
                         }
                     } else {
@@ -756,13 +752,6 @@ void cuikpp_dump_defines(Cuik_CPP* ctx) {
 
     printf("\n// Macro defines active: %d\n", count);*/
     assert(0 && "TODO");
-}
-
-static void* gimme_the_shtuffs_fill(Cuik_CPP* restrict c, const char* str) {
-    size_t len = strlen(str) + 1;
-    unsigned char* allocation = tb_arena_alloc(&c->tmp_arena, len);
-    memcpy(allocation, str, len);
-    return allocation;
 }
 
 static bool push_scope(Cuik_CPP* restrict ctx, SourceRange r, bool initial) {

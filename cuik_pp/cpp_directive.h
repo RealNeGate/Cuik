@@ -258,7 +258,6 @@ static DirectiveResult cpp__elif(Cuik_CPP* restrict ctx, CPPStackSlot* restrict 
     }
 
     // we should be one a different line now
-    warn_if_newline(in);
     return DIRECTIVE_SUCCESS;
 }
 

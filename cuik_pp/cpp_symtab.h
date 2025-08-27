@@ -166,5 +166,5 @@ static size_t hide_macro(Cuik_CPP* restrict c, MacroDef* def) {
 }
 
 static void unhide_macro(Cuik_CPP* restrict c, MacroDef* def, size_t saved) {
-    def->key.length = MACRO_DEF_TOMBSTONE;
+    def->key.length = saved;
 }

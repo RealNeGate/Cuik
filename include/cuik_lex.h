@@ -120,6 +120,7 @@ typedef struct Token {
 typedef struct MacroInvoke {
     String name;
 
+    uint32_t depth;
     // 0 means it's got no parent
     uint32_t parent;
 

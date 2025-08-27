@@ -53,7 +53,6 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
 
         *output_path++ = '\"';
         *output_path++ = '\0';
-        // trim_the_shtuffs(c, output_path);
 
         t->type = is_wide ? TOKEN_STRING_WIDE_DOUBLE_QUOTE : TOKEN_STRING_DOUBLE_QUOTE;
         t->content = string_from_range(output_path_start, output_path - 1);
@@ -62,7 +61,6 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
         // line number as a string
         unsigned char* out = tb_arena_alloc(&c->tmp_arena, 10);
         size_t length = sprintf_s((char*)out, 10, "%d", c->unique_counter);
-        // trim_the_shtuffs(c, &out[length + 1]);
 
         t->type = TOKEN_INTEGER;
         t->content = (String){ length, out };
@@ -233,6 +231,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
     uint32_t macro_id = dyn_array_length(ctx->tokens.invokes);
     dyn_array_put(ctx->tokens.invokes, (MacroInvoke){
             .name      = t.content,
+            .depth     = parent_macro ? ctx->tokens.invokes[parent_macro].depth+1 : 1,
             .parent    = parent_macro,
             .def_site  = { def_site, { def_site.raw + def_str.length } },
             .call_site = t.location,
@@ -382,10 +381,10 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                 if (arg_t.type == ',' && parens == 0) { break; }
 
                 // convert token location into macro relative
-                if ((arg_t.location.raw & SourceLoc_IsMacro) == 0) {
+                /*if ((arg_t.location.raw & SourceLoc_IsMacro) == 0) {
                     uint32_t pos = arg_t.location.raw & ((1u << SourceLoc_FilePosBits) - 1);
                     arg_t.location = encode_macro_loc(macro_id, pos);
-                }
+                }*/
                 arg_t = tokens[arg_head++];
             }
             assert(parens == 0);
@@ -409,10 +408,10 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         if (start != read_tail) {
             memmove(&ctx->tokens.list.tokens[read_head], &ctx->tokens.list.tokens[read_tail], (start - read_tail) * sizeof(Token));
         }
-        dt += -(read_tail - read_head);
-        dyn_array_set_length(ctx->tokens.list.tokens, start + dt);
+        ptrdiff_t diff = -(read_tail - read_head);
+        dyn_array_set_length(ctx->tokens.list.tokens, start + diff);
         tb_arena_restore(&ctx->tmp_arena, sp);
-        return dt;
+        return diff + dt;
     }
 
     // Subst & Stringize
@@ -457,8 +456,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
         // convert token location into macro relative
         if ((def_t.location.raw & SourceLoc_IsMacro) == 0) {
-            uint32_t pos = def_t.location.raw & ((1u << SourceLoc_FilePosBits) - 1);
-            def_t.location = encode_macro_loc(macro_id, pos);
+            def_t.location = encode_macro_loc(macro_id, def_t.content.data - def_lexer.start);
         }
 
         push_token(ctx, def_t);
