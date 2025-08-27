@@ -1601,12 +1601,6 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             size_t len = atoms_len(s->decl.name);
             if (attrs.is_static) {
                 // Static initialization
-                char* name = tls_push(1024);
-                int name_len = snprintf(name, 1024, "%s.%s", function_name, s->decl.name);
-                if (name_len < 0 || name_len >= 1024) {
-                    assert(0 && "temporary global name too long!");
-                }
-
                 TB_DebugType* dbg_type = NULL;
                 if (tu->has_tb_debug_info) {
                     dbg_type = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(s->decl.type));

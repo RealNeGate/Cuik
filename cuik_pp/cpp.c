@@ -24,10 +24,14 @@
 #define CUIK__CPP_STATS 0
 #define MACRO_DEF_TOMBSTONE SIZE_MAX
 
-typedef struct PragmaOnceEntry {
-    char* key;
-    int value;
-} PragmaOnceEntry;
+typedef struct {
+    // if non-zero length, this holds the macro
+    // that is queried for the guard.
+    String name;
+    // if true, the header is only included if the
+    // name is a defined macro.
+    bool expected;
+} IncludeGuardEntry;
 
 enum {
     CPP_MAX_SCOPE_DEPTH = 4096,
@@ -76,7 +80,7 @@ struct Cuik_CPP {
     uint64_t total_define_accesses;
     #endif
 
-    NL_Strmap(int) include_once;
+    NL_Strmap(IncludeGuardEntry) include_once;
 
     // system libraries
     // DynArray(Cuik_IncludeDir)
@@ -140,10 +144,8 @@ typedef struct CPPStackSlot {
     struct CPPIncludeGuard {
         enum {
             INCLUDE_GUARD_INVALID = -1,
-
-            INCLUDE_GUARD_LOOKING_FOR_IFNDEF,
-            INCLUDE_GUARD_LOOKING_FOR_DEFINE,
-            INCLUDE_GUARD_LOOKING_FOR_ENDIF,
+            INCLUDE_GUARD_LOOKING_FOR_IF,    // #ifndef MACRO_NAME
+            INCLUDE_GUARD_LOOKING_FOR_ENDIF, // #endif
             INCLUDE_GUARD_EXPECTING_NOTHING,
         } status;
         int if_depth; // the depth value we expect the include guard to be at
@@ -355,7 +357,7 @@ void cuiklex_free_tokens(TokenStream* tokens) {
 
 void cuikpp_finalize(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
-    fprintf(stderr, " %80s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
+    fprintf(stderr, " %-80s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
         ctx->tokens.filepath,
         ctx->total_io_time / 1000000.0,
         ctx->total_files_read,
@@ -713,8 +715,8 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
         ctx->stack_ptr -= 1;
 
         if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
-            // the file is practically pragma once
-            nl_map_put_cstr(ctx->include_once, slot->filepath->data, 0);
+            IncludeGuardEntry e = { slot->include_guard.define };
+            nl_map_put_cstr(ctx->include_once, slot->filepath->data, e);
         }
 
         // write out profile entry

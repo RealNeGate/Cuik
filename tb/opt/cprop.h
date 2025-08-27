@@ -663,7 +663,7 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
 
     FOR_N(i, 0, input_count) {
         // partitions is used as the touched set
-        cuikperf_region_start("iter", NULL);
+        // cuikperf_region_start("iter", NULL);
         sparse_set_clear(&cprop->touched);
 
         for (CProp_Node* node = p->members; node; node = node->next) {
@@ -720,10 +720,10 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
             }
             TB_OPTDEBUG(STATS)(x->type < TB_NODE_TYPE_MAX ? (f->stats.cprop_t[x->type] += x->user_count, 0) : 0); // (cuik_time_in_nanos() - start), 0) : 0);
         }
-        cuikperf_region_end();
+        // cuikperf_region_end();
         // printf("\n\n\n");
 
-        cuikperf_region_start("touch", NULL);
+        // cuikperf_region_start("touch", NULL);
         aarray_for(j, cprop->touched.stack) {
             CProp_Partition* z = cprop->partitions[cprop->touched.stack[j]];
             if (z->member_count - z->follower_count != z->touched_count) {
@@ -752,7 +752,7 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
             z->touched_count = 0;
             z->touched = NULL;
         }
-        cuikperf_region_end();
+        // cuikperf_region_end();
     }
 }
 

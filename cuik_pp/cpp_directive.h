@@ -95,16 +95,6 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         return DIRECTIVE_ERROR;
     }
 
-    // Hash name
-    if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_DEFINE) {
-        // as long as the define matches the include guard we're good
-        if (string_equals(&slot->include_guard.define, &key.content)) {
-            slot->include_guard.status = INCLUDE_GUARD_LOOKING_FOR_ENDIF;
-        } else {
-            slot->include_guard.status = INCLUDE_GUARD_INVALID;
-        }
-    }
-
     // if there's a parenthesis directly after the identifier
     // it's a macro function... yes this is an purposeful off-by-one
     // it's mostly ok tho
@@ -233,8 +223,8 @@ static DirectiveResult cpp__ifndef(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         if (!push_scope(ctx, r, true)) return DIRECTIVE_ERROR;
 
         // if we don't skip the body then maybe just maybe it's a guard macro
-        if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_IFNDEF) {
-            slot->include_guard.status = INCLUDE_GUARD_LOOKING_FOR_DEFINE;
+        if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_IF) {
+            slot->include_guard.status = INCLUDE_GUARD_LOOKING_FOR_ENDIF;
             slot->include_guard.define = t.content;
             slot->include_guard.if_depth = ctx->depth;
         }
@@ -395,6 +385,8 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     }
 
     // find canonical filesystem path
+    cuikperf_region_start("locate", NULL);
+
     Cuik_Path canonical;
     LocateResult l = locate_file(ctx, is_lib_include, slot->directory, filename, &canonical);
     if ((l & LOCATE_FOUND) == 0) {
@@ -405,14 +397,19 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
         }
         return DIRECTIVE_ERROR;
     }
+    cuikperf_region_end();
 
     // check if in include_once list
     ptrdiff_t search = nl_map_get_cstr(ctx->include_once, canonical.data);
     if (search >= 0) {
-        if (cuikperf_is_active()) {
-            cuikperf_region_end();
+        IncludeGuardEntry* guard = &ctx->include_once[search].v;
+        if (guard->name.length == 0 || is_defined(ctx, guard->name.data, guard->name.length) == guard->expected) {
+            // printf("AAA %s\n", canonical.data);
+            if (cuikperf_is_active()) {
+                cuikperf_region_end();
+            }
+            return DIRECTIVE_YIELD;
         }
-        return DIRECTIVE_YIELD;
     }
 
     Cuik_Path* alloced_filepath = alloc_path(ctx, canonical.data);
@@ -469,7 +466,8 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     String pragma_type = t.content;
 
     if (string_equals_cstr(&pragma_type, "once")) {
-        nl_map_put_cstr(ctx->include_once, slot->filepath->data, 0);
+        IncludeGuardEntry e = { 0 };
+        nl_map_put_cstr(ctx->include_once, slot->filepath->data, e);
 
         // We gotta hit a line by now
         warn_if_newline(in);

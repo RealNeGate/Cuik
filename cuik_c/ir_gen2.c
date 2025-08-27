@@ -1135,18 +1135,12 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                 // Static initialization
                 TB_ArenaSavepoint sp = tb_arena_save(muh_tmp_arena);
 
-                char* name = tb_arena_alloc(muh_tmp_arena, 1024);
-                int name_len = snprintf(name, 1024, "%s.%s", function_name, s->decl.name);
-                if (name_len < 0 || name_len >= 1024) {
-                    assert(0 && "temporary global name too long!");
-                }
-
                 TB_DebugType* dbg_type = NULL;
                 if (tu->has_tb_debug_info) {
                     dbg_type = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(s->decl.type));
                 }
 
-                TB_Global* g = tb_global_create(tu->ir_mod, name_len, name, dbg_type, TB_LINKAGE_PRIVATE);
+                TB_Global* g = tb_global_create(tu->ir_mod, -1, s->decl.name, dbg_type, TB_LINKAGE_PRIVATE);
                 tb_arena_restore(muh_tmp_arena, sp);
 
                 TB_ModuleSectionHandle section = get_variable_storage(tu->ir_mod, &attrs, s->decl.type.raw & CUIK_QUAL_CONST);

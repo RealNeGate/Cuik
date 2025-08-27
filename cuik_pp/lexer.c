@@ -31,7 +31,7 @@ TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_gl
     size_t v = (hash_with_len(str, len) * PERFECT_HASH_SEED) >> 56;
     v = keywords_table[v];
 
-    if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x10000000) {
+    if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x800000) {
         return TOKEN_IDENTIFIER;
     }
 
@@ -50,11 +50,11 @@ TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_gl
         _SIDD_UNIT_MASK
     );
 
-    return result == 16 ? (0x10000000 + v) : TOKEN_IDENTIFIER;
+    return result == 16 ? (0x800000 + v) : TOKEN_IDENTIFIER;
     #else
     if (strlen(keywords[v]) != len) return TOKEN_IDENTIFIER;
 
-    return memcmp((const char*) str, keywords[v], len) == 0 ? (0x10000000 + v) : TOKEN_IDENTIFIER;
+    return memcmp((const char*) str, keywords[v], len) == 0 ? (0x800000 + v) : TOKEN_IDENTIFIER;
     #endif
 }
 
