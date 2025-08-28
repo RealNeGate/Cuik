@@ -692,6 +692,7 @@ void pe_append_library(TPool* pool, void** args) {
         char* strtab = ar_parser.symbol_strtab;
 
         if (l->jobs.pool != NULL) {
+            #if CUIK_ALLOW_THREADS
             TB_ArchiveFileParser* p = tb_arena_alloc(&linker_perm_arena, sizeof(TB_ArchiveFileParser));
             *p = ar_parser;
 
@@ -722,6 +723,9 @@ void pe_append_library(TPool* pool, void** args) {
                 LazyImportTask t = { l, lib, p, start_i, start_j, i - start_i };
                 lazy_import_task(NULL, &(void*){ &t });
             }
+            #else
+            abort(); // Unreachable
+            #endif
         } else {
             size_t i = 0, j = 0;
             while (i < ar_parser.symbol_count) {

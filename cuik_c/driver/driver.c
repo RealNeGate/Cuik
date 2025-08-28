@@ -591,8 +591,12 @@ static void step_submit(Cuik_BuildStep* s, TPool* tp, mtx_t* mutex, bool has_sib
     info->mutex = mutex;
     CUIK_TIMED_BLOCK("task invoke") {
         if (tp != NULL && has_siblings) {
+            #if CUIK_ALLOW_THREADS
             log_debug("Punting build step %p to another thread", s);
             tpool_add_task(tp, (tpool_task_proc*) s->invoke, info);
+            #else
+            abort(); // Unreachable
+            #endif
         } else {
             // we're an only child, there's no reason to multithread
             s->invoke(tp, (void**) &info);
@@ -826,10 +830,12 @@ static void irgen_job(TPool* pool, void** arg) {
         }
     }
 
+    #if CUIK_ALLOW_THREADS
     if (task.done) {
         atomic_fetch_add_explicit(task.done, 1, memory_order_acq_rel);
         futex_signal(task.done);
     }
+    #endif
 }
 
 static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {

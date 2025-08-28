@@ -38,6 +38,7 @@ static size_t good_batch_size(size_t n, size_t jobs) {
 
 void cuiksched_per_function(TPool* tp, CompilationUnit* cu, TB_Module* mod, void* arg, CuikSched_PerFunction func) {
     if (tp != NULL) {
+        #if CUIK_ALLOW_THREADS
         Futex done = 0;
         size_t count = 0;
 
@@ -62,6 +63,9 @@ void cuiksched_per_function(TPool* tp, CompilationUnit* cu, TB_Module* mod, void
         }
 
         futex_wait_eq(&done, count);
+        #else
+        abort(); // Unreachable
+        #endif
     } else {
         size_t func_count = dyn_array_length(cu->worklist);
         for (size_t i = 0; i < func_count; i++) {

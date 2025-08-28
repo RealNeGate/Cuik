@@ -211,6 +211,7 @@ static void func_sccp_rewrite_task(TPool* tp, void** arg) {
 
 void push_ipsccp_job(TB_Module* m, TB_Function* f) {
     if (m->ipsccp_pool) {
+        #if CUIK_ALLOW_THREADS
         // either...
         // * we're not on the list, push to list.
         // * we're processing, move to retry state.
@@ -233,6 +234,9 @@ void push_ipsccp_job(TB_Module* m, TB_Function* f) {
             void* args[2] = { f };
             tpool_add_task2(m->ipsccp_pool, func_sccp_task, 2, args);
         }
+        #else
+        abort(); // Unreachable
+        #endif
     } else {
         IPOSolver* ipo = m->ipo;
         int status = atomic_load_explicit(&f->ipsccp_status, memory_order_relaxed);
@@ -269,6 +273,7 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
     m->ipsccp_tracker[0] = m->ipsccp_tracker[1] = 0;
 
     if (pool) {
+        #if CUIK_ALLOW_THREADS
         // any entry-point functions will be pushed
         nbhs_for(entry, &m->symbols) {
             TB_Symbol* s = *entry;
@@ -312,6 +317,9 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
         while (old = m->ipsccp_tracker[0], old != m->ipsccp_tracker[1]) {
             futex_wait(&m->ipsccp_tracker[0], old);
         }
+        #else
+        abort(); // Unreachable
+        #endif
     } else {
         // any entry-point functions will be pushed
         nbhs_for(entry, &m->symbols) {

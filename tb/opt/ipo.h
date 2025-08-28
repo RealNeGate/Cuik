@@ -364,6 +364,7 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
     // Run function-local opts and
     CUIK_TIMED_BLOCK("initial optimize round") {
         if (pool) {
+            #if CUIK_ALLOW_THREADS
             Futex tracker[2] = { 0 };
             nbhs_for(entry, &m->symbols) {
                 TB_Symbol* s = *entry;
@@ -382,6 +383,9 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
             while (old = tracker[0], old != tracker[1]) {
                 futex_wait(&tracker[0], old);
             }
+            #else
+            abort(); // Unreachable
+            #endif
         } else {
             nbhs_for(entry, &m->symbols) {
                 TB_Symbol* s = *entry;

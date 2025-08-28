@@ -192,8 +192,12 @@ void tb_linker_append_object(TB_Linker* l, const char* file_name) {
         };
 
         if (l->jobs.pool != NULL) {
+            #if CUIK_ALLOW_THREADS
             l->jobs.count += 1;
             tpool_add_task(l->jobs.pool, l->vtbl.append_object, obj_file);
+            #else
+            abort(); // Unreachable
+            #endif
         } else {
             l->vtbl.append_object(NULL, &(void*){ obj_file });
         }
@@ -220,8 +224,12 @@ void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
     };
 
     if (l->jobs.pool != NULL) {
+        #if CUIK_ALLOW_THREADS
         l->jobs.count += 1;
         tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_module, lib_file);
+        #else
+        abort(); // Unreachable
+        #endif
     } else {
         l->vtbl.append_module(NULL, &(void*){ lib_file });
     }
@@ -285,8 +293,12 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     };
 
     if (l->jobs.pool != NULL) {
+        #if CUIK_ALLOW_THREADS
         l->jobs.count += 1;
         tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_library, lib_file);
+        #else
+        abort(); // Unreachable
+        #endif
     } else {
         l->vtbl.append_library(NULL, &(void*){ lib_file });
     }
@@ -544,8 +556,12 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject*
         log_debug("Loaded %.*s for %.*s", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
 
         if (l->jobs.pool != NULL) {
+            #if CUIK_ALLOW_THREADS
             l->jobs.count += 1;
             tpool_add_task(l->jobs.pool, l->vtbl.append_object, obj);
+            #else
+            abort(); // Unreachable
+            #endif
         } else {
             l->vtbl.append_object(NULL, &(void*){ obj });
         }
@@ -724,6 +740,7 @@ void tb_linker_export_pieces(TB_Linker* l) {
 
     uint8_t* output = l->output;
     if (l->jobs.pool != NULL) {
+        #if CUIK_ALLOW_THREADS
         l->jobs.done = 0;
         l->jobs.count = 0;
 
@@ -746,6 +763,7 @@ void tb_linker_export_pieces(TB_Linker* l) {
 
         // finish up exporting
         futex_wait_eq(&l->jobs.done, l->jobs.count);
+        #endif
     } else {
         dyn_array_for(i, sections) {
             dyn_array_for(j, sections[i]->pieces) {

@@ -23,7 +23,8 @@ local options = {
     lld           = false,
     gcc           = false,
     asan          = false,
-    spall_auto    = false
+    spall_auto    = false,
+    no_threads    = false,
 }
 
 -- Cuik/TB are broken down into several pieces
@@ -67,7 +68,7 @@ local modules = {
 }
 
 local ldflags = ""
-local cflags = " -g -march=haswell -I include -I common -Wall -Werror -Wno-unused -Wno-microsoft-enum-forward-reference -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
+local cflags = " -g -march=haswell -I include -I common -Wall -Werror -Wno-unused -Wno-microsoft-enum-forward-reference -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -I mimalloc/include"
 
 local supported_archs = {
     x64 = "-DTB_HAS_X64",
@@ -101,6 +102,10 @@ end
 
 if options.asan then
     cflags = cflags.." -fsanitize=address"
+end
+
+if not options.no_threads then
+    cflags = cflags.." -DCUIK_ALLOW_THREADS"
 end
 
 if options.driver then
