@@ -106,6 +106,8 @@ end
 
 if not options.no_threads then
     cflags = cflags.." -DCUIK_ALLOW_THREADS"
+else
+    cflags = cflags.." -DTB_NO_THREADS"
 end
 
 if options.driver then

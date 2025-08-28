@@ -4,7 +4,10 @@
 #ifndef EBR_H
 #define EBR_H
 
+#if CUIK_ALLOW_THREADS
 #include <threads.h>
+#endif
+
 #include <stdint.h>
 #include <stddef.h>
 #include <stdatomic.h>
@@ -58,6 +61,7 @@ void cuikperf_region_start(const char* label, const char* extra);
 void cuikperf_region_end(void);
 #endif
 
+#if CUIK_ALLOW_THREADS
 typedef struct EBR_Entry EBR_Entry;
 struct EBR_Entry {
     _Atomic(EBR_Entry*) next;
@@ -284,5 +288,18 @@ void ebr_exit_cs(void) {
     uint64_t t = atomic_load_explicit(&ebr_thread_entry->time, memory_order_relaxed);
     atomic_store_explicit(&ebr_thread_entry->time, t + EBR_PINNED_BIT + 1, memory_order_release);
 }
+#else
+// No threads? we can immediately free things then
+void ebr_init(void) {}
+void ebr_deinit(void) {}
+
+void ebr_enter_cs(void) {}
+void ebr_exit_cs(void) {}
+
+void ebr_free(void* ptr, size_t size) {
+    EBR_VIRTUAL_FREE(ptr, size);
+}
+
+#endif
 
 #endif // EBR_IMPL

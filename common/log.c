@@ -48,12 +48,14 @@ typedef struct {
 } Callback;
 
 static struct {
-    once_flag init;
-
-    void *udata;
     #if CUIK_ALLOW_THREADS
     mtx_t lock;
+    once_flag init;
+    #else
+    bool init;
     #endif
+
+    void *udata;
     int level;
     bool quiet;
     Callback callbacks[MAX_CALLBACKS];
@@ -155,9 +157,14 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
         #endif
     };
 
-    call_once(&L.init, log_init);
     #if CUIK_ALLOW_THREADS
+    call_once(&L.init, log_init);
     mtx_lock(&L.lock);
+    #else
+    if (!L.init) {
+        L.init = true;
+        log_init();
+    }
     #endif
 
     if (!L.quiet && level >= L.level) {

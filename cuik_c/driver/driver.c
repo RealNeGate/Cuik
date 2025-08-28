@@ -3,7 +3,6 @@
 #include <futex.h>
 #include <log.h>
 #include <arena.h>
-#include <threads.h>
 #include "driver_fs.h"
 #include "driver_sched.h"
 #include "driver_arg_parse.h"
@@ -16,6 +15,7 @@
 #endif
 
 #ifdef CUIK_ALLOW_THREADS
+#include <threads.h>
 #include <stdatomic.h>
 #endif
 

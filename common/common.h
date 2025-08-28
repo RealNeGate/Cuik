@@ -71,6 +71,21 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TODO() (assert(0 && "TODO"), __builtin_unreachable())
 #endif
 
+#if !CUIK_ALLOW_THREADS
+typedef struct {
+    int nothing;
+} mtx_t;
+
+enum {
+    mtx_plain
+};
+
+inline static void mtx_init(mtx_t* m, int x) {}
+inline static void mtx_lock(mtx_t* m) {}
+inline static void mtx_unlock(mtx_t* m) {}
+inline static void mtx_destroy(mtx_t* m) {}
+#endif
+
 // just because we use a threads fallback layer which can include windows
 // and such which is annoying... eventually need to modify that out or something
 #ifndef thread_local

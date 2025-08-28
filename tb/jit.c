@@ -507,6 +507,12 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
+#ifndef TB_NO_THREADS
+static once_flag tb_jit_init = ONCE_FLAG_INIT;
+#else
+static bool tb_jit_init;
+#endif
+
 static void init_poll_pages(void) {
     poll_site_pages = tb_platform_valloc(8192);
     tb_platform_vprotect(poll_site_pages + 4096, 4096, TB_PAGE_RXW);
@@ -520,9 +526,10 @@ TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size) {
     memset(cpu->user_data, 0, ud_size);
 
     #ifndef TB_NO_THREADS
-    call_once(&tb_global_init, init_poll_pages);
+    call_once(&tb_jit_init, init_poll_pages);
     #else
-    if (init_poll_pages == NULL) {
+    if (!tb_jit_init) {
+        tb_jit_init = true;
         init_poll_pages();
     }
     #endif

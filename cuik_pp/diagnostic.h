@@ -2,7 +2,10 @@
 #include "common.h"
 #include "lexer.h"
 #include <cuik.h>
+
+#if CUIK_ALLOW_THREADS
 #include <threads.h>
+#endif
 
 typedef struct DiagFixit {
     SourceRange loc;
