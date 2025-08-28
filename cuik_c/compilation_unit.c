@@ -1,11 +1,12 @@
 #include <common.h>
 #include <cuik.h>
-#include <threads.h>
 #include "parser.h"
 
 CompilationUnit* cuik_create_compilation_unit(void) {
     CompilationUnit* cu = cuik_calloc(1, sizeof(CompilationUnit));
+    #if CUIK_ALLOW_THREADS
     mtx_init(&cu->lock, mtx_plain);
+    #endif
     return cu;
 }
 
@@ -25,7 +26,9 @@ TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu) {
 
 void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
     assert(tu->next == NULL && "somehow the TU is already attached to something...");
+    #if CUIK_ALLOW_THREADS
     mtx_lock(&cu->lock);
+    #endif
 
     #ifdef CONFIG_HAS_TB
     tu->ir_mod = cu->ir_mod;
@@ -38,7 +41,9 @@ void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit*
     cu->tail = tu;
     cu->count += 1;
 
+    #if CUIK_ALLOW_THREADS
     mtx_unlock(&cu->lock);
+    #endif
 }
 
 void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
@@ -54,7 +59,10 @@ void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
         tu = next;
     }
 
+    #if CUIK_ALLOW_THREADS
     mtx_destroy(&cu->lock);
+    #endif
+
     cuik_free(cu);
 }
 

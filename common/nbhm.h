@@ -24,7 +24,6 @@
 #ifndef NBHM_H
 #define NBHM_H
 
-#include <threads.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdatomic.h>

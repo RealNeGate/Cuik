@@ -22,7 +22,10 @@
 //
 // https://github.com/colrdavidson/workpool/blob/main/pool.h
 #include "pool.h"
+
+#if CUIK_ALLOW_THREADS
 #include <threads.h>
+#endif
 
 #ifdef ENABLE_TRACING
 #include "spall_native_auto.h"

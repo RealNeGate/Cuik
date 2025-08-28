@@ -3,8 +3,11 @@
 #ifdef CONFIG_HAS_TB
 #include <arena.h>
 #include <common.h>
-#include <threads.h>
 #include "parser.h"
+
+#if CUIK_ALLOW_THREADS
+#include <threads.h>
+#endif
 
 #include <tb.h>
 

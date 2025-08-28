@@ -23,7 +23,6 @@
 #ifndef NBHS_H
 #define NBHS_H
 
-#include <threads.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdatomic.h>

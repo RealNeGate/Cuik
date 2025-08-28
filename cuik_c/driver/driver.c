@@ -300,13 +300,19 @@ static void cc_invoke(TPool* tp, void** arg) {
     Cuik_ImportRequest* imports = result.imports;
     if (cu != NULL) {
         if (imports != NULL) {
+            #if CUIK_ALLOW_THREADS
             mtx_lock(&cu->lock);
+            #endif
+
             for (; imports != NULL; imports = imports->next) {
                 Cuik_Path* p = cuik_malloc(sizeof(Cuik_Path));
                 cuik_path_set(p, imports->lib_name);
                 dyn_array_put(args->libraries, p);
             }
+
+            #if CUIK_ALLOW_THREADS
             mtx_unlock(&cu->lock);
+            #endif
         }
 
         cuik_add_to_compilation_unit(cu, tu);
@@ -824,9 +830,15 @@ static void irgen_job(TPool* pool, void** arg) {
             log_debug("%s: generated IR, size=%.1f KiB", name, size / 1024.0f);
             #endif
 
+            #if CUIK_ALLOW_THREADS
             mtx_lock(&cu->lock);
+            #endif
+
             dyn_array_put(cu->worklist, (TB_Function*) s);
+
+            #if CUIK_ALLOW_THREADS
             mtx_unlock(&cu->lock);
+            #endif
         }
     }
 

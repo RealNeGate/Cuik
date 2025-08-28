@@ -23,8 +23,11 @@
  */
 
 #include "log.h"
-#include <threads.h>
 #include <inttypes.h>
+
+#if CUIK_ALLOW_THREADS
+#include <threads.h>
+#endif
 
 #ifdef _WIN32
 #ifdef _POSIX_C_SOURCE
@@ -48,7 +51,9 @@ static struct {
     once_flag init;
 
     void *udata;
+    #if CUIK_ALLOW_THREADS
     mtx_t lock;
+    #endif
     int level;
     bool quiet;
     Callback callbacks[MAX_CALLBACKS];
@@ -132,7 +137,9 @@ static void init_event(log_Event *ev, void *udata) {
 
 static void log_init(void) {
     log_time_start = get_nanos() / 1000;
+    #if CUIK_ALLOW_THREADS
     mtx_init(&L.lock, mtx_plain);
+    #endif
 }
 
 void log_log(int level, const char *file, int line, const char *fmt, ...) {
@@ -149,7 +156,9 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
     };
 
     call_once(&L.init, log_init);
+    #if CUIK_ALLOW_THREADS
     mtx_lock(&L.lock);
+    #endif
 
     if (!L.quiet && level >= L.level) {
         init_event(&ev, stderr);
@@ -168,5 +177,7 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
         }
     }
 
+    #if CUIK_ALLOW_THREADS
     mtx_unlock(&L.lock);
+    #endif
 }

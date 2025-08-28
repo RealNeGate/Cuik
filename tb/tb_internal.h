@@ -61,7 +61,10 @@
 #include <arena.h>
 #include "set.h"
 
+#if CUIK_ALLOW_THREADS
 #include <threads.h>
+#endif
+
 #include <stdatomic.h>
 
 #define TB_DATA_TYPE_EQUALS(a, b) ((a).raw == (b).raw)

@@ -1,6 +1,8 @@
 // Microsoft's definition of strtok_s actually matches
 // strtok_r on POSIX, not strtok_s on C11... tf
+#if CUIK_ALLOW_THREADS
 #include <threads.h>
+#endif
 
 #ifdef _WIN32
 #define strtok_r(a, b, c) strtok_s(a, b, c)

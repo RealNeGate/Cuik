@@ -2,10 +2,13 @@
 #include <common.h>
 #include <futex.h>
 #include <pool.h>
-#include <threads.h>
 #include <file_map.h>
 #include <dyn_array.h>
 #include <tb_linker.h>
+
+#if CUIK_ALLOW_THREADS
+#include <threads.h>
+#endif
 
 #ifdef CONFIG_HAS_TB
 #include <tb.h>

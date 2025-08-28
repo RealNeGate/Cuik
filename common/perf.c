@@ -1,8 +1,11 @@
 #include <common.h>
 #include <perf.h>
-#include <threads.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+
+#if CUIK_ALLOW_THREADS
+#include <threads.h>
+#endif
 
 #ifdef CUIK_USE_SPALL_AUTO
 #define SPALL_BUFFER_PROFILING

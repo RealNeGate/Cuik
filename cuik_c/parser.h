@@ -1,10 +1,13 @@
 #pragma once
 #include <cuik.h>
 #include <cuik_ast.h>
-#include <threads.h>
 #include <stdatomic.h>
 #include <dyn_array.h>
 #include <inttypes.h>
+
+#if CUIK_ALLOW_THREADS
+#include <threads.h>
+#endif
 
 #ifdef CONFIG_HAS_TB
 #include <tb.h>
@@ -111,7 +114,10 @@ struct TranslationUnit {
     // DynArray(Stmt*)
     Stmt** top_level_stmts;
 
+    #if CUIK_ALLOW_THREADS
     mtx_t diag_mutex;
+    #endif
+
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
     Cuik_Type* va_list;
@@ -125,7 +131,10 @@ struct TranslationUnit {
 };
 
 struct CompilationUnit {
+    #if CUIK_ALLOW_THREADS
     mtx_t lock;
+    #endif
+
     size_t count;
 
     #ifdef CONFIG_HAS_TB

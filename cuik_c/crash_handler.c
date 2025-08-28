@@ -8,7 +8,9 @@
 #include <DbgHelp.h>
 #pragma comment(lib, "Dbghelp.lib")
 
+#if CUIK_ALLOW_THREADS
 #include <threads.h>
+#endif
 
 static mtx_t crash_mutex;
 
