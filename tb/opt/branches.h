@@ -143,62 +143,6 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                     changes = true;
                     continue;
                 }
-
-                #if 0
-                if (n->inputs[i]->user_count == 1 && n->inputs[i]->input_count > 0) {
-                    assert(USERN(n->inputs[i]->users) == n);
-                    changes = true;
-
-                    TB_Node* pred = n->inputs[i];
-                    {
-                        size_t old_count = n->input_count;
-                        size_t new_count = old_count + (pred->input_count - 1);
-
-                        // convert pred-of-pred into direct pred
-                        set_input(f, n, pred->inputs[0], i);
-
-                        // append rest to the end (order really doesn't matter)
-                        //
-                        // NOTE(NeGate): we might waste quite a bit of space because of the arena
-                        // alloc and realloc
-                        TB_Node** new_inputs = tb_arena_alloc(&f->arena, new_count * sizeof(TB_Node*));
-                        memcpy(new_inputs, n->inputs, old_count * sizeof(TB_Node*));
-                        n->inputs = new_inputs;
-                        n->input_count = new_count;
-                        n->input_cap = new_count;
-
-                        FOR_N(j, 0, pred->input_count - 1) {
-                            new_inputs[old_count + j] = pred->inputs[j + 1];
-                            add_user(f, n, pred->inputs[j + 1], old_count + j);
-                        }
-                    }
-
-                    // update PHIs
-                    FOR_USERS(u, n) {
-                        if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
-                            // we don't replace the initial, just the rest
-                            TB_Node* phi = USERN(u);
-                            TB_Node* phi_val = phi->inputs[i + 1];
-
-                            // append more phi vals... lovely allocs
-                            size_t phi_ins = phi->input_count;
-                            size_t new_phi_ins = phi_ins + (pred->input_count - 1);
-
-                            TB_Node** new_inputs = tb_arena_alloc(&f->arena, new_phi_ins * sizeof(TB_Node*));
-                            memcpy(new_inputs, phi->inputs, phi_ins * sizeof(TB_Node*));
-                            phi->inputs = new_inputs;
-                            phi->input_count = new_phi_ins;
-                            phi->input_cap = new_phi_ins;
-
-                            FOR_N(j, 0, pred->input_count - 1) {
-                                new_inputs[phi_ins + j] = phi_val;
-                                add_user(f, phi, phi_val, phi_ins + j);
-                            }
-                        }
-                    }
-                    continue;
-                }
-                #endif
             }
             i += 1;
         }
@@ -208,7 +152,6 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
             if (cfg_is_natural_loop(n) && n->input_count != 2) {
                 n->type = TB_REGION;
             }
-
             return n;
         }
     }

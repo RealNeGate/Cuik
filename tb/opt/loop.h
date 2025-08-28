@@ -1409,7 +1409,14 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 set_input(f, un, entry_phi, 1);
                 set_input(f, un, back_phi, 2);
                 un->input_count = 3;
+
+                loop_set_ctrl(ctx, entry_phi, entry_region);
+                loop_set_ctrl(ctx, back_phi, back_region);
             }
+
+            loop_set_ctrl(ctx, entry_region, entry_region);
+            loop_set_ctrl(ctx, back_region, back_region);
+            nl_table_put(&ctx->loop_map, back_region, loop);
 
             // sort preds into regions
             size_t back_i = 0, entry_i = 0;
