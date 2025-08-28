@@ -724,7 +724,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
         // as we do instruction selection, the graph will have small trees introduced, there's
         // no need to check patterns for anything by the root of the tree.
-        size_t old_node_count = f->node_count;
         while (worklist_count(ws)) {
             int start = worklist_count(ws);
             TB_Node* n = ws->items[start - 1];
@@ -741,6 +740,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
             TB_OPTDEBUG(ISEL3)(printf("ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
             tb__gvn_remove(f, n);
+
+            size_t old_node_count = f->node_count;
             bool progress;
             do {
                 TB_Node* k = node_isel_raw(&ctx, f, n, 1);

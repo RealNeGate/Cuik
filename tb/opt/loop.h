@@ -889,7 +889,7 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         TB_Node* cmp = NULL;
         if (stepper) {
             FOR_USERS(u2, stepper) {
-                if (USERN(u2) == latch->inputs[1] && latch->inputs[1]->user_count == 1) {
+                if (USERN(u2) == latch->inputs[1] && USERI(u2) == 1 && latch->inputs[1]->user_count == 1) {
                     cmp = latch->inputs[1];
                 } else if (USERN(u2) == latch) {
                     TB_ASSERT(USERI(u2) == 1);

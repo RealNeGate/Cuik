@@ -329,20 +329,13 @@ static Lattice* lattice_f64_const(TB_Function* f, double con) {
 
 static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uint64_t zeros, uint64_t ones, int bits) {
     TB_ASSERT(min <= max);
-
-    uint64_t umin = min;
-    uint64_t umax = max;
-    if (umin > umax) {
-        umin = 0, umax = lattice_uint_max(bits);
-    }
-
-    if (umin != umax) {
+    if (min != max) {
         // wherever the highest differing bit is we just clear everything below that
-        int msb_diff = 64 - __builtin_clzll(umin ^ umax);
+        int msb_diff = 64 - __builtin_clzll(min ^ max);
         uint64_t diff = ~(UINT64_MAX >> (64 - msb_diff));
 
-        zeros |= ~umin & diff;
-        ones  |=  umin & diff;
+        zeros |= ~min & diff;
+        ones  |=  min & diff;
     } else {
         zeros |= ~min;
         ones  |=  min;

@@ -374,14 +374,16 @@ static Lattice* value_region(TB_Function* f, TB_Node* n) {
 static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int64_t trips_max, int64_t step, int bits) {
     int64_t max;
     if (mul_overflow(trips_max, step, bits, &max)) { return NULL; }
-    if (add_overflow(max, init->_int.min, bits, &max)) { return NULL; }
+    if (add_overflow(max, init->_int.max, bits, &max)) { return NULL; }
 
     // min can't overflow if max overflows since min < max
     int64_t min = (uint64_t)init->_int.min + (uint64_t) (((uint64_t) trips_min-1)*step);
-    if (step > 0) {
-        if (min <= max) { return lattice_gimme_int(f, min, max, bits); }
-    } else if (step > 0) {
-        if (min >= max) { return lattice_gimme_int(f, max, min, bits); }
+    if (min >= lattice_int_min(bits) && max <= lattice_int_max(bits)) {
+        if (step > 0) {
+            if (min <= max) { return lattice_gimme_int(f, min, max, bits); }
+        } else if (step > 0) {
+            if (min >= max) { return lattice_gimme_int(f, max, min, bits); }
+        }
     }
     return NULL;
 }
@@ -431,22 +433,16 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                     Lattice* init = latuni_get(f, var.phi->inputs[1]);
                     end = var.end_cond ? latuni_get(f, var.end_cond) : lattice_int_const(f, var.end_const);
 
-                    if (
-                        init->tag == LATTICE_INT &&
-                        end->tag == LATTICE_INT &&
-                        var.step > 0 &&
-                        init->_int.max <= end->_int.min
-                    ) {
-                        int64_t pad = var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
-                        int64_t trips = (end->_int.max - init->_int.min + pad) / var.step;
-                        int64_t rem   = (end->_int.max - init->_int.min) % var.step;
-                        if (rem == 0 || var.pred != IND_NE) {
-                            trips_max = trips;
+                    if (init->tag == LATTICE_INT && end->tag == LATTICE_INT) {
+                        Lattice* range = value_arith_raw(f, TB_SUB, n->dt, end, init, false, false);
+                        if (var.step > 0 && range->_int.max > 0) {
+                            int64_t pad = var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
+                            int64_t trips = (range->_int.max + pad) / var.step;
+                            int64_t rem   = range->_int.max % var.step;
+                            if (rem == 0 || var.pred != IND_NE) {
+                                trips_max = trips;
+                            }
                         }
-                    } else {
-                        // TODO(NeGate): we vaguely know the range, this is the common case
-                        // so let's handle it. main things we wanna know are whether or not
-                        // the number is ever negative.
                     }
 
                     if (var.phi != n) { end = NULL; }
@@ -466,7 +462,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                         return &TOP_IN_THE_SKY;
                     }
 
-                    if (lattice_is_const(init) && trips_max <= INT64_MAX) {
+                    if (init->tag == LATTICE_INT && trips_max <= INT64_MAX) {
                         Lattice* range = affine_iv(f, init, trips_min, trips_max, step, bits);
                         if (range) { return range; }
                     }
@@ -1198,7 +1194,7 @@ static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
 // because certain optimizations apply when things are the same
 // we mark ALL users including the ones who didn't get changed
 // when subsuming.
-static TB_Node* peephole(TB_Function* f, TB_Node* n) {
+static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
     TB_OPTLOG(PEEP, printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
     bool progress = false;
@@ -1236,7 +1232,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
     }
 
     // idealize ops could kill a node
-    if (n->user_count == 0) {
+    if (see_users && n->user_count == 0) {
         TB_OPTLOG(PEEP, printf(" => \x1b[93mKILL\x1b[0m"));
         return NULL;
     }
@@ -1367,7 +1363,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
 }
 
 TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
-    TB_Node* k = peephole(f, n);
+    TB_Node* k = peephole(f, n, false);
     return k ? k : n;
 }
 
@@ -1416,7 +1412,7 @@ int tb_opt_peeps(TB_Function* f) {
                 TB_OPTLOG(PEEP, printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
                 TB_OPTLOG(PEEP, printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_kill_node(f, n);
-            } else if (peephole(f, n)) {
+            } else if (peephole(f, n, true)) {
                 changes += 1;
             }
         }
@@ -1457,7 +1453,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPT_LOG_ENABLED
-    if (strcmp(f->super.name, "scale_bodies") == 0) {
+    if (strcmp(f->super.name, "dfa_range") == 0) {
         f->enable_log = true;
     }
     #endif

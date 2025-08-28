@@ -1,3 +1,4 @@
+
 // "Register Spilling and Live-Range Splitting for SSA-Form Programs" Sebastian Hack, Matthias Braun (2009)
 typedef struct {
     size_t old_node_count;
@@ -40,18 +41,6 @@ static int spill_map_get2(NL_Table* spill_map, TB_Node* n) {
 
 static bool should_skip_over(TB_Node* n) {
     return is_proj(n) || n->type == TB_PHI || n->type == TB_MACH_FRAME_PTR;
-}
-
-static TB_Node** coalesce_set_array(Ctx* ctx, Rogers* ra, TB_Node** n_ptr, size_t* out_count) {
-    int leader = uf_find(ra->uf, ra->uf_len, (*n_ptr)->gvn);
-    ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
-    if (set) {
-        *out_count = aarray_length(set);
-        return set;
-    } else {
-        *out_count = 1;
-        return n_ptr;
-    }
 }
 
 static TB_Node* alloc_spill_node(Ctx* ctx, Rogers* ra, RegMask* spill_mask, TB_Node* def) {

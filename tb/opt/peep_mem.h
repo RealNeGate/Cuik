@@ -468,8 +468,8 @@ static TB_Node* ideal_ptr_offset(TB_Function* f, TB_Node* n) {
         Lattice* lhs_type = value_of(f, lhs);
         latuni_set(f, lhs, lhs_type);
 
-        set_input(f, n, base->inputs[1], 1);
-        set_input(f, n, lhs,             2);
+        set_input(f, n, lhs, 1);
+        set_input(f, n, offset->inputs[2], 2);
         return n;
     }
 

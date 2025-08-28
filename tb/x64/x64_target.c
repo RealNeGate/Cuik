@@ -1172,18 +1172,27 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
 
             ctx->num_regs[REG_CLASS_STK] = ctx->param_count + ctx->call_usage + ctx->num_spills + 1;
         }
-    } else if (n->type == TB_PROJ && (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div)) {
-        TB_Node* tuple = n->inputs[0];
-        int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+    } else if (n->type == x86_idiv || n->type == x86_div) {
+        uint32_t has_proj = 0;
+        FOR_USERS(u, n) {
+            if (is_proj(USERN(u))) {
+                int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                has_proj |= 1ull << index;
+            }
+        }
 
-        node_add_tmp(ctx, tuple, intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX));
+        node_add_tmp(ctx, n, intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX));
 
-        // add the remaining projection
-        TB_Node* proj = tb_alloc_node(f, TB_PROJ, n->dt, 1, sizeof(TB_NodeMachProj));
-        set_input(f, proj, tuple, 0);
-        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = !index);
+        if (has_proj != 3) {
+            TB_ASSERT(has_proj == 1 || has_proj == 2);
 
-        proj = tb_opt_gvn_node(f, proj);
+            // add the remaining projection (if you have 0, you need 1, else you need 0)
+            TB_Node* proj = tb_alloc_node(f, TB_PROJ, n->dt, 1, sizeof(TB_NodeMachProj));
+            set_input(f, proj, n, 0);
+            TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = has_proj == 1 ? 1 : 0);
+
+            proj = tb_opt_gvn_node(f, proj);
+        }
     }
 }
 
