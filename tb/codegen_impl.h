@@ -392,7 +392,7 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int
                     wants_operand = 2; // COND
                 }
 
-                if (wants_operand ) {
+                if (wants_operand) {
                     if (depth == 1 && mach_is_operand[in->type]) {
                         TB_OPTDEBUG(ISEL2)(printf("\n"));
 

@@ -1453,7 +1453,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPT_LOG_ENABLED
-    if (strcmp(f->super.name, "dfa_range") == 0) {
+    if (strcmp(f->super.name, "foo") == 0) {
         f->enable_log = true;
     }
     #endif

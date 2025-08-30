@@ -137,6 +137,15 @@ static TB_Node* insert_spill(Ctx* ctx, Rogers* ra, RegSplitter* splitter, TB_Bas
     return cpy;
 }
 
+static bool has_immediate_use(TB_Node* n, TB_Node* of) {
+    FOR_N(i, 1, n->input_count) {
+        if (n->inputs[i] == of) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool is_spill_store(TB_Node* n) {
     if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
@@ -714,21 +723,25 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
                     FOR_N(spill, 0, num_spills) {
                         TB_Node* def = bb_defs[spill];
                         if (((class2vreg[class] & W) >> spill) & 1) {
-                            if (def == NULL) {
-                                TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%zu: wasn't live in HRP region\n", bb_id, spill));
-                            } else if (!can_remat(ctx, def)) {
-                                size_t t = j;
-                                bb_defs[spill] = insert_spill(ctx, ra, &splitter, bb, def, spill, &t);
-                                j += t <= j;
-                            } else if (def->type == TB_MACH_COPY && !reg_mask_is_stack(TB_NODE_GET_EXTRA_T(def, TB_NodeMachCopy)->use)) {
-                                TB_NODE_GET_EXTRA_T(def, TB_NodeMachCopy)->def = splitter.spill_mask[spill];
-                                TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%zu: convert copy to spill-store %%%u\n", bb_id, spill, def->gvn));
-                            } else {
-                                TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%zu: split remat %%%u\n", bb_id, spill, def->gvn));
-                            }
+                            // don't spill right now if we're about to use it in a coalesced op (it wouldn't
+                            // save on reg pressure)
+                            if (spill_map_get2(&splitter.spill_map, bb->items[j]) != spill) {
+                                if (def == NULL) {
+                                    TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%zu: wasn't live in HRP region\n", bb_id, spill));
+                                } else if (!can_remat(ctx, def)) {
+                                    size_t t = j;
+                                    bb_defs[spill] = insert_spill(ctx, ra, &splitter, bb, def, spill, &t);
+                                    j += t <= j;
+                                } else if (def->type == TB_MACH_COPY && !reg_mask_is_stack(TB_NODE_GET_EXTRA_T(def, TB_NodeMachCopy)->use)) {
+                                    TB_NODE_GET_EXTRA_T(def, TB_NodeMachCopy)->def = splitter.spill_mask[spill];
+                                    TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%zu: convert copy to spill-store %%%u\n", bb_id, spill, def->gvn));
+                                } else {
+                                    TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%zu: split remat %%%u\n", bb_id, spill, def->gvn));
+                                }
 
-                            // S &= ~(1ull << spill);
-                            W &= ~(1ull << spill);
+                                // S &= ~(1ull << spill);
+                                W &= ~(1ull << spill);
+                            }
                         }
                     }
                 }
@@ -856,7 +869,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
 
                     TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%d: def %%%u\n", bb_id, spill, n->gvn));
 
-                    bool should_spill_immediately = ((spill_aggro | splitter.remat_all) >> spill) & 1;
+                    bool should_spill_immediately = ((is_hrp_rn | spill_aggro | splitter.remat_all) >> spill) & 1;
                     int class = splitter.reload_mask[spill]->class;
                     if (j >= ra->hrp[bb_id].start[class] && j <= ra->hrp[bb_id].end[class]) {
                         should_spill_immediately = true;

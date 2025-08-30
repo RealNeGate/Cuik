@@ -654,6 +654,8 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         return false;
     }
 
+    __debugbreak();
+
     TB_OPTDEBUG(SLP)(printf("=== COMPILED ===\n"));
     FOR_REV_N(i, 0, dyn_array_length(schedule)) {
         VectorOp* op = schedule[i];

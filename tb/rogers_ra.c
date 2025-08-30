@@ -425,20 +425,27 @@ static void rogers_dump_split(Ctx* restrict ctx, Rogers* restrict ra, TB_BasicBl
 }
 
 // mark program point as HRP
-static void mark_point_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, int reg_class) {
+static void mark_point_as_hrp(Ctx* ctx, Rogers* ra, TB_Node* n, int reg_class) {
     TB_ASSERT(reg_class > 0);
     TB_OPTDEBUG(REGALLOC6)(printf("#       %%%u is considered HRP\n", gvn));
 
-    int bb_id = ctx->f->scheduled[gvn] - ctx->cfg.blocks;
+    uint32_t gvn = n->gvn;
+    TB_BasicBlock* bb = ctx->f->scheduled[gvn];
+    int bb_id = bb - ctx->cfg.blocks;
     int t = ra->order[gvn] - 1;
+
+    int end_t = t;
+    while (end_t+1 < aarray_length(bb->items) && is_proj(bb->items[end_t+1]) && bb->items[end_t+1]->inputs[0] == n) {
+        end_t++;
+    }
 
     HRPRegion* hrp = &ra->hrp[bb_id];
     if (hrp->start[reg_class] < 0) {
         hrp->start[reg_class] = t;
-        hrp->end[reg_class]   = t;
+        hrp->end[reg_class]   = end_t;
     } else {
         hrp->start[reg_class] = TB_MIN(hrp->start[reg_class], t);
-        hrp->end[reg_class]   = TB_MAX(hrp->end[reg_class], t);
+        hrp->end[reg_class]   = TB_MAX(hrp->end[reg_class], end_t);
     }
 }
 
@@ -860,7 +867,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             #endif
 
             ctx->num_spills += ra.num_spills - starting_spills;
-            printf("ROUNDS ON %s: %d\n", f->super.name, rounds);
+            // printf("ROUNDS ON %s: %d\n", f->super.name, rounds);
             return;
         }
 
@@ -1103,7 +1110,7 @@ static SplitDecision choose_best_spill(Ctx* restrict ctx, Rogers* restrict ra, T
         } else {
             // mark all use sites as HRP
             FOR_USERS(u, attempted_n) {
-                mark_point_as_hrp(ctx, ra, USERN(u)->gvn, useful_class);
+                mark_point_as_hrp(ctx, ra, USERN(u), useful_class);
             }
         }
 
@@ -1503,7 +1510,17 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 int vreg_id = ctx->vreg_map[n->gvn];
                 if (vreg_id > 0 && !set_get(&ra->future_active, n->gvn)) {
                     // allocate pre-colored regs before anything else
-                    if (fixed_reg_mask(ctx->vregs[vreg_id].mask) >= 0) {
+                    int fixed = fixed_reg_mask(ctx->vregs[vreg_id].mask);
+                    if (ctx->vregs[vreg_id].assigned >= 0 || fixed >= 0) {
+                        if (ctx->vregs[vreg_id].class != REG_CLASS_STK && fixed < 0) {
+                            // this value was colored by a previous allocation pass, we'll limit the mask accordingly
+                            ctx->vregs[vreg_id].mask = intern_regmask2(ctx, ctx->vregs[vreg_id].class, false, ctx->vregs[vreg_id].assigned);
+                        }
+
+                        // "reset" assignment
+                        ctx->vregs[vreg_id].class = 0;
+                        ctx->vregs[vreg_id].assigned = -1;
+
                         // must account for interference against any of the previously defined regs
                         cuikperf_region_start("step", NULL);
                         allocate_reg(ctx, ra, n);
@@ -1520,17 +1537,6 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                             set_put(&ra->future_active, set[k]->gvn);
                         }
                         cuikperf_region_end();
-                    } else if (ctx->vregs[vreg_id].assigned >= 0) {
-                        // put it into future active
-                        set_put(&ra->future_active, n->gvn);
-
-                        size_t cnt;
-                        TB_Node** set = coalesce_set_array(ctx, ra, &n, &cnt);
-                        FOR_N(k, 0, cnt) {
-                            // put the pre-colored regs to rest
-                            TB_ASSERT(set[k]->gvn < ctx->f->node_count);
-                            set_put(&ra->future_active, set[k]->gvn);
-                        }
                     }
                 }
             }
@@ -1622,7 +1628,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
                         if (!hrp_point) {
                             hrp_point = true;
-                            mark_point_as_hrp(ctx, ra, n->gvn, kill_class);
+                            mark_point_as_hrp(ctx, ra, n, kill_class);
                         }
 
                         if (!set_get(&ra->been_spilled, in_use_vreg_id)) {

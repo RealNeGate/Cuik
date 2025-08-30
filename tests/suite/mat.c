@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 static int foo(int a, int b) {
@@ -105,20 +106,25 @@ int main() {
     printf("H %d\n", count(0b100010010001));
 
     uint64_t seed = 11400714819323198485llu;
-
-    float dst[16], a[16], b[16];
+    float* dst = malloc(256 * sizeof(float));
+    float* a = malloc(256 * sizeof(float));
+    float* b = malloc(256 * sizeof(float));
     for (int i = 0; i < 200; i++) {
         uint32_t x = pcg32_pie(&seed);
         printf("F %d %d\n", foo(i, 3), x);
 
-        /*for (int j = 0; j < 16; j++) {
+        for (int j = 0; j < 256; j++) {
+            uint32_t x = pcg32_pie(&seed);
+            a[j] = (x & 0xFFFFFF) / 16777216.0;
 
-                }
+            uint32_t y = pcg32_pie(&seed);
+            b[j] = (y & 0xFFFFFF) / 16777216.0;
+        }
 
-                matmul(dst, a, b);
+        matmul(dst, a, b);
 
-                // dump results
-                for (int j = 0; j < 16; j++) { printf("%f ", dst[j]); }
-                printf("\n");*/
+        // dump results
+        for (int j = 0; j < 256; j++) { printf("%f ", dst[j]); }
+        printf("\n");
     }
 }

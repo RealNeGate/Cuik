@@ -8,7 +8,7 @@
 #define TB_OPTDEBUG_LOOP      0
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
-#define TB_OPTDEBUG_SLP       0
+#define TB_OPTDEBUG_SLP       1
 #define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_INTERP    0
 #define TB_OPTDEBUG_MEMORY    0
