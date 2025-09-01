@@ -614,7 +614,7 @@ void tb_global_set_storage(TB_Module* m, TB_ModuleSectionHandle section, TB_Glob
 }
 
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data) {
-    assert(len <= 16);
+    assert(len <= 32);
 
     // copy into SmallConst
     SmallConst c = { .len = len };

@@ -854,7 +854,8 @@ static void irgen_job(TPool* pool, void** arg) {
 static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {
     log_debug("IR generation...");
 
-    TB_FeatureSet features = tb_features_from_profile_str(mod, "x86_64-v3");
+    // TB_FeatureSet features = tb_features_from_profile_str(mod, "x86_64-v3");
+    TB_FeatureSet features = tb_features_from_profile_str(mod, "x86_64-v1");
     if (tp != NULL) {
         #if CUIK_ALLOW_THREADS
         size_t stmt_count = 0;

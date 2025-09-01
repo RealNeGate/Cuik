@@ -411,6 +411,59 @@ function find_captures(strs, n, expr)
     end
 end
 
+NFA = {}
+local function nfa_new_edge(from, when)
+    if not NFA[from] then
+        NFA[from] = {}
+    elseif NFA[from][when] then
+        return NFA[from][when]
+    end
+
+    local to = state_count
+    state_count = state_count + 1
+    NFA[from][when] = to
+    return to
+end
+
+local function nfa_compile(n, head, depth, stack)
+    local ty = n[1]
+
+    -- push on match
+    insert_2d(push, head, ty, true)
+    head = nfa_new_edge(head, ty)
+
+    print(inspect(n))
+    for i=2,#n do
+        local t = n[i]
+        if type(t) == "table" then
+            head = nfa_compile(t, head, depth + 1, stack)
+        elseif t == "..." or t == "$REST" then
+            -- match any, but in a cycle
+            if not NFA[head] then
+                NFA[head] = {}
+            end
+            NFA[head][0] = head
+        elseif t == "___" then
+            head = nfa_new_edge(head, "TB_NULL")
+        else
+            head = nfa_new_edge(head, 0)
+        end
+    end
+
+    -- pop once we've exhausted all the inputs
+    insert_2d(pop, head, "TB_NULL", 1)
+    if depth == 0 then
+        if not NFA[head] then
+            NFA[head] = {}
+        end
+        NFA[head]["TB_NULL"] = head
+    else
+        head = nfa_new_edge(head, "TB_NULL")
+    end
+
+    return head
+end
+
 local fallback = {}
 local subpat_map = {}
 while true do
@@ -431,7 +484,6 @@ while true do
         end
 
         local desc = parse_node()
-
         if first == "extra" then
             mach_extra_type = desc[1]
         else
@@ -453,12 +505,13 @@ while true do
         local pattern = parse_node()
 
         local stack = {}
-        local head = dfa_compile(pattern, 0, 0, stack)
+        local head = nfa_compile(pattern, 0, 0, stack)
+        print("FINAL", head)
 
         t = lex()
         local where = nil
         if t == "where" then
-           fallback[head] = stack
+            fallback[head] = stack
             where = lex()
 
             t = lex()
@@ -522,83 +575,239 @@ while true do
 end
 
 local special_return_cases = {}
-for k,v in pairs(fallback) do
-    -- print("V", v, v[#v], inspect(v))
+function print_row(head, n)
+    print("State", head)
+    for k,v in pairs(n) do
+        local str = string.format("  %-15s => %d", k, v)
+        if push[head] and push[head][k] then
+            str = str.." (PUSH)"
+        elseif pop[head] and pop[head][k] then
+            str = str..string.format(" (POP%d)", pop[head][k])
+        end
+        print(str)
+    end
 
-    local final_state = v[#v]
-    local i = #v
-    while i > 1 do
-        i = i - 1
-        local any_case = dfa[v[i]][0]
-        if accept[any_case] then
-            special_return_cases[final_state] = any_case
-            -- print("Final", any_case)
+    if accept[head] then
+        print("  FINAL")
+    end
+    print()
+end
+
+print("Dump")
+for k,v in pairs(NFA) do
+    print_row(k, v)
+end
+
+-- Guarantee a list, even if empty
+for k,v in pairs(accept) do
+    if not NFA[k] then
+        NFA[k] = {}
+    end
+end
+
+function shallowcopy(orig)
+    local orig_type = type(orig)
+    local copy
+    if orig_type == 'table' then
+        copy = {}
+        for orig_key, orig_value in pairs(orig) do
+            copy[orig_key] = orig_value
+        end
+    else -- number, string, boolean, etc
+        copy = orig
+    end
+    return copy
+end
+
+function do_shit(head, fail, depth)
+    local n = NFA[head]
+
+    -- "forget" any fail cases which are deeper than us
+    while fail and fail.depth > depth do
+        fail = fail.prev
+    end
+
+    print("Walk", head, fail and fail.node or nil, depth, fail and fail.depth or nil)
+
+    -- step the fail case forward if we're at the same depth
+    local old_fail = fail
+    if fail and fail.depth == depth then
+        fail = shallowcopy(fail)
+        fail.node = NFA[fail.node][0]
+
+        if fail.node == head or not fail.node then
+            fail = fail.prev
+        end
+    end
+
+    -- if later states need to backtrack here, we'll
+    -- mark ourselves as a fail state.
+    for k,v in pairs(n) do
+        if k ~= 0 and n[0] then
+            fail = { prev=fail, node=n[0], depth=depth }
+            break
+        end
+    end
+
+    for k,v in pairs(n) do
+        if NFA[v] and v ~= head then
+            local next_depth = depth
+            if push[head] and push[head][k] then
+                next_depth = next_depth + 1
+            elseif pop[head] and pop[head][k] then
+                next_depth = next_depth - pop[head][k]
+            end
+
+            do_shit(v, fail, next_depth)
+        end
+    end
+
+    if old_fail and not n[0] and head ~= old_fail.node then
+        print("insert fail", head, old_fail.node, depth, old_fail.depth)
+
+        -- step out of the current node
+        if depth ~= old_fail.depth then
+            insert_2d(pop, head, 0, depth - old_fail.depth)
+        end
+        n[0] = old_fail.node
+    end
+end
+
+do_shit(0, nil, 0)
+
+print("Dump")
+for k,v in pairs(NFA) do
+    print_row(k, v)
+end
+for k,v in pairs(accept) do
+print("ACCEPT", k)
+end
+
+print("DONE")
+
+function find_leader(n)
+    local leader = nil
+    local leader_k = nil
+    for k,v in pairs(n) do
+        if v ~= head then
+            if not leader then
+                leader = v
+                leader_k = k
+            elseif leader ~= v then
+                return nil
+            end
+        end
+    end
+    return leader_k
+end
+
+-- Generate C code for the matcher
+local lines = {}
+local visited = {}
+
+function add_line(depth, line)
+    lines[#lines + 1] = string.rep(" ", depth*4) .. line
+end
+
+function compare_to_node_type(t, inv)
+    if type == "TB_NULL" then
+        if inv then
+            return "in == NULL"
+        else
+            return "in != NULL"
+        end
+    else
+        if inv then
+            return "in->type != "..t
+        else
+            return "in->type == "..t
         end
     end
 end
--- print(inspect(fallback))
 
--- propagate any "fail" cases
-local visited = {}
-local function dfa_crawl(state, fail, depth)
-    if visited[state] then
+function gen_c(head, depth)
+    if visited[head] then
+        add_line(depth, string.format("goto STATE%d;", head))
         return
     end
-    visited[state] = true
+    visited[head] = true
 
-    -- if there's no "ANY" state, then we add one
-    -- if (dfa[state][0] == state and depth > 1) or not dfa[state][0] then
-    if not dfa[state][0] then
-        -- print("[", state, "]", dfa[state][0], fail, depth)
+    add_line(depth, string.format("// STATE%d", head))
 
-        -- we need to undo all the pushes we did to get here
-        insert_2d(pop, state, 0, depth)
-        dfa[state][0] = fail
+    -- Accept states
+    if accept[head] then
+        add_line(depth, "k = ACCEPT();")
+        add_line(depth, "if (k) { return k; } else { goto STATE%d; }")
+        return
     end
 
-    for k,v in pairs(dfa[state]) do
-        if state ~= v then
-            if push[state] and push[state][k] then
-                dfa_crawl(v, fail, depth + 1)
-            elseif pop[state] and pop[state][k] then
-                -- once depth drops back to 0 we've rejoined
-                if depth > 1 then
-                    dfa_crawl(v, fail, depth - 1)
-                elseif depth == 1 then
-                    dfa_crawl(v, dfa[fail][0], depth - 1)
-                end
-            else
-                dfa_crawl(v, fail, depth)
-            end
+    local n = NFA[head]
+    print("Gen", head)
+
+    local cyclic = n[0] == head
+    local leader = find_leader(n)
+    if leader then
+        add_line(depth, "in = read();")
+        if leader ~= 0 then
+            add_line(depth, string.format("if (%s) { return NULL; }", compare_to_node_type(leader, true)))
+            lines[#lines+1] = ""
         end
-    end
-end
-
-for i=1,#any do
-    local state = any[i][1]
-    local times = 0
-    for k,v in pairs(dfa[state]) do
-        if k ~= 0 then
-            times = times + 1
-        end
-    end
-
-    if times > 0 then
-        local fail = any[i][2]
-        visited[fail] = true
-
-        for k,v in pairs(dfa[state]) do
+        gen_c(n[leader], depth)
+    else
+        local case_count = 0
+        local non_any = nil
+        for k,v in pairs(n) do
             if k ~= 0 then
-                local depth = 0
-                if push[state] and push[state][k] then
-                    depth = depth + 1
-                end
-
-                dfa_crawl(v, fail, depth)
+                non_any = k
             end
+            case_count = case_count + 1
+        end
+
+        if case_count == 2 and n[0] then
+            local old_vis = visited[n[0]]
+            if not old_vis then
+                -- if the default case is unvisited, fake a visit to cause a GOTO placement in the nested block
+                visited[n[0]] = true
+
+                add_line(depth, "in = read();")
+                add_line(depth, "do {")
+                add_line(depth, string.format("    if (%s) {", compare_to_node_type(non_any, false)))
+                gen_c(n[non_any], depth+2)
+                add_line(depth, "    }")
+
+                visited[n[0]] = nil
+                gen_c(n[0], depth+1)
+                add_line(depth, "} while (0);")
+            elseif n[0] == head then
+                add_line(depth, string.format("do {"))
+                add_line(depth, string.format("    in = read();"))
+                add_line(depth, string.format("} while (%s);", compare_to_node_type(non_any, true)))
+                gen_c(n[non_any], depth)
+            else
+                add_line(depth, "in = read();")
+                add_line(depth, string.format("if (%s) { goto STATE%d; }", compare_to_node_type(non_any, true), n[0]))
+                gen_c(n[non_any], depth)
+            end
+        else
+            add_line(depth, "in = read();")
+            add_line(depth, "switch (in->type) {")
+            for k,v in pairs(n) do
+                if k == 0 then
+                    add_line(depth, string.format("    default: {"))
+                else
+                    add_line(depth, string.format("    case %s: {", k, v))
+                end
+                gen_c(v, depth+2)
+                add_line(depth, "    }")
+            end
+            add_line(depth, "}")
         end
     end
 end
+
+gen_c(0, 0)
+print(table.concat(lines, "\n"))
+os.exit(0)
 
 function sort(set, cmp_fn)
     local a = {}
@@ -618,8 +827,8 @@ if false then
     for k,v in pairs(accept) do
         graphviz:put(string.format("v%d [label=\"%s\"]\n", v, k))
     end
-    for state=0,#dfa do
-        for id,next in pairs(dfa[state]) do
+    for state=0,state_count do
+        for id,next in pairs(NFA[state]) do
             if id == 0 then
                 graphviz:put(string.format("v%d -> v%d [label=\"ANY\"]\n", state, next))
             else
@@ -746,8 +955,8 @@ static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n) {
     -- print(out:tostring())
     -- print("Transitions:", count)
 
-    local f = io.open(arg[3], "w")
-    f:write(out:tostring())
-    f:close()
+    -- local f = io.open(arg[3], "w")
+    -- f:write(out:tostring())
+    -- f:close()
 end
 

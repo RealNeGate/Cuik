@@ -1,5 +1,13 @@
 extra (X86MemOp)
 
+node (shl)
+node (shlx)
+
+pat (TB_SHL dt=$dt ___ $lhs $rhs) where "ctx->features.x64 & TB_FEATURE_X64_BMI2" => (x86_shlx dt=$dt ___ ___ $lhs $rhs) \
+pat (TB_SHL dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs) where "ctx->features.x64 & TB_FEATURE_X64_BMI2" => (x86_shlx dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD) \
+pat (TB_SHL dt=$dt ___ $lhs $rhs) => (x86_shl dt=$dt ___ ___ $rhs $lhs)
+
+#if 0
 // *******************************
 // memory operands
 // *******************************
@@ -272,3 +280,4 @@ where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == T
 pat (TB_ZERO_EXT dt=$dt ___ ($src: TB_LOAD $ctrl $mem ($addr: x86_MEMORY ...)))
 where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
 => (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD)
+#endif

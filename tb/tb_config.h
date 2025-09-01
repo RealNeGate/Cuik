@@ -8,13 +8,13 @@
 #define TB_OPTDEBUG_LOOP      0
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
-#define TB_OPTDEBUG_SLP       1
+#define TB_OPTDEBUG_SLP       0
 #define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_INTERP    0
 #define TB_OPTDEBUG_MEMORY    0
-#define TB_OPTDEBUG_ISEL      0
-#define TB_OPTDEBUG_ISEL2     0
-#define TB_OPTDEBUG_ISEL3     0
+#define TB_OPTDEBUG_ISEL      1
+#define TB_OPTDEBUG_ISEL2     1
+#define TB_OPTDEBUG_ISEL3     1
 #define TB_OPTDEBUG_EMIT      0
 #define TB_OPTDEBUG_DATAFLOW  0
 #define TB_OPTDEBUG_PLACEMENT 0

@@ -482,7 +482,7 @@ struct TB_ModuleSection {
 
 typedef struct {
     int len;
-    char data[16];
+    char data[32];
 } SmallConst;
 
 // only next_in_module is ever mutated on multiple threads (when first attached)

@@ -488,19 +488,30 @@ static TB_Node* ideal_ptr_offset(TB_Function* f, TB_Node* n) {
 
     // reassociate:
     //   off(off(a, b), c) => off(a, b + c)
-    if (base->type == TB_PTR_OFFSET && offset->type != TB_ICONST) {
-        TB_Node* rhs = tb_alloc_node(f, TB_ADD, offset->dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, rhs, base->inputs[2], 1);
-        set_input(f, rhs, offset,          2);
-        mark_node(f, rhs);
+    if (base->type == TB_PTR_OFFSET) {
+        if (offset->type != TB_ICONST) {
+            TB_Node* rhs = tb_alloc_node(f, TB_ADD, offset->dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, rhs, base->inputs[2], 1);
+            set_input(f, rhs, offset,          2);
+            mark_node(f, rhs);
 
-        // give it a good type to avoid monotonicity problems
-        Lattice* rhs_type = value_of(f, rhs);
-        latuni_set(f, rhs, rhs_type);
+            // give it a good type to avoid monotonicity problems
+            Lattice* rhs_type = value_of(f, rhs);
+            latuni_set(f, rhs, rhs_type);
 
-        set_input(f, n, base->inputs[1], 1);
-        set_input(f, n, rhs,             2);
-        return n;
+            set_input(f, n, base->inputs[1], 1);
+            set_input(f, n, rhs,             2);
+            return n;
+        } else if (base->inputs[2]->type == TB_ICONST) {
+            Lattice* a = latuni_get(f, offset);
+            Lattice* b = latuni_get(f, base->inputs[2]);
+            TB_ASSERT(lattice_is_iconst(a) && lattice_is_iconst(b));
+
+            TB_Node* con = make_int_node(f, offset->dt, a->_int.min + b->_int.min);
+            set_input(f, n, base->inputs[1], 1);
+            set_input(f, n, con,             2);
+            return n;
+        }
     }
 
     return NULL;

@@ -18,7 +18,7 @@ static uint32_t count(uint64_t bits) {
     return used;
 }
 
-static void matmul(float* dst, float* a, float* b) {
+void matmul(float* dst, float* a, float* b) {
     if (dst == NULL) {
         return;
     }
