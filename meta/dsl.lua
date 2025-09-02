@@ -14,6 +14,20 @@ function run_command(cmd)
     return content
 end
 
+function shallowcopy(orig)
+    local orig_type = type(orig)
+    local copy
+    if orig_type == 'table' then
+        copy = {}
+        for orig_key, orig_value in pairs(orig) do
+            copy[orig_key] = orig_value
+        end
+    else -- number, string, boolean, etc
+        copy = orig
+    end
+    return copy
+end
+
 --------------------------
 -- lexer
 --------------------------
@@ -388,6 +402,9 @@ while true do
     end
 end
 
+--------------------------
+-- DFA construction
+--------------------------
 function get_pattern_shape(n)
     local str = "("
     if n[1] == "x86_MEMORY" then
@@ -415,20 +432,6 @@ function get_pattern_shape(n)
     return str..")"
 end
 
-local partitions = {}
-for i,pat in ipairs(all_patterns) do
-    local k = get_pattern_shape(pat[2])
-    if not partitions[k] then
-        partitions[k] = {}
-    end
-
-    partitions[k][#partitions[k] + 1] = pat
-end
-
-for name,set in pairs(partitions) do
-    print(name, #set)
-end
-
 NFA = {}
 local function nfa_new_edge(from, when)
     if not NFA[from] then
@@ -453,27 +456,47 @@ local function nfa_edge(from, when, to)
     return to
 end
 
-NFA_cache = {}
-local function nfa_compile(set, head, depth)
-    local n = set[1]
-    local ty = n[1]
-
-    local start = head
-
-    -- push on match
-    insert_2d(push, head, n[1], true)
-    head = nfa_new_edge(head, ty)
-
-    -- connect all other edges
+local function active_str(set)
+    local strs = {}
     for i=1,#set do
-        insert_2d(push, head, ty, true)
-        head = nfa_new_edge(head, ty)
+        strs[#strs + 1] = set[i]
+    end
+    return table.concat(strs, ",")
+end
+
+local function add_if_new(set, v)
+    for i=1,#set do
+        if set[i] == v then
+            return i
+        end
     end
 
-    for i=2,#n do
+    set[#set + 1] = v
+    return #set
+end
+
+local function nfa_compile(set, head, active)
+    -- how many possible
+    local possible_types = {}
+    for i=1,#set do
+        add_if_new(possible_types, set[i][1])
+    end
+    print(inspect(possible_types))
+
+    -- find possible final states based on current active
+    local next_active = {}
+    for i=1,#next_active do
+
+    end
+
+    -- push on match
+    -- insert_2d(push, head, n[1], true)
+    -- head = nfa_new_edge(head, ty)
+
+    --[[for i=2,#n do
         local t = n[i]
         if type(t) == "table" then
-            head = nfa_compile(t, head, depth + 1)
+            head = nfa_compile(t, head, active)
         elseif t == "..." or t == "$REST" then
             -- match any, but in a cycle
             if not NFA[head] then
@@ -498,19 +521,43 @@ local function nfa_compile(set, head, depth)
         NFA[head]["TB_NULL"] = head
     else
         head = nfa_new_edge(head, "TB_NULL")
-    end
+    end]]--
 
     return head
 end
 
-for name,set in pairs(partitions) do
-    local head = nfa_compile(set, 0, 0)
-    print("FINAL", head)
+-- Split partitions by similar pattern shapes
+local partitions = {}
+local active = {}
+for i,pat in ipairs(all_patterns) do
+    local k = get_pattern_shape(pat[2])
+    if not partitions[k] then
+        partitions[k] = {}
+    end
+
+    partitions[k][#partitions[k] + 1] = pat
+    active[pat] = i
 end
 
-os.exit()
+for name,set in pairs(partitions) do
+    print(name, #set)
+end
 
-local special_return_cases = {}
+for name,set in pairs(partitions) do
+    local pats = {}
+    for i=1,#set do
+        pats[#pats + 1] = set[i][2]
+    end
+
+    local head = nfa_compile(pats, {0}, active)
+    print("FINAL", head)
+
+    -- for i=1,#set do
+    --    local head = nfa_compile(set[i][2], 0, active)
+    --    print("FINAL", head)
+    -- end
+end
+
 function print_row(head, n)
     print("State", head)
     for k,v in pairs(n) do
@@ -534,6 +581,8 @@ for k,v in pairs(NFA) do
     print_row(k, v)
 end
 
+os.exit()
+
 -- Guarantee a list, even if empty
 for k,v in pairs(accept) do
     if not NFA[k] then
@@ -541,21 +590,7 @@ for k,v in pairs(accept) do
     end
 end
 
-function shallowcopy(orig)
-    local orig_type = type(orig)
-    local copy
-    if orig_type == 'table' then
-        copy = {}
-        for orig_key, orig_value in pairs(orig) do
-            copy[orig_key] = orig_value
-        end
-    else -- number, string, boolean, etc
-        copy = orig
-    end
-    return copy
-end
-
-function do_shit(head, fail, depth)
+function insert_backtrack(head, fail, depth)
     local n = NFA[head]
 
     -- "forget" any fail cases which are deeper than us
@@ -594,7 +629,7 @@ function do_shit(head, fail, depth)
                 next_depth = next_depth - pop[head][k]
             end
 
-            do_shit(v, fail, next_depth)
+            insert_backtrack(v, fail, next_depth)
         end
     end
 
@@ -609,7 +644,7 @@ function do_shit(head, fail, depth)
     end
 end
 
-do_shit(0, nil, 0)
+insert_backtrack(0, nil, 0)
 
 print("Dump")
 for k,v in pairs(NFA) do
@@ -771,10 +806,11 @@ function gen_c(head, input, depth)
     end
 end
 
-gen_c(0, nil, 0)
-print(table.concat(lines, "\n"))
+-- gen_c(0, nil, 0)
+-- print(table.concat(lines, "\n"))
 -- os.exit(0)
 
+local special_return_cases = {}
 function sort(set, cmp_fn)
     local a = {}
     for k, v in pairs(set) do
