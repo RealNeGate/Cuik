@@ -1,6 +1,6 @@
 extra (X86MemOp)
 
-#if 1
+#if 0
 node (shl)
 node (shlx)
 

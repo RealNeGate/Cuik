@@ -433,6 +433,7 @@ function get_pattern_shape(n)
 end
 
 NFA = {}
+
 local function nfa_new_edge(from, when)
     if not NFA[from] then
         NFA[from] = {}
@@ -475,28 +476,65 @@ local function add_if_new(set, v)
     return #set
 end
 
-local function nfa_compile(set, head, active)
-    -- how many possible
-    local possible_types = {}
-    for i=1,#set do
-        add_if_new(possible_types, set[i][1])
+local function make_active_str(list)
+    local strs = {}
+    for i=1,partition_count do
+        strs[i] = 0
     end
-    print(inspect(possible_types))
 
-    -- find possible final states based on current active
+    for i=1,#list do
+        local pat = list[i]
+        strs[to_partition[pat]] = 1
+    end
+
+    return table.concat(strs)
+end
+
+NFA_cache = {}
+local function nfa_compile(n, head, active, depth)
+    local ty = n[1]
+
+    -- what partitions are we "in" right now
     local next_active = {}
-    for i=1,#next_active do
-
+    for i=1,#active do
+        if active[i][1] == ty then
+            next_active[#next_active + 1] = active[i]
+        end
     end
 
-    -- push on match
-    -- insert_2d(push, head, n[1], true)
-    -- head = nfa_new_edge(head, ty)
+    local active_str = make_active_str(next_active)
+    -- print("Active", inspect(n), active_str)
 
-    --[[for i=2,#n do
+    -- if there's already an edge which matches
+    -- the active set, we use that
+    if not NFA_cache[head] then
+        NFA_cache[head] = {}
+    end
+
+    if NFA_cache[head][active_str] then
+        -- print("Cached", NFA[head][ty], head, ty, NFA_cache[head][active_str])
+
+        -- reuse head
+        insert_2d(push, head, ty, true)
+        NFA[head][ty] = NFA_cache[head][active_str]
+        head = NFA_cache[head][active_str]
+    else
+        local old_head = head
+        insert_2d(push, head, ty, true)
+        head = nfa_new_edge(head, ty)
+
+        NFA_cache[old_head][active_str] = head
+    end
+
+    for i=2,#n do
         local t = n[i]
         if type(t) == "table" then
-            head = nfa_compile(t, head, active)
+            local kid_active = {}
+            for j=1,#next_active do
+                kid_active[#kid_active + 1] = next_active[j][i]
+            end
+
+            head = nfa_compile(t, head, kid_active, depth + 1)
         elseif t == "..." or t == "$REST" then
             -- match any, but in a cycle
             if not NFA[head] then
@@ -521,8 +559,7 @@ local function nfa_compile(set, head, active)
         NFA[head]["TB_NULL"] = head
     else
         head = nfa_new_edge(head, "TB_NULL")
-    end]]--
-
+    end
     return head
 end
 
@@ -536,26 +573,40 @@ for i,pat in ipairs(all_patterns) do
     end
 
     partitions[k][#partitions[k] + 1] = pat
-    active[pat] = i
+    active[#active + 1] = pat[2]
 end
 
-for name,set in pairs(partitions) do
-    print(name, #set)
-end
+to_partition = {}
+partition_count = 0
 
-for name,set in pairs(partitions) do
-    local pats = {}
-    for i=1,#set do
-        pats[#pats + 1] = set[i][2]
+function walk_into(n, idx)
+    for i=2,#n do
+        if type(n[i]) == "table" then
+            walk_into(n[i], idx)
+        end
     end
 
-    local head = nfa_compile(pats, {0}, active)
-    print("FINAL", head)
+    to_partition[n] = idx
+end
 
-    -- for i=1,#set do
-    --    local head = nfa_compile(set[i][2], 0, active)
-    --    print("FINAL", head)
-    -- end
+for name,set in pairs(partitions) do
+    partition_count = partition_count + 1
+    for i=1,#set do
+        walk_into(set[i][2], partition_count)
+    end
+    print(name, partition_count, #set)
+end
+
+for name,set in pairs(partitions) do
+    local head = nfa_compile(set[1][2], 0, active, 0)
+    accept[head] = true
+    -- print("FINAL", head)
+
+    for i=2,#set do
+        head = nfa_compile(set[i][2], 0, active, 0)
+        accept[head] = true
+        -- print("FINAL", head)
+    end
 end
 
 function print_row(head, n)
@@ -576,12 +627,10 @@ function print_row(head, n)
     print()
 end
 
-print("Dump")
+--[[print("Dump")
 for k,v in pairs(NFA) do
     print_row(k, v)
-end
-
-os.exit()
+end]]--
 
 -- Guarantee a list, even if empty
 for k,v in pairs(accept) do
@@ -590,7 +639,13 @@ for k,v in pairs(accept) do
     end
 end
 
+visited = {}
 function insert_backtrack(head, fail, depth)
+    if visited[head] then
+        return
+    end
+    visited[head] = true
+
     local n = NFA[head]
 
     -- "forget" any fail cases which are deeper than us
@@ -598,7 +653,7 @@ function insert_backtrack(head, fail, depth)
         fail = fail.prev
     end
 
-    print("Walk", head, fail and fail.node or nil, depth, fail and fail.depth or nil)
+    -- print("Walk", head, fail and fail.node or nil, depth, fail and fail.depth or nil)
 
     -- step the fail case forward if we're at the same depth
     local old_fail = fail
@@ -615,6 +670,7 @@ function insert_backtrack(head, fail, depth)
     -- mark ourselves as a fail state.
     for k,v in pairs(n) do
         if k ~= 0 and n[0] then
+            -- print("push fail", head, n[0])
             fail = { prev=fail, node=n[0], depth=depth }
             break
         end
@@ -634,7 +690,7 @@ function insert_backtrack(head, fail, depth)
     end
 
     if old_fail and not n[0] and head ~= old_fail.node then
-        print("insert fail", head, old_fail.node, depth, old_fail.depth)
+        -- print("insert fail", head, old_fail.node, depth, old_fail.depth)
 
         -- step out of the current node
         if depth ~= old_fail.depth then
@@ -671,8 +727,7 @@ end
 
 -- Generate C code for the matcher
 local lines = {}
-local visited = {}
-
+visited = {}
 function add_line(depth, line)
     lines[#lines + 1] = string.rep(" ", depth*4) .. line
 end
@@ -693,14 +748,16 @@ function compare_to_node_type(t, inv)
     end
 end
 
-for k,v in pairs(accept) do
-    add_line(0, string.format("static TB_Node* mach_dfa_accept_%d(Ctx* ctx, TB_Function* f, TB_Node* n) {", k))
-    for i,line in pairs(v) do
-        add_line(1, line)
+if false then
+    for k,v in pairs(accept) do
+        add_line(0, string.format("static TB_Node* mach_dfa_accept_%d(Ctx* ctx, TB_Function* f, TB_Node* n) {", k))
+        for i,line in pairs(v) do
+            add_line(1, line)
+        end
+        add_line(1, "return NULL;")
+        add_line(0, "}")
+        lines[#lines+1] = ""
     end
-    add_line(1, "return NULL;")
-    add_line(0, "}")
-    lines[#lines+1] = ""
 end
 
 function gen_edge(state, input, depth)
