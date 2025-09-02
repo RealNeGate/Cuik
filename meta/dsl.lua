@@ -142,99 +142,11 @@ local function parse_node()
     return n
 end
 
-local function dfa_insert(ty, old)
-    if dfa[old] == nil then
-        dfa[old] = {}
-    end
-
-    if dfa[old][ty] == nil then
-        dfa[old][ty] = state_count
-        state_count = state_count + 1
-        return state_count - 1
-    else
-        return dfa[old][ty]
-    end
-end
-
 local function insert_2d(t, i, j, v)
     if not t[i] then
         t[i] = {}
     end
     t[i][j] = v
-end
-
-local function dfa_compile(n, head, depth, stack)
-    local ty = n[1].."+1"
-    if dfa[head] == nil then
-        dfa[head] = {}
-    end
-
-    if n.name then
-        if n[1] == "x86_MEMORY" then
-            if mem_capture then
-                print("Can't capture 2 memory operands in one pattern?!?")
-                os.exit(1)
-            end
-
-            mem_capture = n
-        end
-    end
-
-    if dfa[head][ty] ~= nil then
-        head = dfa[head][ty]
-    else
-        insert_2d(push, head, ty, true)
-        dfa[head][ty] = state_count
-        head = state_count
-        state_count = state_count + 1
-    end
-    stack[#stack + 1] = head
-
-    for i=2,#n do
-        local t = n[i]
-        if type(t) == "table" then
-            head = dfa_compile(t, head, depth + 1, stack)
-            stack[#stack + 1] = head
-        elseif t == "..." or t == "$REST" then
-            -- keep chewing up any nodes in this guy
-            local ty = 0
-            if dfa[head] == nil then
-                dfa[head] = {}
-            end
-
-            dfa[head][ty] = head
-        elseif t == "___" then
-            head = dfa_insert("TB_NULL+1", head)
-            stack[#stack + 1] = head
-        elseif t:byte(1) == string.byte("$") then -- capture
-            local before = head
-            head = dfa_insert(0, head)
-            stack[#stack + 1] = head
-
-            -- any paths in this camp which fail should
-            -- return to "head"
-            any[#any + 1] = { before, head }
-        end
-    end
-
-    if dfa[head] == nil then
-        dfa[head] = {}
-    end
-
-    if dfa[head]["TB_NULL+1"] then
-        return dfa[head]["TB_NULL+1"]
-    end
-
-    -- pop once we've exhausted all the inputs
-    insert_2d(pop, head, "TB_NULL+1", 1)
-    if depth == 0 then
-        dfa[head]["TB_NULL+1"] = head
-        return head
-    else
-        dfa[head]["TB_NULL+1"] = state_count
-        state_count = state_count + 1
-        return state_count - 1
-    end
 end
 
 node_extra_desc = {
@@ -411,60 +323,7 @@ function find_captures(strs, n, expr)
     end
 end
 
-NFA = {}
-local function nfa_new_edge(from, when)
-    if not NFA[from] then
-        NFA[from] = {}
-    elseif NFA[from][when] then
-        return NFA[from][when]
-    end
-
-    local to = state_count
-    state_count = state_count + 1
-    NFA[from][when] = to
-    return to
-end
-
-local function nfa_compile(n, head, depth, stack)
-    local ty = n[1]
-
-    -- push on match
-    insert_2d(push, head, ty, true)
-    head = nfa_new_edge(head, ty)
-
-    print(inspect(n))
-    for i=2,#n do
-        local t = n[i]
-        if type(t) == "table" then
-            head = nfa_compile(t, head, depth + 1, stack)
-        elseif t == "..." or t == "$REST" then
-            -- match any, but in a cycle
-            if not NFA[head] then
-                NFA[head] = {}
-            end
-            NFA[head][0] = head
-        elseif t == "___" then
-            head = nfa_new_edge(head, "TB_NULL")
-        else
-            head = nfa_new_edge(head, 0)
-        end
-    end
-
-    -- pop once we've exhausted all the inputs
-    insert_2d(pop, head, "TB_NULL", 1)
-    if depth == 0 then
-        if not NFA[head] then
-            NFA[head] = {}
-        end
-        NFA[head]["TB_NULL"] = head
-    else
-        head = nfa_new_edge(head, "TB_NULL")
-    end
-
-    return head
-end
-
-local fallback = {}
+local all_patterns = {}
 local subpat_map = {}
 while true do
     local t = lex()
@@ -504,16 +363,10 @@ while true do
 
         local pattern = parse_node()
 
-        local stack = {}
-        local head = nfa_compile(pattern, 0, 0, stack)
-        print("FINAL", head)
-
         t = lex()
         local where = nil
         if t == "where" then
-            fallback[head] = stack
             where = lex()
-
             t = lex()
         end
 
@@ -526,53 +379,136 @@ while true do
         t = lex()
         if t == "(" then
             replacement = parse_node()
-
-            local strs = accept[head]
-            if not strs then
-                strs = {}
-                accept[head] = strs
-            end
-
-            if replacement[1] == mach_prefix.."MEMORY" or replacement[1] == mach_prefix.."COND" then
-                is_operand[pattern[1]] = true
-                if is_subpat then
-                    subpat_map[pattern[1]] = true
-                end
-            end
-
-            local ids = {}
-            node_cnt = 0
-
-            strs[#strs + 1] = "do { // line: "..start_line
-            find_captures(strs, pattern, "n")
-            if where then
-                strs[#strs + 1] = "    if (!("..where..")) {"
-                strs[#strs + 1] = "        break;"
-                strs[#strs + 1] = "    }"
-            end
-            strs[#strs + 1] = ""
-            write_node(strs, ids, replacement)
-            strs[#strs + 1] = string.format("    return k%d;", ids[replacement])
-            strs[#strs + 1] = "} while (0);"
-        else
-            -- print(inspect(pattern))
-            local strs = accept[head]
-            if not strs then
-                strs = {}
-                accept[head] = strs
-            end
-
-            strs[#strs + 1] = "{"
-            strs[#strs + 1] = string.format("    TB_Node* k = %s;", t)
-            strs[#strs + 1] = "    if (k != NULL) { return k; }"
-            strs[#strs + 1] = "}"
         end
+        all_patterns[#all_patterns + 1] = { is_subpat, pattern, where, replacement }
 
         -- reset muh shit
         captures = {}
         capture_count = 0
     end
 end
+
+function get_pattern_shape(n)
+    local str = "("
+    if n[1] == "x86_MEMORY" then
+        str = str.."MEM_OP"
+    else
+        str = str.."ANY_OP"
+    end
+
+    for i=2,#n do
+        local t = n[i]
+        str = str.." "
+        if type(t) == "table" then
+            str = str..get_pattern_shape(t)
+        elseif t == "..." or t == "$REST" then
+            str = str.."..."
+        elseif t == "___" then
+            str = str.."___"
+        elseif t:byte(1) == string.byte("$") then -- capture
+            str = str.."ANY"
+        else
+            error("Hehe", t)
+        end
+    end
+
+    return str..")"
+end
+
+local partitions = {}
+for i,pat in ipairs(all_patterns) do
+    local k = get_pattern_shape(pat[2])
+    if not partitions[k] then
+        partitions[k] = {}
+    end
+
+    partitions[k][#partitions[k] + 1] = pat
+end
+
+for name,set in pairs(partitions) do
+    print(name, #set)
+end
+
+NFA = {}
+local function nfa_new_edge(from, when)
+    if not NFA[from] then
+        NFA[from] = {}
+    elseif NFA[from][when] then
+        return NFA[from][when]
+    end
+
+    local to = state_count
+    state_count = state_count + 1
+    NFA[from][when] = to
+    return to
+end
+
+local function nfa_edge(from, when, to)
+    if not NFA[from] then
+        NFA[from] = {}
+    end
+
+    assert(not NFA[from][when])
+    NFA[from][when] = to
+    return to
+end
+
+NFA_cache = {}
+local function nfa_compile(set, head, depth)
+    local n = set[1]
+    local ty = n[1]
+
+    local start = head
+
+    -- push on match
+    insert_2d(push, head, n[1], true)
+    head = nfa_new_edge(head, ty)
+
+    -- connect all other edges
+    for i=1,#set do
+        insert_2d(push, head, ty, true)
+        head = nfa_new_edge(head, ty)
+    end
+
+    for i=2,#n do
+        local t = n[i]
+        if type(t) == "table" then
+            head = nfa_compile(t, head, depth + 1)
+        elseif t == "..." or t == "$REST" then
+            -- match any, but in a cycle
+            if not NFA[head] then
+                NFA[head] = {}
+            end
+            NFA[head][0] = head
+        elseif t == "___" then
+            head = nfa_new_edge(head, "TB_NULL")
+        elseif t:byte(1) == string.byte("$") then -- capture
+            head = nfa_new_edge(head, 0)
+        else
+            error("Hehe", t)
+        end
+    end
+
+    -- pop once we've exhausted all the inputs
+    insert_2d(pop, head, "TB_NULL", 1)
+    if depth == 0 then
+        if not NFA[head] then
+            NFA[head] = {}
+        end
+        NFA[head]["TB_NULL"] = head
+    else
+        head = nfa_new_edge(head, "TB_NULL")
+    end
+
+    return head
+end
+
+for name,set in pairs(partitions) do
+    local head = nfa_compile(set, 0, 0)
+    print("FINAL", head)
+end
+
+os.exit()
 
 local special_return_cases = {}
 function print_row(head, n)
@@ -679,9 +615,6 @@ print("Dump")
 for k,v in pairs(NFA) do
     print_row(k, v)
 end
-for k,v in pairs(accept) do
-print("ACCEPT", k)
-end
 
 print("DONE")
 
@@ -725,7 +658,33 @@ function compare_to_node_type(t, inv)
     end
 end
 
-function gen_c(head, depth)
+for k,v in pairs(accept) do
+    add_line(0, string.format("static TB_Node* mach_dfa_accept_%d(Ctx* ctx, TB_Function* f, TB_Node* n) {", k))
+    for i,line in pairs(v) do
+        add_line(1, line)
+    end
+    add_line(1, "return NULL;")
+    add_line(0, "}")
+    lines[#lines+1] = ""
+end
+
+function gen_edge(state, input, depth)
+    if push[state] and push[state][input] then
+        add_line(depth, "push();")
+    elseif pop[state] and pop[state][input] then
+        add_line(depth, string.format("pop(%d);", pop[state][input]))
+    end
+end
+
+function gen_c(head, input, depth)
+    local n = NFA[head]
+    if input ~= nil then
+        gen_edge(head, input, depth)
+
+        head = n[input]
+        n = NFA[head]
+    end
+
     if visited[head] then
         add_line(depth, string.format("goto STATE%d;", head))
         return
@@ -736,12 +695,15 @@ function gen_c(head, depth)
 
     -- Accept states
     if accept[head] then
-        add_line(depth, "k = ACCEPT();")
-        add_line(depth, "if (k) { return k; } else { goto STATE%d; }")
+        if n[0] then
+            add_line(depth, string.format("k = mach_dfa_accept_%d(ctx, f, n);", head))
+            add_line(depth, string.format("if (k) { return k; } else { goto STATE%d; }", n[0]))
+        else
+            add_line(depth, string.format("return mach_dfa_accept_%d(ctx, f, n);", head))
+        end
         return
     end
 
-    local n = NFA[head]
     print("Gen", head)
 
     local cyclic = n[0] == head
@@ -752,7 +714,7 @@ function gen_c(head, depth)
             add_line(depth, string.format("if (%s) { return NULL; }", compare_to_node_type(leader, true)))
             lines[#lines+1] = ""
         end
-        gen_c(n[leader], depth)
+        gen_c(head, leader, depth)
     else
         local case_count = 0
         local non_any = nil
@@ -772,21 +734,25 @@ function gen_c(head, depth)
                 add_line(depth, "in = read();")
                 add_line(depth, "do {")
                 add_line(depth, string.format("    if (%s) {", compare_to_node_type(non_any, false)))
-                gen_c(n[non_any], depth+2)
+                gen_c(head, non_any, depth+2)
                 add_line(depth, "    }")
 
                 visited[n[0]] = nil
-                gen_c(n[0], depth+1)
+                add_line(depth+1, string.format("STATE%d:", n[0]))
+                gen_c(head, 0, depth+1)
                 add_line(depth, "} while (0);")
             elseif n[0] == head then
-                add_line(depth, string.format("do {"))
-                add_line(depth, string.format("    in = read();"))
-                add_line(depth, string.format("} while (%s);", compare_to_node_type(non_any, true)))
-                gen_c(n[non_any], depth)
+                -- if the only non-any case is just a pop on TB_NULL, let's early out
+                if non_any ~= "TB_NULL" then
+                    add_line(depth, string.format("do {"))
+                    add_line(depth, string.format("    in = read();"))
+                    add_line(depth, string.format("} while (%s);", compare_to_node_type(non_any, true)))
+                end
+                gen_c(head, non_any, depth)
             else
                 add_line(depth, "in = read();")
                 add_line(depth, string.format("if (%s) { goto STATE%d; }", compare_to_node_type(non_any, true), n[0]))
-                gen_c(n[non_any], depth)
+                gen_c(head, non_any, depth)
             end
         else
             add_line(depth, "in = read();")
@@ -797,7 +763,7 @@ function gen_c(head, depth)
                 else
                     add_line(depth, string.format("    case %s: {", k, v))
                 end
-                gen_c(v, depth+2)
+                gen_c(head, k, depth+2)
                 add_line(depth, "    }")
             end
             add_line(depth, "}")
@@ -805,9 +771,9 @@ function gen_c(head, depth)
     end
 end
 
-gen_c(0, 0)
+gen_c(0, nil, 0)
 print(table.concat(lines, "\n"))
-os.exit(0)
+-- os.exit(0)
 
 function sort(set, cmp_fn)
     local a = {}
@@ -821,27 +787,35 @@ function sort(set, cmp_fn)
     return a
 end
 
-if false then
+if true then
     local graphviz = buffer.new(1000)
     graphviz:put("digraph G {\n")
     for k,v in pairs(accept) do
-        graphviz:put(string.format("v%d [label=\"%s\"]\n", v, k))
+        graphviz:put(string.format("v%d [label=\"ACCEPT%d\"]\n", k, k))
     end
-    for state=0,state_count do
-        for id,next in pairs(NFA[state]) do
+    for state,n in pairs(NFA) do
+        for id,next in pairs(n) do
+            local str = id
             if id == 0 then
-                graphviz:put(string.format("v%d -> v%d [label=\"ANY\"]\n", state, next))
-            else
-                graphviz:put(string.format("v%d -> v%d [label=\"%s\"]\n", state, next, id:sub(1, #id-2)))
+                str = "ANY"
             end
+
+            if push[state] and push[state][id] then
+                str = str.." (PUSH)"
+            elseif pop[state] and pop[state][id] then
+                str = str..string.format(" (POP%d)", pop[state][id])
+            end
+
+            graphviz:put(string.format("v%d -> v%d [label=\"%s\"]\n", state, next, str))
         end
         graphviz:put("\n")
     end
     graphviz:put("}\n")
 
-    local f2 = io.open("foo.dot", "w")
-    f2:write(graphviz:tostring())
-    f2:close()
+    print(graphviz:tostring())
+    -- local f2 = io.open("foo.dot", "w")
+    -- f2:write(graphviz:tostring())
+    -- f2:close()
 else
     local count = 0
     local out = buffer.new(size)
@@ -924,16 +898,16 @@ static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n) {
     out:put("static void global_init(void) {\n")
     out:put("    static const uint32_t edges[] = {\n")
     for state=0,#dfa do
-        for id,next in pairs(dfa[state]) do
+        for id,next in pairs(NFA[state]) do
             out:put("        (")
             out:put(state)
             out:put(")<<16 | (")
             out:put(id)
             out:put("), ")
             if push[state] and push[state][id] then
-                out:put(string.format("R_PUSH(%d)", dfa[state][id]))
+                out:put(string.format("R_PUSH(%d)", NFA[state][id]))
             elseif pop[state] and pop[state][id] then
-                out:put(string.format("R_POP(%d, %d)", 1+pop[state][id], dfa[state][id]))
+                out:put(string.format("R_POP(%d, %d)", 1+pop[state][id], NFA[state][id]))
             else
                 out:put(next)
             end
