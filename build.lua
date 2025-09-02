@@ -11,8 +11,23 @@
 --
 --
 
--- silly little OS detection
-local is_windows = package.config:sub(1,1) == "\\"
+-- slightly less silly little OS detection
+local is_windows = (os.getenv("os") or ""):match("^Windows") or false
+
+-- silly little architecture detection
+local arch = ""
+local arches = { -- todo: cover more possible values
+    ["AMD64"] = "x64",
+    ["x86_64"] = "x64",
+    ["aarch64"] = "a64",
+}
+if is_windows then
+    arch = os.getenv("PROCESSOR_ARCHITECTURE")
+else
+    arch = io.popen("uname -m"):read("*all")
+end
+arch = arch:match("%s*(%S*)%s*") -- info(walter): i'm assuming the arch text shouldn't contain whitespace
+arch = arches[arch]
 
 local options = {
     debug         = false,
@@ -68,6 +83,10 @@ local modules = {
 
 local ldflags = ""
 local cflags = " -g -I include -I common -Wall -Werror -Wno-unused -Wno-microsoft-enum-forward-reference -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
+
+if arch == 'x64' then
+    cflags = cflags.." ".."-march=haswell"
+end
 
 local supported_archs = {
     x64 = "-DTB_HAS_X64",
