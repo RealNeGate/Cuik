@@ -28,6 +28,44 @@ function shallowcopy(orig)
     return copy
 end
 
+local node_enum_types = {}
+do
+    function magiclines(s)
+        if s:sub(-1)~="\n" then s=s.."\n" end
+        return s:gmatch("(.-)\n")
+    end
+
+    -- Read the enum table from the tb.h
+    local f = io.open("include/tb.h", "r")
+    local str = f:read("*all")
+    f:close()
+
+    local s = str:find("typedef enum TB_NodeTypeEnum")
+    local e = str:find("} TB_NodeTypeEnum;")
+    str = str:sub(s, e)
+
+    local first = true
+    local idx = 0
+    for l in magiclines(str) do
+        if first then
+            first = false
+        else
+            -- Ignore after comments
+            local comment = l:find("//")
+            if comment then
+                l = l:sub(0, comment-1)
+            end
+
+            -- Look for identifier
+            local ident = l:gmatch("[A-Za-z_][A-Za-z0-9_]+")()
+            if ident then
+                node_enum_types[ident] = idx
+                idx = idx + 1
+            end
+        end
+    end
+end
+
 --------------------------
 -- lexer
 --------------------------
@@ -409,6 +447,8 @@ function get_pattern_shape(n)
     local str = "("
     if n[1] == "x86_MEMORY" then
         str = str.."MEM_OP"
+    elseif n[1] == "x86_COND" then
+        str = str.."CC_OP"
     else
         str = str.."ANY_OP"
     end
@@ -783,7 +823,7 @@ function gen_c(head, input, depth)
     end
     visited[head] = true
 
-    add_line(depth, string.format("// STATE%d", head))
+    -- add_line(depth, string.format("// STATE%d", head))
 
     -- Accept states
     if accept[head] then
@@ -824,15 +864,13 @@ function gen_c(head, input, depth)
                 visited[n[0]] = true
 
                 add_line(depth, "in = read();")
-                add_line(depth, "do {")
-                add_line(depth, string.format("    if (%s) {", compare_to_node_type(non_any, false)))
-                gen_c(head, non_any, depth+2)
-                add_line(depth, "    }")
+                add_line(depth, string.format("if (%s) {", compare_to_node_type(non_any, false)))
+                gen_c(head, non_any, depth+1)
+                add_line(depth, "}")
 
                 visited[n[0]] = nil
-                add_line(depth+1, string.format("STATE%d:", n[0]))
-                gen_c(head, 0, depth+1)
-                add_line(depth, "} while (0);")
+                add_line(depth, string.format("STATE%d:", n[0]))
+                gen_c(head, 0, depth)
             elseif n[0] == head then
                 -- if the only non-any case is just a pop on TB_NULL, let's early out
                 if non_any ~= "TB_NULL" then
@@ -849,13 +887,27 @@ function gen_c(head, input, depth)
         else
             add_line(depth, "in = read();")
             add_line(depth, "switch (in->type) {")
+
+            local unique_paths = {}
             for k,v in pairs(n) do
-                if k == 0 then
-                    add_line(depth, string.format("    default: {"))
+                local list = unique_paths[v]
+                if not list then
+                    unique_paths[v] = {k}
                 else
-                    add_line(depth, string.format("    case %s: {", k, v))
+                    list[#list + 1] = k
                 end
-                gen_c(head, k, depth+2)
+            end
+
+            for succ,list in pairs(unique_paths) do
+                for i=1,#list do
+                    if list[i] == 0 then
+                        add_line(depth, string.format("    default:"))
+                    else
+                        add_line(depth, string.format("    case %s:", list[i], succ))
+                    end
+                end
+                add_line(depth, "    {")
+                gen_c(head, list[1], depth+2)
                 add_line(depth, "    }")
             end
             add_line(depth, "}")
@@ -863,9 +915,9 @@ function gen_c(head, input, depth)
     end
 end
 
--- gen_c(0, nil, 0)
--- print(table.concat(lines, "\n"))
--- os.exit(0)
+gen_c(0, nil, 0)
+print(table.concat(lines, "\n"))
+os.exit(0)
 
 local special_return_cases = {}
 function sort(set, cmp_fn)
@@ -951,7 +1003,7 @@ static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n) {
 ]])
     out:put("static TB_Node* mach_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) {\n")
     out:put("    switch (state) {\n")
-    for k,v in pairs(accept) do
+    --[[for k,v in pairs(accept) do
         out:put("        case ")
         out:put(k)
         out:put(": {\n")
@@ -967,7 +1019,7 @@ static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n) {
         else
             out:put("        } return NULL;\n")
         end
-    end
+    end]]--
     out:put("        // no match?\n")
     out:put("        default: return NULL;\n")
     out:put("    }\n")
@@ -990,7 +1042,7 @@ static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n) {
     out:put("#define R_POP(n, next)      (((n) << 16u) | (next))\n")
     out:put("static void global_init(void) {\n")
     out:put("    static const uint32_t edges[] = {\n")
-    for state=0,#dfa do
+    for state=1,state_count do
         for id,next in pairs(NFA[state]) do
             out:put("        (")
             out:put(state)

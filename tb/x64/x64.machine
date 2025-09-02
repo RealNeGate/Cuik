@@ -1,6 +1,6 @@
 extra (X86MemOp)
 
-#if 0
+#if 1
 node (shl)
 node (shlx)
 
@@ -86,8 +86,6 @@ subpat (x86_lea ___ ___ $base $index scale=$scale disp=$disp flags=$flags) where
 // [rsp + offset]
 pat (TB_PTR_OFFSET ___ (x86_MEMORY (TB_MACH_FRAME_PTR ...) flags=$flags disp=$disp) ($addend: TB_ICONST ...))
 => (x86_MEMORY "ctx->frame_ptr" flags=$flags disp="$disp + as_int32($addend)")
-
-// (ADD (LOAD ($lhs: MEMORY ...)) $rhs) => ()
 
 // *******************************
 // FLAGS
