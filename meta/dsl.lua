@@ -783,18 +783,18 @@ function add_line(depth, line)
     lines[#lines + 1] = string.rep(" ", depth*4) .. line
 end
 
-function compare_to_node_type(t, inv)
+function compare_to_node_type(in_str, t, inv)
     if t == "TB_NULL" then
         if inv then
-            return "in == NULL"
+            return in_str.." == NULL"
         else
-            return "in != NULL"
+            return in_str.." != NULL"
         end
     else
         if inv then
-            return "in->type != "..t
+            return in_str.."->type != "..t
         else
-            return "in->type == "..t
+            return in_str.."->type == "..t
         end
     end
 end
@@ -808,14 +808,6 @@ if false then
         add_line(1, "return NULL;")
         add_line(0, "}")
         lines[#lines+1] = ""
-    end
-end
-
-function gen_edge(state, input, depth)
-    if push[state] and push[state][input] then
-        add_line(depth, "push();")
-    elseif pop[state] and pop[state][input] then
-        add_line(depth, string.format("pop(%d);", pop[state][input]))
     end
 end
 
@@ -855,10 +847,32 @@ function noop_push_pop(head, input)
     end
 end
 
-function gen_c(head, input, depth)
+var_counter = 0
+function gen_c(head, input, depth, stack)
+    local in_str = stack[2]
+    if stack[3] then
+        in_str = in_str.."->inputs["..stack[3].."]"
+    end
+
     local n = NFA[head]
     if input ~= nil then
-        gen_edge(head, input, depth)
+        if push[head] and push[head][input] then
+            local new_name = in_str
+            if stack[3] then
+                new_name = string.format("n$%d", var_counter)
+                add_line(depth, string.format("%s = %s;", new_name, in_str))
+                var_counter = var_counter + 1
+
+                in_str = new_name
+            else
+                in_str = new_name.."->inputs[0]"
+            end
+
+            stack = { stack, new_name, 0 }
+        elseif pop[head] and pop[head][input] then
+            stack = stack[1]
+            -- add_line(depth, string.format("pop(%d);", pop[head][input]))
+        end
 
         head = n[input]
         n = NFA[head]
@@ -869,6 +883,9 @@ function gen_c(head, input, depth)
         return
     end
     visited[head] = true
+    if stack[3] then
+        stack[3] = stack[3] + 1
+    end
 
     -- add_line(depth, string.format("// STATE%d", head))
     if pred_count[head] and pred_count[head] > 1 then
@@ -891,12 +908,11 @@ function gen_c(head, input, depth)
     local cyclic = n[0] == head
     local leader = find_leader(n)
     if leader then
-        add_line(depth, "in = read();")
         if leader ~= 0 then
-            add_line(depth, string.format("if (%s) { return NULL; }", compare_to_node_type(leader, true)))
+            add_line(depth, string.format("if (%s) { return NULL; }", compare_to_node_type(in_str, leader, true)))
             lines[#lines+1] = ""
         end
-        gen_c(head, leader, depth)
+        gen_c(head, leader, depth, stack)
     else
         local case_count = 0
         local non_any = nil
@@ -913,36 +929,32 @@ function gen_c(head, input, depth)
                 -- if the default case is unvisited, fake a visit to cause a GOTO placement in the nested block
                 visited[n[0]] = true
 
-                add_line(depth, "in = read();")
-                add_line(depth, string.format("if (%s) {", compare_to_node_type(non_any, false)))
-                gen_c(head, non_any, depth+1)
+                add_line(depth, string.format("if (%s) {", compare_to_node_type(in_str, non_any, false)))
+                gen_c(head, non_any, depth+1, stack)
                 add_line(depth, "}")
 
                 visited[n[0]] = nil
-                gen_c(head, 0, depth)
+                gen_c(head, 0, depth, stack)
             elseif n[0] == head then
                 -- if the only non-any case is just a pop on TB_NULL, let's early out
                 if non_any ~= "TB_NULL" then
                     add_line(depth, string.format("do {"))
-                    add_line(depth, string.format("    in = read();"))
-                    add_line(depth, string.format("} while (%s);", compare_to_node_type(non_any, true)))
+                    add_line(depth, string.format("    // TODO(NeGate): scan until X type"))
+                    add_line(depth, string.format("} while (%s);", compare_to_node_type(in_str, non_any, true)))
                 end
-                gen_c(head, non_any, depth)
+                gen_c(head, non_any, depth, stack)
             else
-                add_line(depth, "in = read();")
-                add_line(depth, string.format("if (%s) { goto STATE%d; }", compare_to_node_type(non_any, true), n[0]))
+                add_line(depth, string.format("if (%s) { goto STATE%d; }", compare_to_node_type(in_str, non_any, true), n[0]))
 
                 local skip_to = noop_push_pop(head, non_any)
                 if skip_to then
-                    add_line(depth, "// AAA")
-                    gen_c(skip_to, nil, depth)
+                    gen_c(skip_to, nil, depth, stack)
                 else
-                    gen_c(head, non_any, depth)
+                    gen_c(head, non_any, depth, stack)
                 end
             end
         else
-            add_line(depth, "in = read();")
-            add_line(depth, "switch (in ? in->type : TB_NULL) {")
+            add_line(depth, string.format("switch (%s ? %s->type : TB_NULL) {", in_str, in_str))
 
             local unique_paths = {}
             for k,v in pairs(n) do
@@ -963,7 +975,7 @@ function gen_c(head, input, depth)
                     end
                 end
                 add_line(depth, "    {")
-                gen_c(head, list[1], depth+2)
+                gen_c(head, list[1], depth+2, stack)
                 add_line(depth, "    }")
             end
             add_line(depth, "}")
@@ -971,7 +983,9 @@ function gen_c(head, input, depth)
     end
 end
 
-gen_c(0, nil, 0)
+local stack = { nil, "n", nil }
+gen_c(0, nil, 0, stack)
+
 print(table.concat(lines, "\n"))
 os.exit(0)
 

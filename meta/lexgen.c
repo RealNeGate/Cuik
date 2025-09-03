@@ -138,10 +138,12 @@ bool run_keyword_tablegen(FILE* f) {
     // try to figure out a good hash
     uint64_t max_iterations = 1ull << 24;
     uint8_t max_collisions = 0;
-    uint64_t a;
+    uint64_t a = 7279593577997237667ULL;
     for (uint64_t i = 0; i < max_iterations; i++) {
-        a = rand64();
-        if (!check(a, max_collisions)) continue;
+        if (!check(a, max_collisions)) {
+            a = rand64();
+            continue;
+        }
 
         fprintf(f, "// a = %"PRIu64" (%d keywords, %"PRIu64" tries)\n", a, num_keywords, i);
         fprintf(f, "#define PERFECT_HASH_SEED %"PRIu64"ULL\n", a);

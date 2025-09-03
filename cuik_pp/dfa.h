@@ -1,25 +1,25 @@
-// a = 12531264313017737726 (76 keywords, 586785 tries)
-#define PERFECT_HASH_SEED 12531264313017737726ULL
+// a = 7279593577997237667 (76 keywords, 0 tries)
+#define PERFECT_HASH_SEED 7279593577997237667ULL
 static const uint8_t keywords_table[256] = {
-    [223] = 0 /* auto */, [227] = 1 /* break */, [214] = 2 /* case */, [193] = 3 /* char */, 
-    [212] = 4 /* const */, [156] = 5 /* continue */, [12] = 6 /* default */, [59] = 7 /* do */, 
-    [101] = 8 /* double */, [181] = 9 /* else */, [222] = 10 /* enum */, [206] = 11 /* extern */, 
-    [229] = 12 /* float */, [33] = 13 /* for */, [27] = 14 /* goto */, [207] = 15 /* if */, 
-    [25] = 16 /* inline */, [160] = 17 /* int */, [58] = 18 /* long */, [132] = 19 /* register */, 
-    [150] = 20 /* restrict */, [248] = 21 /* return */, [60] = 22 /* short */, [64] = 23 /* signed */, 
-    [91] = 24 /* sizeof */, [90] = 25 /* static */, [24] = 26 /* struct */, [15] = 27 /* switch */, 
-    [1] = 28 /* typedef */, [254] = 29 /* union */, [169] = 30 /* unsigned */, [120] = 31 /* void */, 
-    [83] = 32 /* volatile */, [126] = 33 /* while */, [125] = 34 /* _Alignas */, [187] = 35 /* _Alignof */, 
-    [231] = 36 /* _Atomic */, [147] = 37 /* _Bool */, [65] = 38 /* _Complex */, [96] = 39 /* _Embed */, 
-    [92] = 40 /* _Generic */, [78] = 41 /* _Imaginary */, [56] = 42 /* _Pragma */, [208] = 43 /* _Noreturn */, 
-    [170] = 44 /* _Static_assert */, [155] = 45 /* _Thread_local */, [174] = 46 /* _Typeof */, [195] = 47 /* _Vector */, 
-    [142] = 48 /* __asm__ */, [179] = 49 /* __attribute__ */, [202] = 50 /* __cdecl */, [216] = 51 /* __stdcall */, 
-    [74] = 52 /* __declspec */, [146] = 53 /* discard */, [165] = 54 /* layout */, [62] = 55 /* in */, 
-    [139] = 56 /* out */, [95] = 57 /* inout */, [72] = 58 /* uint */, [230] = 59 /* buffer */, 
-    [192] = 60 /* uniform */, [154] = 61 /* flat */, [238] = 62 /* smooth */, [30] = 63 /* noperspective */, 
-    [211] = 64 /* vec2 */, [129] = 65 /* vec3 */, [47] = 66 /* vec4 */, [249] = 67 /* ivec2 */, 
-    [167] = 68 /* ivec3 */, [85] = 69 /* ivec4 */, [217] = 70 /* uvec2 */, [135] = 71 /* uvec3 */, 
-    [53] = 72 /* uvec4 */, [114] = 73 /* dvec2 */, [31] = 74 /* dvec3 */, [205] = 75 /* dvec4 */, 
+    [80] = 0 /* auto */, [151] = 1 /* break */, [20] = 2 /* case */, [152] = 3 /* char */, 
+    [218] = 4 /* const */, [182] = 5 /* continue */, [255] = 6 /* default */, [156] = 7 /* do */, 
+    [175] = 8 /* double */, [122] = 9 /* else */, [22] = 10 /* enum */, [202] = 11 /* extern */, 
+    [36] = 12 /* float */, [195] = 13 /* for */, [168] = 14 /* goto */, [51] = 15 /* if */, 
+    [90] = 16 /* inline */, [56] = 17 /* int */, [131] = 18 /* long */, [78] = 19 /* register */, 
+    [108] = 20 /* restrict */, [148] = 21 /* return */, [6] = 22 /* short */, [143] = 23 /* signed */, 
+    [49] = 24 /* sizeof */, [42] = 25 /* static */, [87] = 26 /* struct */, [16] = 27 /* switch */, 
+    [185] = 28 /* typedef */, [23] = 29 /* union */, [254] = 30 /* unsigned */, [191] = 31 /* void */, 
+    [193] = 32 /* volatile */, [177] = 33 /* while */, [166] = 34 /* _Alignas */, [240] = 35 /* _Alignof */, 
+    [248] = 36 /* _Atomic */, [82] = 37 /* _Bool */, [114] = 38 /* _Complex */, [213] = 39 /* _Embed */, 
+    [204] = 40 /* _Generic */, [134] = 41 /* _Imaginary */, [153] = 42 /* _Pragma */, [18] = 43 /* _Noreturn */, 
+    [217] = 44 /* _Static_assert */, [58] = 45 /* _Thread_local */, [21] = 46 /* _Typeof */, [141] = 47 /* _Vector */, 
+    [229] = 48 /* __asm__ */, [8] = 49 /* __attribute__ */, [139] = 50 /* __cdecl */, [199] = 51 /* __stdcall */, 
+    [181] = 52 /* __declspec */, [75] = 53 /* discard */, [146] = 54 /* layout */, [91] = 55 /* in */, 
+    [53] = 56 /* out */, [249] = 57 /* inout */, [116] = 58 /* uint */, [198] = 59 /* buffer */, 
+    [138] = 60 /* uniform */, [63] = 61 /* flat */, [15] = 62 /* smooth */, [253] = 63 /* noperspective */, 
+    [66] = 64 /* vec2 */, [167] = 65 /* vec3 */, [12] = 66 /* vec4 */, [226] = 67 /* ivec2 */, 
+    [71] = 68 /* ivec3 */, [172] = 69 /* ivec4 */, [186] = 70 /* uvec2 */, [31] = 71 /* uvec3 */, 
+    [132] = 72 /* uvec4 */, [243] = 73 /* dvec2 */, [88] = 74 /* dvec3 */, [189] = 75 /* dvec4 */, 
 };
 
 static const char keywords[][16] = {
