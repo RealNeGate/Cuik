@@ -741,12 +741,23 @@ function insert_backtrack(head, fail, depth)
 end
 
 insert_backtrack(0, nil, 0)
+pred_count = {}
 
 print("Dump")
 for k,v in pairs(NFA) do
     print_row(k, v)
+    for input,succ in pairs(v) do
+        if NFA[succ] ~= v then
+            if not pred_count[succ] then
+                pred_count[succ] = 1
+            else
+                pred_count[succ] = pred_count[succ] + 1
+            end
+        end
+    end
 end
 
+print(inspect(pred_count))
 print("DONE")
 
 function find_leader(n)
@@ -773,7 +784,7 @@ function add_line(depth, line)
 end
 
 function compare_to_node_type(t, inv)
-    if type == "TB_NULL" then
+    if t == "TB_NULL" then
         if inv then
             return "in == NULL"
         else
@@ -808,6 +819,42 @@ function gen_edge(state, input, depth)
     end
 end
 
+function is_push(n, input)
+    return push[n] and push[n][input]
+end
+
+function is_pop(n, input)
+    if pop[n] then
+        return pop[n][input]
+    else
+        return 0
+    end
+end
+
+-- finds shapes for: (NODE_TYPE ...)
+function noop_push_pop(head, input)
+    if not is_push(head, input) then
+        return nil
+    end
+
+    local next = NFA[head][input]
+
+    local case_count = 0
+    local non_any = nil
+    for k,v in pairs(NFA[next]) do
+        if k ~= 0 then
+            non_any = k
+        end
+        case_count = case_count + 1
+    end
+
+    if case_count == 2 and NFA[next][0] == next and non_any == "TB_NULL" and is_pop(next, non_any) == 1 then
+        return NFA[next][non_any]
+    else
+        return nil
+    end
+end
+
 function gen_c(head, input, depth)
     local n = NFA[head]
     if input ~= nil then
@@ -824,6 +871,9 @@ function gen_c(head, input, depth)
     visited[head] = true
 
     -- add_line(depth, string.format("// STATE%d", head))
+    if pred_count[head] and pred_count[head] > 1 then
+        add_line(depth, string.format("STATE%d:", head))
+    end
 
     -- Accept states
     if accept[head] then
@@ -869,7 +919,6 @@ function gen_c(head, input, depth)
                 add_line(depth, "}")
 
                 visited[n[0]] = nil
-                add_line(depth, string.format("STATE%d:", n[0]))
                 gen_c(head, 0, depth)
             elseif n[0] == head then
                 -- if the only non-any case is just a pop on TB_NULL, let's early out
@@ -882,11 +931,18 @@ function gen_c(head, input, depth)
             else
                 add_line(depth, "in = read();")
                 add_line(depth, string.format("if (%s) { goto STATE%d; }", compare_to_node_type(non_any, true), n[0]))
-                gen_c(head, non_any, depth)
+
+                local skip_to = noop_push_pop(head, non_any)
+                if skip_to then
+                    add_line(depth, "// AAA")
+                    gen_c(skip_to, nil, depth)
+                else
+                    gen_c(head, non_any, depth)
+                end
             end
         else
             add_line(depth, "in = read();")
-            add_line(depth, "switch (in->type) {")
+            add_line(depth, "switch (in ? in->type : TB_NULL) {")
 
             local unique_paths = {}
             for k,v in pairs(n) do
