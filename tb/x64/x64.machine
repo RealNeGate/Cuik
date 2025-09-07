@@ -1,6 +1,6 @@
 extra (X86MemOp)
 
-#if 1
+#if 0
 node (shl)
 node (shlx)
 
@@ -194,8 +194,7 @@ pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) => (x86_ ## mnemonic dt=$dt 
 #define NORMIE_OP8(op_name, mnemonic) \
 node (mnemonic) \
 pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs) \
-pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_uint8($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
-pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs)
+pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_uint8($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)")
 
 NORMIE_OP(TB_ADD, add)
 NORMIE_OP(TB_OR,  or)
