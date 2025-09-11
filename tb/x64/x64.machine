@@ -1,6 +1,6 @@
 extra (X86MemOp)
 
-#if 0
+#if 1
 node (shl)
 node (shlx)
 
@@ -30,6 +30,10 @@ CMP_OP(TB_CMP_ULE, BE)
 CMP_OP(TB_CMP_ULT, B)
 CMP_OP(TB_CMP_EQ,  E)
 CMP_OP(TB_CMP_NE,  NE)
+
+pat (TB_IF ...) => "X"
+pat (TB_IF $ctrl (x86_COND $cmp)) => "X"
+pat (TB_IF $ctrl $x) => "X"
 #else
 // *******************************
 // memory operands
@@ -210,10 +214,6 @@ NORMIE_OP8(TB_SAR, sar)
 NORMIE_OP8(TB_ROL, rol)
 NORMIE_OP8(TB_ROR, ror)
 
-pat (x86_shlx ...) => "isel_peep_shift(ctx, f, n)"
-pat (x86_shrx ...) => "isel_peep_shift(ctx, f, n)"
-pat (x86_sarx ...) => "isel_peep_shift(ctx, f, n)"
-
 node (div)
 node (idiv)
 
@@ -264,14 +264,14 @@ node (movzx16)
 node (movsx32)
 
 node (vxor)
-pat (TB_FNEG dt=$dt ___ $in)
-=> (x86_vxor dt=$dt ___ ___ (TB_MACH_SYMBOL "f->root_node" sym="gimme_float_neg_zero(ctx, $dt)") $in mode=MODE_LD)
+pat (TB_FNEG dt=$dt ___ $src)
+=> (x86_vxor dt=$dt ___ ___ (TB_MACH_SYMBOL "f->root_node" sym="gimme_float_neg_zero(ctx, $dt)") $src mode=MODE_LD)
 
-pat (TB_BITCAST dt=$dt ___ $in)
-=> (TB_MACH_COPY dt=$dt ___ $in def="ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]" use="ctx->normie_mask[TB_IS_FLOAT_TYPE($in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]")
+pat (TB_BITCAST dt=$dt ___ $src)
+=> (TB_MACH_COPY dt=$dt ___ $src def="ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]" use="ctx->normie_mask[TB_IS_FLOAT_TYPE($src->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]")
 
-pat (TB_TRUNCATE dt=$dt ___ $in)
-=> (TB_MACH_COPY dt=$dt ___ $in def="ctx->normie_mask[REG_CLASS_GPR]" use="ctx->normie_mask[REG_CLASS_GPR]")
+pat (TB_TRUNCATE dt=$dt ___ $src)
+=> (TB_MACH_COPY dt=$dt ___ $src def="ctx->normie_mask[REG_CLASS_GPR]" use="ctx->normie_mask[REG_CLASS_GPR]")
 
 // 32 -> 64
 pat (TB_SIGN_EXT dt=$dt ___ $src)
@@ -301,3 +301,18 @@ pat (TB_ZERO_EXT dt=$dt ___ ($src: TB_LOAD $ctrl $mem ($addr: x86_MEMORY ...)))
 where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
 => (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD)
 #endif
+
+// *******************************
+// Skylake pipeline
+// *******************************
+pipeline(Skylake
+    // 1 "complex" decoder, 3 simple decoders
+    (unit DecodeS)
+    (unit DecodeC)
+
+    // 8 execution units, addressed by the p012 syntax (meaning "ports 0, 1 or 2")
+    ports=8
+)
+
+inst_class (IntOp1 "p0156*1")
+

@@ -165,6 +165,9 @@ local node_type_count = 0
 local node_types = {}
 
 local accept = {}
+local accept_fn = {} -- State -> FnName
+local accept_count = 0
+
 local lex = lexer(source)
 
 local function parse_node()
@@ -201,182 +204,12 @@ local function parse_node()
     return n
 end
 
-node_extra_desc = {
-    ["TB_NodeCompare"]  = { cmp_dt="TB_DataType" },
-    ["TB_NodeSymbol"]   = { sym="TB_Symbol*" },
-    ["TB_NodeLocal"]    = { stack_pos="int" },
-    ["TB_NodeMachCopy"] = { def="RegMask*", use="RegMask*" },
-    ["TB_NodeMachProj"] = { index="int", def="RegMask*" },
-    ["TB_NodeProj"]     = { index="int" },
-    ["TB_NodeFloat32"]  = { value="float" },
-    ["TB_NodeFloat64"]  = { value="double" },
-    ["TB_NodeInt"]      = { value="uint64_t" },
-}
-
-function extra_node_type_name(t)
-    local extra_type = mach_extra_type
-    if  t == "TB_CMP_ULE" or
-        t == "TB_CMP_ULT" or
-        t == "TB_CMP_SLE" or
-        t == "TB_CMP_SLT" or
-        t == "TB_CMP_FLE" or
-        t == "TB_CMP_FLT" or
-        t == "TB_CMP_EQ"  or
-        t == "TB_CMP_NE"  then
-        extra_type = "TB_NodeCompare"
-    elseif t == "TB_SYMBOL" then
-        extra_type = "TB_NodeSymbol"
-    elseif t == "TB_LOCAL" then
-        extra_type = "TB_NodeLocal"
-    elseif t == "TB_MACH_SYMBOL" then
-        extra_type = "TB_NodeMachSymbol"
-    elseif t == "TB_MACH_COPY" then
-        extra_type = "TB_NodeMachCopy"
-    elseif t == "TB_MACH_PROJ" then
-        extra_type = "TB_NodeMachProj"
-    elseif t == "TB_PROJ" then
-        extra_type = "TB_NodeProj"
-    elseif t == "TB_ICONST" then
-        extra_type = "TB_NodeInt"
-    elseif t == "TB_F32CONST" then
-        extra_type = "TB_NodeFloat32"
-    elseif t == "TB_F64CONST" then
-        extra_type = "TB_NodeFloat64"
-    end
-    return extra_type
-end
-
-local node_cnt = 0
-function write_node(strs, ids, n)
-    -- create kids first
-    local in_cnt = 0
-    local uses_rest = false
-    for i=2,#n do
-        local v = n[i]
-        if type(v) == "table" then
-            write_node(strs, ids, v)
-            in_cnt = in_cnt + 1
-        elseif v == "$REST" then
-            uses_rest = true
-        elseif mem_capture and v == mem_capture.name then
-            in_cnt = in_cnt + 2
-        else
-            in_cnt = in_cnt + 1
-        end
-    end
-
-    -- assign unique IDs
-    ids[n] = node_cnt
-    node_cnt = node_cnt + 1
-
-    -- declaration of a node
-    local node_type = n[1]
-    local extra_type = extra_node_type_name(n[1])
-
-    local dt_name = n.dt
-    if dt_name == nil then
-        dt_name = "TB_TYPE_VOID"
-    end
-
-    local potentially_dynamic_count = false
-
-    strs[#strs + 1] = string.format("    size_t k%d_i = 0;", ids[n])
-    if uses_rest then
-        strs[#strs + 1] = string.format("    TB_Node* k%d = tb_alloc_node(f, %s, %s, %d + $REST_LEN, sizeof(%s));", ids[n], node_type, dt_name, in_cnt, extra_type)
-    else
-        strs[#strs + 1] = string.format("    TB_Node* k%d = tb_alloc_node(f, %s, %s, %d, sizeof(%s));", ids[n], node_type, dt_name, in_cnt, extra_type)
-    end
-
-    -- input edges
-    for i=2,#n do
-        local v = n[i]
-        if v == "___" then
-            -- just keep as NULL
-            strs[#strs + 1] = string.format("    k%d_i++;", ids[n])
-        elseif type(v) == "table" then
-            strs[#strs + 1] = string.format("    set_input(f, k%d, k%d, k%d_i++);", ids[n], ids[v], ids[n])
-        elseif mem_capture and v == mem_capture.name then
-            -- copy all the extra data
-            potentially_dynamic_count = true
-            -- copy inputs
-            strs[#strs + 1] = string.format("    if (%s->type != %s) {", v, mach_prefix.."MEMORY")
-            strs[#strs + 1] = string.format("        set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
-            strs[#strs + 1] = string.format("    } else {")
-            strs[#strs + 1] = string.format("        FOR_N(i, 0, %s->input_count) { set_input(f, k%d, %s->inputs[i], k%d_i++); }", v, ids[n], v, ids[n])
-            strs[#strs + 1] = string.format("    }")
-        elseif v == "$REST" then
-            strs[#strs + 1] = string.format("    FOR_N(i, 0, $REST_LEN) { set_input(f, k%d, $REST[i], k%d_i++); }", ids[n], ids[n])
-        elseif type(v) == "string" and v:byte(1) == string.byte("$") then
-            strs[#strs + 1] = string.format("    set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
-        else
-            strs[#strs + 1] = string.format("    set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
-        end
-    end
-
-    strs[#strs + 1] = string.format("    %s* k%d_extra = TB_NODE_GET_EXTRA(k%d);", extra_type, ids[n], ids[n])
-    for k,v in pairs(n) do
-        if type(k) == "string" and k ~= "dt" then
-            -- replace all uses of captures with their real name
-            strs[#strs + 1] = string.format("    k%d_extra->%s = %s;", ids[n], k, v)
-        elseif mem_capture and v == mem_capture.name then
-            strs[#strs + 1] = string.format("    memcpy(k%d_extra, %s->extra, sizeof("..mach_extra_type.."));", ids[n], v)
-        end
-    end
-
-    -- trim size
-    if potentially_dynamic_count then
-        strs[#strs + 1] = string.format("    k%d->input_count = k%d_i;", ids[n], ids[n])
-    end
-
-    -- apply GVN
-    strs[#strs + 1] = string.format("    k%d = tb_opt_gvn_node(f, k%d);", ids[n], ids[n])
-    strs[#strs + 1] = ""
-end
-
-node_basic_fields = {
-  ["dt"] = true,
-}
-
-function find_captures(strs, n, expr)
-    for i=2,#n do
-        local v = n[i]
-        if type(v) == "table" then
-            find_captures(strs, v, expr.."->inputs["..(i-2).."]")
-        end
-    end
-
-    if n.name then
-        strs[#strs + 1] = string.format("    TB_Node* %s = %s;", n.name, expr)
-    end
-
-    local extra_type = extra_node_type_name(n[1])
-    for k,v in pairs(n) do
-        if v == "$REST" then
-            strs[#strs + 1] = string.format("    size_t %s_LEN = %s->input_count - %d;", v, expr, k-2)
-            strs[#strs + 1] = string.format("    TB_Node** %s  = &%s->inputs[%d];", v, expr, k-2)
-        elseif type(v) == "string" and v:byte(1) == string.byte("$") then
-            if type(k) == "string" and k ~= "name" then
-                if node_basic_fields[k] then
-                    strs[#strs + 1] = string.format("    TB_DataType %s = %s->%s;", v, expr, k)
-                else
-                    local t = node_extra_desc[extra_type]
-                    if t then
-                        t = t[k]
-                    else
-                        t = "uint64_t"
-                    end
-
-                    strs[#strs + 1] = string.format("    %s %s = TB_NODE_GET_EXTRA_T(%s, %s)->%s;", t, v, expr, extra_type, k)
-                end
-            elseif type(k) == "number" then
-                strs[#strs + 1] = string.format("    TB_Node* %s = %d < %s->input_count ? %s->inputs[%d] : NULL;", v, k-2, expr, expr, k-2)
-            end
-        end
-    end
-end
-
 local all_patterns = {}
 local subpat_map = {}
+
+local curr_pipeline = {}
+local inst_classes = {}
+
 while true do
     local t = lex()
     if t == nil then
@@ -404,6 +237,37 @@ while true do
                 node_type_count = node_type_count + 1
             end
         end
+    elseif t == "pipeline" then
+        t = lex()
+        if t ~= "(" then
+            print("fuck but in parsing")
+            os.exit(1)
+        end
+
+        local desc = parse_node()
+
+        curr_pipeline = { name=desc[1], units={} }
+        for i=2,#desc do
+            if desc[i][1] == "unit" then
+                local name = desc[i][2]
+                curr_pipeline.units[name] = 1
+            end
+        end
+
+        for i=1,desc.ports do
+            local name = string.format("p%x", i-1)
+            curr_pipeline.units[name] = 1
+        end
+
+        print(desc[1], inspect(curr_pipeline.units))
+    elseif t == "inst_class" then
+        t = lex()
+        if t ~= "(" then
+            print("fuck but in parsing")
+            os.exit(1)
+        end
+
+        local desc = parse_node()
     elseif t == "pat" or t == "subpat" then
         local is_subpat = t == "subpat"
 
@@ -427,12 +291,11 @@ while true do
             os.exit(1)
         end
 
-        local replacement = nil
         t = lex()
         if t == "(" then
-            replacement = parse_node()
+            t = parse_node()
         end
-        all_patterns[#all_patterns + 1] = { is_subpat, pattern, where, replacement }
+        all_patterns[#all_patterns + 1] = { is_subpat, pattern, where, t }
 
         -- reset muh shit
         captures = {}
@@ -443,53 +306,49 @@ end
 --------------------------
 -- DFA construction
 --------------------------
-function get_pattern_pretty(n)
-    local str = "("..n[1]
+function get_pattern_inner(n, shape)
+    local str = "("
+    if n.name then
+        str = str..n.name..": "
+    end
+
+    if shape then
+        if n[1] == "x86_MEMORY" then
+            str = str.."MEM_OP"
+        elseif n[1] == "x86_COND" then
+            str = str.."CC_OP"
+        else
+            str = str.."ANY_OP"
+        end
+    else
+        str = str..n[1]
+    end
+
     for i=2,#n do
         local t = n[i]
         str = str.." "
         if type(t) == "table" then
-            str = str..get_pattern_pretty(t)
-        elseif t == "..." or t == "$REST" then
+            str = str..get_pattern_inner(t, shape)
+        elseif t == "..." then
             str = str.."..."
+        elseif t == "$REST" then
+            str = str.."$REST"
         elseif t == "___" then
             str = str.."___"
-        elseif t:byte(1) == string.byte("$") then -- capture
-            str = str.."ANY"
         else
-            error("Hehe", t)
+            str = str..t
         end
     end
+
     return str..")"
 end
 
+function get_pattern_pretty(n)
+    return get_pattern_inner(n, false)
+end
+
 function get_pattern_shape(n)
-    local str = "("
-    if n[1] == "x86_MEMORY" then
-        str = str.."MEM_OP"
-    elseif n[1] == "x86_COND" then
-        str = str.."CC_OP"
-    else
-        str = str.."ANY_OP"
-    end
-
-    for i=2,#n do
-        local t = n[i]
-        str = str.." "
-        if type(t) == "table" then
-            str = str..get_pattern_shape(t)
-        elseif t == "..." or t == "$REST" then
-            str = str.."..."
-        elseif t == "___" then
-            str = str.."___"
-        elseif t:byte(1) == string.byte("$") then -- capture
-            str = str.."ANY"
-        else
-            error("Hehe", t)
-        end
-    end
-
-    return str..")"
+    return get_pattern_inner(n, true)
 end
 
 DFA = {}
@@ -551,14 +410,17 @@ local function make_active_str(list)
 end
 
 DFA_cache = {}
-local function nfa_compile(n, head, active, depth)
+local function nfa_compile(n, head, active, depth, any_loop)
     local ty = n[1]
 
     -- what partitions are we "in" right now
     local next_active = {}
+    local s = {}
     for i=1,#active do
         if active[i][1] == ty then
+            -- local last_pat = active[i][#active[i]]
             next_active[#next_active + 1] = active[i]
+            s[#s + 1] = active[i]
         end
     end
 
@@ -575,12 +437,26 @@ local function nfa_compile(n, head, active, depth)
         -- print("Cached", DFA[head][ty], head, ty, DFA_cache[head][active_str])
 
         -- reuse head
-        DFA[head][ty] = DFA_cache[head][active_str]
-        head = DFA_cache[head][active_str]
+        local new_head = DFA_cache[head][active_str]
+        if DFA[new_head][0] == new_head then
+            -- if there's a loop, we'll always "win" the match but we do need
+            -- to hook our first "non-any" case to this loop
+            any_loop = new_head
+            if DFA_cache[head][active_str] == DFA[head][ty] then
+                DFA[head][ty] = nil
+            end
+
+            new_head = nfa_new_edge(head, ty)
+            if not DFA[new_head] then
+                DFA[new_head] = {}
+            end
+        end
+
+        DFA[head][ty] = new_head
+        head = new_head
     else
         local old_head = head
         head = nfa_new_edge(head, ty)
-
         DFA_cache[old_head][active_str] = head
     end
     stack_action[head] = depth
@@ -592,33 +468,42 @@ local function nfa_compile(n, head, active, depth)
             for j=1,#next_active do
                 kid_active[#kid_active + 1] = next_active[j][i]
             end
-
-            head = nfa_compile(t, head, kid_active, depth + 1)
+            head = nfa_compile(t, head, kid_active, depth + 1, any_loop)
         elseif t == "..." or t == "$REST" then
             -- match any, but in a cycle
             if not DFA[head] then
                 DFA[head] = {}
             end
+
             DFA[head][0] = head
         elseif t == "___" then
             head = nfa_new_edge(head, "TB_NULL")
+
+            -- if we fail to match, we'll fallback to the loop
+            if any_loop and (not DFA[head] or not DFA[head][0]) then
+                -- print("FAIL", head, 0, any_loop)
+                nfa_edge(head, 0, any_loop)
+            end
         elseif t:byte(1) == string.byte("$") then -- capture
             head = nfa_new_edge(head, 0)
         else
             error("Hehe", t)
         end
+
         stack_action[head] = depth
     end
 
-    -- pop once we've exhausted all the inputs
-    if depth == 1 then
-        if not DFA[head] then
-            DFA[head] = {}
-        end
-        DFA[head]["END"] = head
-    else
-        head = nfa_new_edge(head, "END")
+    if any_loop and (not DFA[head] or not DFA[head][0]) then
+        print("FAIL", head, 0, any_loop)
+        nfa_edge(head, 0, any_loop)
     end
+
+    -- pop once we've exhausted all the inputs
+    head = nfa_new_edge(head, "END")
+    if depth == 1 then
+        stack_action[head] = 1
+    end
+
     return head
 end
 
@@ -657,18 +542,23 @@ for i,name in ipairs(ordered) do
     for i=1,#set do
         walk_into(set[i][2], partition_count)
     end
+    print(i, name, #set)
 end
 
-for i,name in ipairs(ordered) do
-    local set = partitions[name]
-    for i=1,#set do
-        head = nfa_compile(set[i][2], 0, active, 1)
+if false then
+    for i,name in ipairs(ordered) do
+        local set = partitions[name]
+        for i=1,#set do
+            head = nfa_compile(set[i][2], 0, active, 1)
 
-        local final = accept[head]
-        if final then
-            final[#final + 1] = set[i]
-        else
-            accept[head] = { set[i] }
+            local final = accept[head]
+            print(get_pattern_pretty(set[i][2]), head)
+
+            if final then
+                final[#final + 1] = set[i]
+            else
+                accept[head] = { set[i] }
+            end
         end
     end
 end
@@ -694,12 +584,22 @@ for k,v in pairs(accept) do
 end
 
 visited = {}
-function insert_backtrack(head, fail, depth)
+
+function clone_stack_2(stack)
+    local prev = nil
+    if stack[1] then
+        prev = clone_stack_2(stack[1])
+    end
+    return { prev, stack[2], stack[3], stack[4] }
+end
+
+function insert_backtrack(head, fail, stack)
     if visited[head] then
         return
     end
     visited[head] = true
 
+    local depth = stack_action[head]
     local n = DFA[head]
 
     -- "forget" any fail cases which are deeper than us
@@ -708,12 +608,16 @@ function insert_backtrack(head, fail, depth)
     end
 
     -- print("Walk", head, fail and fail.node or nil, depth, fail and fail.depth or nil)
+    print("Walk", head, stack[2], stack[3])
 
     -- step the fail case forward if we're at the same depth
     local old_fail = fail
     if fail and fail.depth == depth then
         fail = shallowcopy(fail)
+        -- print("Advance", fail.node, DFA[fail.node][0])
+
         fail.node = DFA[fail.node][0]
+        fail.gen = fail.gen + 1
 
         if fail.node == head or not fail.node then
             fail = fail.prev
@@ -725,7 +629,7 @@ function insert_backtrack(head, fail, depth)
     for k,v in pairs(n) do
         if k ~= 0 and n[0] then
             -- print("push fail", head, n[0])
-            fail = { prev=fail, node=n[0], depth=depth }
+            fail = { prev=fail, node=n[0], depth=stack_action[n[0]], gen=stack[2] }
             break
         end
     end
@@ -733,24 +637,54 @@ function insert_backtrack(head, fail, depth)
     for k,v in pairs(n) do
         if DFA[v] and v ~= head then
             local next_depth = stack_action[v]
-            insert_backtrack(v, fail, next_depth)
+            local next_stack = stack
+
+            if next_depth >= next_stack[3] then
+                next_stack = clone_stack_2(next_stack)
+                next_stack[2] = next_stack[2] + 1
+                if next_depth > next_stack[3] then
+                    next_stack = { next_stack, 0, next_depth }
+                    print("Push", head, v)
+                end
+            else
+                -- POP
+                while next_depth < next_stack[3] do
+                    next_stack = next_stack[1]
+                end
+                print("Pop", head, v, next_stack[2], next_stack[3])
+            end
+
+            insert_backtrack(v, fail, next_stack)
         end
     end
 
+    assert(depth == stack_action[head])
     if old_fail and not n[0] and head ~= old_fail.node then
-        -- print("insert fail", head, old_fail.node, depth, old_fail.depth)
+        -- we can only backtrack if we're either popping or we're moving forward
+        if (old_fail.depth < stack[3]) or (old_fail.depth == stack[3] and stack[2] == old_fail.gen) then
+            print("insert fail", head, old_fail.node, depth, old_fail.depth, "gen=", stack[2], old_fail.gen)
 
-        -- step out of the current node
-        n[0] = old_fail.node
+            -- step out of the current node
+            n[0] = old_fail.node
+        else
+            print("not fail", head, old_fail.node, depth, old_fail.depth, "gen=", stack[2], old_fail.gen)
+        end
     end
 end
 
-insert_backtrack(0, nil, 0)
+if false then
+    print("Dump")
+    for k,v in pairs(DFA) do
+        print_row(k, v)
+    end
+end
+
+-- insert_backtrack(0, nil, { nil, 0, 0 })
 pred_count = {}
 
--- print("Dump")
+print("Dump")
 for k,v in pairs(DFA) do
-    -- print_row(k, v)
+    print_row(k, v)
 
     for input,succ in pairs(v) do
         if DFA[succ] ~= v then
@@ -809,18 +743,6 @@ function compare_to_node_type(stack, t, inv)
         else
             return in_str.."->type == "..t
         end
-    end
-end
-
-if false then
-    for k,v in pairs(accept) do
-        add_line(0, string.format("static TB_Node* mach_dfa_accept_%d(Ctx* ctx, TB_Function* f, TB_Node* n) {", k))
-        for i,line in pairs(v) do
-            add_line(1, line)
-        end
-        add_line(1, "return NULL;")
-        add_line(0, "}")
-        lines[#lines+1] = ""
     end
 end
 
@@ -919,7 +841,6 @@ function gen_c(head, depth, stack)
         if pred_count[head] and pred_count[head] > 1 then
             add_line(depth, string.format("STATE%d:", head))
         end
-
         stack = gen_edge(head, stack, depth)
 
         -- Certain transition chains translate to simple straight-line code
@@ -949,20 +870,12 @@ function gen_c(head, depth, stack)
 
         -- Accept states
         if accept[head] then
-            local set = accept[head]
-            for i=1,#set do
-                if false and set[i][3] then
-                    add_line(depth, string.format("// Shape: %s where '%s'", get_pattern_pretty(set[i][2]), set[i][3]))
-                else
-                    add_line(depth, string.format("// Shape: %s", get_pattern_pretty(set[i][2])))
-                end
-            end
-
-            if n[0] then
-                add_line(depth, string.format("k = ACCEPT(%d);", head))
+            local id = accept_fn[head]
+            if n[0] and n[0] ~= head then
+                add_line(depth, string.format("k = ACCEPT(%d); // FINAL %d", id, head))
                 add_line(depth, string.format("if (k) { return k; } else { goto STATE%d; }", n[0]))
             else
-                add_line(depth, string.format("return ACCEPT(%d);", head))
+                add_line(depth, string.format("return ACCEPT(%d); // FINAL %d", id, head))
             end
             return
         end
@@ -976,6 +889,7 @@ function gen_c(head, depth, stack)
             case_count = case_count + 1
         end
 
+        local terminate = false
         if case_count == 2 and n[0] then
             local old_vis = visited[n[0]]
             if not old_vis then
@@ -999,7 +913,7 @@ function gen_c(head, depth, stack)
                     add_line(depth, string.format("} while (%s);", compare_to_node_type(stack, non_any, true)))
                 end
 
-                assert(stack_action[head] == stack_action[n[non_any]]+1)
+                -- assert(stack_action[head] == stack_action[n[non_any]]+1)
                 head = n[non_any]
             else
                 add_line(depth, string.format("if (%s) { goto STATE%d; }", compare_to_node_type(stack, non_any, true), n[0]))
@@ -1045,10 +959,18 @@ function gen_c(head, depth, stack)
     end
 end
 
-do
+local edge_count = 0
+for state,n in pairs(DFA) do
+    for id,next in pairs(n) do
+        edge_count = edge_count + 1
+    end
+end
+
+lines[#lines + 1] = string.format("// AUTO-GENERATED!!! states=%d, deltas=%d, accepts=%d", state_count, edge_count, accept_count)
+
+if true then
     local mach_prefix_caps = string.upper(arg[1])
 
-    lines[#lines + 1] = ""
     lines[#lines + 1] = "typedef enum "..mach_prefix_caps.."NodeType {"
 
     local function cmp_node_types(table, a, b)
@@ -1072,44 +994,425 @@ do
     lines[#lines + 1] = ""
 end
 
-lines[#lines + 1] = "#define ACCEPT(x) mach_dfa_accept_ ## x(ctx, f, n)"
-lines[#lines + 1] = "static TB_Node* mach_dfa_match(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {"
+node_extra_desc = {
+    ["TB_NodeCompare"]  = { cmp_dt="TB_DataType" },
+    ["TB_NodeSymbol"]   = { sym="TB_Symbol*" },
+    ["TB_NodeLocal"]    = { stack_pos="int" },
+    ["TB_NodeMachCopy"] = { def="RegMask*", use="RegMask*" },
+    ["TB_NodeMachProj"] = { index="int", def="RegMask*" },
+    ["TB_NodeProj"]     = { index="int" },
+    ["TB_NodeFloat32"]  = { value="float" },
+    ["TB_NodeFloat64"]  = { value="double" },
+    ["TB_NodeInt"]      = { value="uint64_t" },
+}
 
-local stack = { nil, "n", nil, 0 }
-gen_c(0, 1, stack)
+function extra_node_type_name(t)
+    local extra_type = mach_extra_type
+    if  t == "TB_CMP_ULE" or
+        t == "TB_CMP_ULT" or
+        t == "TB_CMP_SLE" or
+        t == "TB_CMP_SLT" or
+        t == "TB_CMP_FLE" or
+        t == "TB_CMP_FLT" or
+        t == "TB_CMP_EQ"  or
+        t == "TB_CMP_NE"  then
+        extra_type = "TB_NodeCompare"
+    elseif t == "TB_SYMBOL" then
+        extra_type = "TB_NodeSymbol"
+    elseif t == "TB_LOCAL" then
+        extra_type = "TB_NodeLocal"
+    elseif t == "TB_MACH_SYMBOL" then
+        extra_type = "TB_NodeMachSymbol"
+    elseif t == "TB_MACH_COPY" then
+        extra_type = "TB_NodeMachCopy"
+    elseif t == "TB_MACH_PROJ" then
+        extra_type = "TB_NodeMachProj"
+    elseif t == "TB_PROJ" then
+        extra_type = "TB_NodeProj"
+    elseif t == "TB_ICONST" then
+        extra_type = "TB_NodeInt"
+    elseif t == "TB_F32CONST" then
+        extra_type = "TB_NodeFloat32"
+    elseif t == "TB_F64CONST" then
+        extra_type = "TB_NodeFloat64"
+    end
+    return extra_type
+end
 
-lines[#lines + 1] = "}"
-lines[#lines + 1] = "#undef ACCEPT"
+function compute_pattern_hash(strs, expr, set, hashes)
+    local n = set[1]
+    for i=2,#n do
+        local v = n[i]
+        if type(v) == "table" then
+            local kid = {}
+            for j=1,#set do
+                kid[j] = set[j][i]
+            end
+
+            compute_pattern_hash(strs, expr.."->inputs["..(i-2).."]", kid, hashes)
+        end
+    end
+
+    -- if the set disagrees, hash it
+    local node_type = n[1]
+    for i=2,#set do
+        if node_type ~= set[i][1] then
+            node_type = nil
+            break
+        end
+    end
+
+    if not node_type then
+        for i=1,#set do
+            local t = node_enum_types[set[i][1]]
+            if not t then
+                t = 256+node_types[set[i][1]].id
+            end
+            hashes[i] = hashes[i]*31 + t
+        end
+
+        strs[#strs + 1] = string.format("        hash = hash*31 + %s->type;", expr)
+    end
+end
+
+local node_cnt = 0
+function write_node(strs, ids, set, hashes)
+    local n = set[1]
+
+    -- create kids first
+    local in_cnt = 0
+    local uses_rest = false
+    for i=2,#n do
+        local v = n[i]
+        if type(v) == "table" then
+            local kid = {}
+            for j=1,#set do
+                kid[j] = set[j][i]
+            end
+
+            write_node(strs, ids, kid, hashes)
+            in_cnt = in_cnt + 1
+        elseif v == "$REST" then
+            uses_rest = true
+        elseif mem_capture and v == mem_capture.name then
+            in_cnt = in_cnt + 2
+        else
+            in_cnt = in_cnt + 1
+        end
+    end
+
+    -- assign unique IDs
+    ids[n] = node_cnt
+    node_cnt = node_cnt + 1
+
+    -- if the set disagrees
+    local node_type = n[1]
+    for i=2,#set do
+        if node_type ~= set[i][1] then
+            node_type = nil
+            break
+        end
+    end
+
+    if not node_type then
+        node_type = "k"..ids[n].."_type"
+        strs[#strs + 1] = string.format("        int %s = 0;", node_type)
+        strs[#strs + 1] = "        switch (hash) {"
+        for i=1,#set do
+            strs[#strs + 1] = string.format("            case %d: %s = %s; break;", hashes[i], node_type, set[i][1])
+        end
+        strs[#strs + 1] = "            default: abort(); return NULL;"
+        strs[#strs + 1] = "        }"
+    end
+
+    -- declaration of a node
+    local extra_type = extra_node_type_name(n[1])
+    local dt_name = n.dt
+    if dt_name == nil then
+        dt_name = "TB_TYPE_VOID"
+    end
+
+    local potentially_dynamic_count = false
+    strs[#strs + 1] = string.format("        size_t k%d_i = 0;", ids[n])
+    if uses_rest then
+        strs[#strs + 1] = string.format("        TB_Node* k%d = tb_alloc_node(f, %s, %s, %d + $REST_LEN, sizeof(%s));", ids[n], node_type, dt_name, in_cnt, extra_type)
+    else
+        strs[#strs + 1] = string.format("        TB_Node* k%d = tb_alloc_node(f, %s, %s, %d, sizeof(%s));", ids[n], node_type, dt_name, in_cnt, extra_type)
+    end
+
+    -- input edges
+    for i=2,#n do
+        local v = n[i]
+        if v == "___" then
+            -- just keep as NULL
+            strs[#strs + 1] = string.format("        k%d_i++;", ids[n])
+        elseif type(v) == "table" then
+            strs[#strs + 1] = string.format("        set_input(f, k%d, k%d, k%d_i++);", ids[n], ids[v], ids[n])
+        elseif mem_capture and v == mem_capture.name then
+            -- copy all the extra data
+            potentially_dynamic_count = true
+            -- copy inputs
+            strs[#strs + 1] = string.format("        if (%s->type != %s) {", v, mach_prefix.."MEMORY")
+            strs[#strs + 1] = string.format("            set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
+            strs[#strs + 1] = string.format("        } else {")
+            strs[#strs + 1] = string.format("            FOR_N(i, 0, %s->input_count) { set_input(f, k%d, %s->inputs[i], k%d_i++); }", v, ids[n], v, ids[n])
+            strs[#strs + 1] = string.format("        }")
+        elseif v == "$REST" then
+            strs[#strs + 1] = string.format("        FOR_N(i, 0, $REST_LEN) { set_input(f, k%d, $REST[i], k%d_i++); }", ids[n], ids[n])
+        elseif type(v) == "string" and v:byte(1) == string.byte("$") then
+            strs[#strs + 1] = string.format("        set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
+        else
+            strs[#strs + 1] = string.format("        set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
+        end
+    end
+
+    strs[#strs + 1] = string.format("        %s* k%d_extra = TB_NODE_GET_EXTRA(k%d);", extra_type, ids[n], ids[n])
+    for k,v in pairs(n) do
+        if type(k) == "string" and k ~= "dt" then
+            -- replace all uses of captures with their real name
+            strs[#strs + 1] = string.format("        k%d_extra->%s = %s;", ids[n], k, v)
+        elseif mem_capture and v == mem_capture.name then
+            strs[#strs + 1] = string.format("        memcpy(k%d_extra, %s->extra, sizeof("..mach_extra_type.."));", ids[n], v)
+        end
+    end
+
+    -- trim size
+    if potentially_dynamic_count then
+        strs[#strs + 1] = string.format("        k%d->input_count = k%d_i;", ids[n], ids[n])
+    end
+
+    -- apply GVN
+    strs[#strs + 1] = string.format("        k%d = tb_opt_gvn_node(f, k%d);", ids[n], ids[n])
+    strs[#strs + 1] = ""
+end
+
+node_basic_fields = {
+  ["dt"] = true,
+}
+
+function find_captures(strs, n, expr, shared)
+    local indent = "    "
+    if not shared then
+        indent = "        "
+    end
+
+    if n.name then
+        if n[1] == "x86_MEMORY" then
+            if mem_capture then
+                print("Can't capture 2 memory operands in one pattern?!?")
+                os.exit(1)
+            end
+
+            mem_capture = n
+        end
+
+        if shared then
+            strs[#strs + 1] = string.format("%sTB_Node* %s = %s;", indent, n.name, expr)
+        end
+    end
+
+    for i=2,#n do
+        local v = n[i]
+        if type(v) == "table" then
+            find_captures(strs, v, expr.."->inputs["..(i-2).."]", shared)
+        elseif shared then
+            if v == "$REST" then
+                strs[#strs + 1] = string.format("%ssize_t %s_LEN = %s->input_count - %d;", indent, v, expr, i-2)
+                strs[#strs + 1] = string.format("%sTB_Node** %s  = &%s->inputs[%d];", indent, v, expr, i-2)
+            elseif type(v) == "string" and v:byte(1) == string.byte("$") then
+                strs[#strs + 1] = string.format("%sTB_Node* %s = %s->inputs[%d];", indent, v, expr, i-2)
+            end
+        end
+    end
+
+    if not shared then
+        local extra_type = extra_node_type_name(n[1])
+        for k,v in pairs(n) do
+            if type(k) == "string" and type(v) == "string" and k ~= "name" and v ~= "$REST" then
+                if node_basic_fields[k] then
+                    strs[#strs + 1] = string.format("%sTB_DataType %s = %s->%s;", indent, v, expr, k)
+                else
+                    local t = node_extra_desc[extra_type]
+                    if t then
+                        t = t[k]
+                    else
+                        t = "uint64_t"
+                    end
+
+                    strs[#strs + 1] = string.format("%s%s %s = TB_NODE_GET_EXTRA_T(%s, %s)->%s;", indent, t, v, expr, extra_type, k)
+                end
+            end
+        end
+    end
+
+    return id_cnt
+end
+
+if true then
+    local ordered_accept = {}
+    for k,v in pairs(accept) do
+        ordered_accept[#ordered_accept + 1] = k
+
+        accept_count = accept_count + 1
+        accept_fn[k] = accept_count
+    end
+
+    table.sort(ordered_accept, function(a, b) return a < b end)
+
+    for id,head in ipairs(ordered_accept) do
+        local set = accept[head]
+        -- if id == 5 then goto skip end
+
+        -- split replacement rules based on replacement shape
+        local rep_partitions = {}
+        local ord_rep = {}
+
+        for i=1,#set do
+            local pat = get_pattern_pretty(set[i][2])
+            local rep = set[i][4]
+            local rep_shape = rep
+            if type(rep) ~= "string" then
+                rep = get_pattern_pretty(set[i][4])
+                rep_shape = get_pattern_shape(set[i][4])
+            end
+
+            -- we want the replacement shape to also care about the where expression
+            if set[i][3] then
+                rep_shape = rep_shape.." && "..set[i][3]
+            end
+
+            do -- sort based on replacement shape
+                local p = rep_partitions[rep_shape]
+                if p then
+                    p[#p + 1] = set[i]
+                else
+                    rep_partitions[rep_shape] = { set[i] }
+                    ord_rep[#ord_rep + 1] = rep_shape
+                end
+            end
+        end
+
+        add_line(0, string.format("static TB_Node* mach_dfa_accept_%d(Ctx* ctx, TB_Function* f, TB_Node* n) {", id))
+
+        -- All the captures are the same across the sets
+        mem_capture = nil
+        find_captures(lines, set[1][2], "n", true)
+        lines[#lines+1] = ""
+
+        for i,rep_shape in ipairs(ord_rep) do
+            local set = rep_partitions[rep_shape]
+
+            for j=1,#set do
+                local pat = get_pattern_pretty(set[j][2])
+                local rep = set[j][4]
+                if type(rep) ~= "string" then
+                    rep = get_pattern_pretty(rep)
+                end
+
+                if set[j][3] then
+                    add_line(0, string.format("    // %s where '%s' => %s", pat, set[j][3], rep))
+                else
+                    add_line(0, string.format("    // %s => %s", pat, rep))
+                end
+            end
+
+            lines[#lines + 1] = "    do {"
+            if type(set[1][4]) == "string" then -- this replacement rule is just calling out to C
+                lines[#lines + 1] = "        TB_Node* k = "..set[1][4]..";"
+                lines[#lines + 1] = "        if (k) { return k; }"
+            else
+                mem_capture = nil
+                find_captures(lines, set[1][2], "n", false)
+
+                local where = set[1][3]
+                if where then
+                    lines[#lines + 1] = "        if (!("..where..")) {"
+                    lines[#lines + 1] = "            break;"
+                    lines[#lines + 1] = "        }"
+                    lines[#lines + 1] = ""
+                end
+
+                local pat = {}
+                local rep = {}
+                local hashes = {}
+                for j=1,#set do
+                    pat[j] = set[j][2]
+                    rep[j] = set[j][4]
+                    hashes[j] = 0
+                end
+
+                -- Compute hashes based on information which differs between the
+                -- nodes.
+                lines[#lines + 1] = "        uint64_t hash = 0;"
+                compute_pattern_hash(lines, "n", pat, hashes)
+                lines[#lines + 1] = ""
+
+                -- Every replacement has the same shape, just different opcodes
+                local ids = {}
+                node_cnt = 0
+                write_node(lines, ids, rep, hashes)
+
+                lines[#lines + 1] = "        return k"..ids[rep[1]]..";"
+            end
+
+            lines[#lines + 1] = "    } while (0);"
+            lines[#lines + 1] = ""
+        end
+
+        add_line(1, "return NULL;")
+        add_line(0, "}")
+        lines[#lines+1] = ""
+
+        ::skip::
+    end
+end
+
+if true then
+    lines[#lines + 1] = "#define ACCEPT(x) mach_dfa_accept_ ## x(ctx, f, n)"
+    lines[#lines + 1] = "static TB_Node* mach_dfa_match(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {"
+    lines[#lines + 1] = "    TB_Node* k;"
+
+    local stack = { nil, "n", nil, 0 }
+    gen_c(0, 1, stack)
+
+    lines[#lines + 1] = "    return NULL;"
+    lines[#lines + 1] = "}"
+    lines[#lines + 1] = "#undef ACCEPT"
+    lines[#lines + 1] = ""
+end
 
 local final_src = table.concat(lines, "\n")
-print(final_src)
+-- print(final_src)
+
 if true then
     local f = io.open(arg[3], "w")
     f:write(final_src)
     f:close()
 end
 
-os.exit(0)
+-- os.exit(0)
 
 local special_return_cases = {}
-
 if true then
     local graphviz = buffer.new(1000)
     graphviz:put("digraph G {\n")
-    for k,v in pairs(accept) do
-        graphviz:put(string.format("v%d [label=\"ACCEPT%d\"]\n", k, k))
-    end
     for state,n in pairs(DFA) do
+        local label = nil
+        if accept[state] then
+            label = "A"..state
+        else
+            label = "v"..state
+        end
+
+        if stack_action[state] then
+            label = label.."("..stack_action[state]..")"
+        end
+        graphviz:put(string.format("v%d [label=\"%s\"]\n", state, label))
+
         for id,next in pairs(n) do
             local str = id
             if id == 0 then
                 str = "ANY"
-            end
-
-            if push[state] and push[state][id] then
-                str = str.." (PUSH)"
-            elseif pop[state] and pop[state][id] then
-                str = str..string.format(" (POP%d)", pop[state][id])
             end
 
             graphviz:put(string.format("v%d -> v%d [label=\"%s\"]\n", state, next, str))
