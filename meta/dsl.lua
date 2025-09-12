@@ -164,10 +164,6 @@ local stack_action = {}
 local node_type_count = 0
 local node_types = {}
 
-local accept = {}
-local accept_fn = {} -- State -> FnName
-local accept_count = 0
-
 local lex = lexer(source)
 
 local function parse_node()
@@ -395,20 +391,6 @@ local function add_if_new(set, v)
     return #set
 end
 
-local function make_active_str(list)
-    local strs = {}
-    for i=1,partition_count do
-        strs[i] = 0
-    end
-
-    for i=1,#list do
-        local pat = list[i]
-        strs[to_partition[pat]] = 1
-    end
-
-    return table.concat(strs)
-end
-
 DFA_cache = {}
 local function nfa_compile(n, head, active, depth, any_loop)
     local ty = n[1]
@@ -545,174 +527,6 @@ for i,name in ipairs(ordered) do
     print(i, name, #set)
 end
 
-if false then
-    for i,name in ipairs(ordered) do
-        local set = partitions[name]
-        for i=1,#set do
-            head = nfa_compile(set[i][2], 0, active, 1)
-
-            local final = accept[head]
-            print(get_pattern_pretty(set[i][2]), head)
-
-            if final then
-                final[#final + 1] = set[i]
-            else
-                accept[head] = { set[i] }
-            end
-        end
-    end
-end
-
-function print_row(head, n)
-    print("State", head, stack_action[head])
-    for k,v in pairs(n) do
-        local str = string.format("  %-15s => %d", k, v)
-        print(str)
-    end
-
-    if accept[head] then
-        print("  FINAL")
-    end
-    print()
-end
-
--- Guarantee a list, even if empty
-for k,v in pairs(accept) do
-    if not DFA[k] then
-        DFA[k] = {}
-    end
-end
-
-visited = {}
-
-function clone_stack_2(stack)
-    local prev = nil
-    if stack[1] then
-        prev = clone_stack_2(stack[1])
-    end
-    return { prev, stack[2], stack[3], stack[4] }
-end
-
-function insert_backtrack(head, fail, stack)
-    if visited[head] then
-        return
-    end
-    visited[head] = true
-
-    local depth = stack_action[head]
-    local n = DFA[head]
-
-    -- "forget" any fail cases which are deeper than us
-    while fail and fail.depth > depth do
-        fail = fail.prev
-    end
-
-    -- print("Walk", head, fail and fail.node or nil, depth, fail and fail.depth or nil)
-    print("Walk", head, stack[2], stack[3])
-
-    -- step the fail case forward if we're at the same depth
-    local old_fail = fail
-    if fail and fail.depth == depth then
-        fail = shallowcopy(fail)
-        -- print("Advance", fail.node, DFA[fail.node][0])
-
-        fail.node = DFA[fail.node][0]
-        fail.gen = fail.gen + 1
-
-        if fail.node == head or not fail.node then
-            fail = fail.prev
-        end
-    end
-
-    -- if later states need to backtrack here, we'll
-    -- mark ourselves as a fail state.
-    for k,v in pairs(n) do
-        if k ~= 0 and n[0] then
-            -- print("push fail", head, n[0])
-            fail = { prev=fail, node=n[0], depth=stack_action[n[0]], gen=stack[2] }
-            break
-        end
-    end
-
-    for k,v in pairs(n) do
-        if DFA[v] and v ~= head then
-            local next_depth = stack_action[v]
-            local next_stack = stack
-
-            if next_depth >= next_stack[3] then
-                next_stack = clone_stack_2(next_stack)
-                next_stack[2] = next_stack[2] + 1
-                if next_depth > next_stack[3] then
-                    next_stack = { next_stack, 0, next_depth }
-                    print("Push", head, v)
-                end
-            else
-                -- POP
-                while next_depth < next_stack[3] do
-                    next_stack = next_stack[1]
-                end
-                print("Pop", head, v, next_stack[2], next_stack[3])
-            end
-
-            insert_backtrack(v, fail, next_stack)
-        end
-    end
-
-    assert(depth == stack_action[head])
-    if old_fail and not n[0] and head ~= old_fail.node then
-        -- we can only backtrack if we're either popping or we're moving forward
-        if (old_fail.depth < stack[3]) or (old_fail.depth == stack[3] and stack[2] == old_fail.gen) then
-            print("insert fail", head, old_fail.node, depth, old_fail.depth, "gen=", stack[2], old_fail.gen)
-
-            -- step out of the current node
-            n[0] = old_fail.node
-        else
-            print("not fail", head, old_fail.node, depth, old_fail.depth, "gen=", stack[2], old_fail.gen)
-        end
-    end
-end
-
-if false then
-    print("Dump")
-    for k,v in pairs(DFA) do
-        print_row(k, v)
-    end
-end
-
--- insert_backtrack(0, nil, { nil, 0, 0 })
-pred_count = {}
-
-print("Dump")
-for k,v in pairs(DFA) do
-    print_row(k, v)
-
-    for input,succ in pairs(v) do
-        if DFA[succ] ~= v then
-            if not pred_count[succ] then
-                pred_count[succ] = 1
-            else
-                pred_count[succ] = pred_count[succ] + 1
-            end
-        end
-    end
-end
-
-function find_leader(n)
-    local leader = nil
-    local leader_k = nil
-    for k,v in pairs(n) do
-        if v ~= head then
-            if not leader then
-                leader = v
-                leader_k = k
-            elseif leader ~= v then
-                return nil
-            end
-        end
-    end
-    return leader_k
-end
-
 -- Generate C code for the matcher
 local lines = {}
 visited = {}
@@ -746,42 +560,6 @@ function compare_to_node_type(stack, t, inv)
     end
 end
 
-function is_push(n, input)
-    return push[n] and push[n][input]
-end
-
-function is_pop(n, input)
-    if pop[n] then
-        return pop[n][input]
-    else
-        return 0
-    end
-end
-
--- finds shapes for: (NODE_TYPE ...)
-function noop_push_pop(head, depth)
-    -- first we push
-    if stack_action[head] ~= depth+1 then
-        return nil
-    end
-
-    local leave = nil
-    for k,v in pairs(DFA[head]) do
-        if k == "END" then
-            leave = v
-        elseif k ~= 0 or v ~= head then
-            return nil
-        end
-    end
-
-    -- loop on ANY, pop on NULL exit
-    assert(DFA[head][0] == head)
-    if leave and stack_action[leave] == depth then
-        return leave
-    end
-    return nil
-end
-
 function get_in(stack)
     if stack[3] then
         return stack[2].."->inputs["..stack[3].."]"
@@ -795,7 +573,7 @@ function clone_stack(stack)
     if stack[1] then
         prev = clone_stack(stack[1])
     end
-    return { prev, stack[2], stack[3], stack[4] }
+    return { prev, stack[2], stack[3], stack[4], stack[5] }
 end
 
 var_counter = 0
@@ -828,147 +606,20 @@ function gen_edge(head, stack, depth)
     return stack
 end
 
-function gen_c(head, depth, stack)
-    assert(stack)
-    while true do
-        -- Avoid revisiting nodes
-        if visited[head] then
-            add_line(depth, string.format("goto STATE%d;", head))
-            break
-        end
-        visited[head] = true
-
-        if pred_count[head] and pred_count[head] > 1 then
-            add_line(depth, string.format("STATE%d:", head))
-        end
-        stack = gen_edge(head, stack, depth)
-
-        -- Certain transition chains translate to simple straight-line code
-        while not accept[head] do
-            local n = DFA[head]
-            local cyclic = n[0] == head
-            local leader = find_leader(n)
-            if not leader then break end
-
-            -- Bail if no match
-            if leader ~= 0 then
-                add_line(depth, string.format("if (%s) { return NULL; }", compare_to_node_type(stack, leader, true)))
-            end
-            head = n[leader]
-
-            -- Avoid revisiting nodes
-            if visited[head] then
-                add_line(depth, string.format("goto STATE%d;", head))
-                return
-            end
-            visited[head] = true
-            stack = gen_edge(head, stack, depth)
-        end
-
-        local n = DFA[head]
-        local cyclic = n[0] == head
-
-        -- Accept states
-        if accept[head] then
-            local id = accept_fn[head]
-            if n[0] and n[0] ~= head then
-                add_line(depth, string.format("k = ACCEPT(%d); // FINAL %d", id, head))
-                add_line(depth, string.format("if (k) { return k; } else { goto STATE%d; }", n[0]))
-            else
-                add_line(depth, string.format("return ACCEPT(%d); // FINAL %d", id, head))
-            end
-            return
-        end
-
-        local case_count = 0
-        local non_any = nil
-        for k,v in pairs(n) do
-            if k ~= 0 then
-                non_any = k
-            end
-            case_count = case_count + 1
-        end
-
-        local terminate = false
-        if case_count == 2 and n[0] then
-            local old_vis = visited[n[0]]
-            if not old_vis then
-                -- if the default case is unvisited, fake a visit to cause a GOTO placement in the nested block
-                visited[n[0]] = true
-
-                add_line(depth, string.format("if (%s) {", compare_to_node_type(stack, non_any, false)))
-                do
-                    -- follow edge
-                    gen_c(n[non_any], depth+1, clone_stack(stack))
-                end
-                add_line(depth, "}")
-
-                visited[n[0]] = nil
-                head = n[0]
-            elseif n[0] == head then
-                -- if the only non-any case is just a pop on TB_NULL, let's early out
-                if non_any ~= "END" then
-                    add_line(depth, string.format("do {"))
-                    add_line(depth, string.format("    // TODO(NeGate): scan until X type"))
-                    add_line(depth, string.format("} while (%s);", compare_to_node_type(stack, non_any, true)))
-                end
-
-                -- assert(stack_action[head] == stack_action[n[non_any]]+1)
-                head = n[non_any]
-            else
-                add_line(depth, string.format("if (%s) { goto STATE%d; }", compare_to_node_type(stack, non_any, true), n[0]))
-
-                local skip_to = noop_push_pop(n[non_any], stack[4])
-                if skip_to then
-                    head = skip_to
-                else
-                    head = n[non_any]
-                end
-            end
-        else
-            local in_str = get_in(stack)
-            add_line(depth, string.format("switch (%s->type) {", in_str))
-
-            local unique_paths = {}
-            for k,v in pairs(n) do
-                local list = unique_paths[v]
-                if not list then
-                    unique_paths[v] = {k}
-                else
-                    list[#list + 1] = k
-                end
-            end
-
-            for succ,list in pairs(unique_paths) do
-                for i=1,#list do
-                    if list[i] == 0 then
-                        add_line(depth, string.format("    default:"))
-                    else
-                        add_line(depth, string.format("    case %s:", list[i], succ))
-                    end
-                end
-                add_line(depth, "    {")
-
-                -- follow edge
-                gen_c(n[list[1]], depth+2, clone_stack(stack))
-                add_line(depth, "    }")
-            end
-            add_line(depth, "}")
-            break
-        end
+function push_expr(stack, depth, active)
+    local in_str = get_in(stack)
+    local new_name = nil
+    if stack[3] then
+        new_name = string.format("n$%d", var_counter)
+        add_line(depth, string.format("TB_Node* %s = %s;", new_name, in_str))
+        var_counter = var_counter + 1
+    else
+        new_name = stack[2]
     end
+    return { stack, new_name, 0, stack[4]+1, active }
 end
 
-local edge_count = 0
-for state,n in pairs(DFA) do
-    for id,next in pairs(n) do
-        edge_count = edge_count + 1
-    end
-end
-
-lines[#lines + 1] = string.format("// AUTO-GENERATED!!! states=%d, deltas=%d, accepts=%d", state_count, edge_count, accept_count)
-
-if true then
+if false then
     local mach_prefix_caps = string.upper(arg[1])
 
     lines[#lines + 1] = "typedef enum "..mach_prefix_caps.."NodeType {"
@@ -1248,17 +899,7 @@ function find_captures(strs, n, expr, shared)
     return id_cnt
 end
 
-if true then
-    local ordered_accept = {}
-    for k,v in pairs(accept) do
-        ordered_accept[#ordered_accept + 1] = k
-
-        accept_count = accept_count + 1
-        accept_fn[k] = accept_count
-    end
-
-    table.sort(ordered_accept, function(a, b) return a < b end)
-
+if false then
     for id,head in ipairs(ordered_accept) do
         local set = accept[head]
         -- if id == 5 then goto skip end
@@ -1367,13 +1008,332 @@ if true then
     end
 end
 
+local function make_active_str(list)
+    local strs = {}
+    for i=1,partition_count do
+        strs[i] = 0
+    end
+
+    for i=1,#list do
+        local pat = list[i]
+        strs[to_partition[pat]] = 1
+    end
+
+    return table.concat(strs)
+end
+
+local function make_active_str_from_indices(list)
+    local strs = {}
+    for i=1,partition_count do
+        strs[i] = 0
+    end
+
+    for i=1,#list do
+        strs[list[i]] = 1
+    end
+
+    return table.concat(strs)
+end
+
+function canonicalize_type(ty)
+    if ty == "..." or ty == "$REST" or (type(ty) == "string" and ty:byte(1) == string.byte("$")) then
+        return "ANY"
+    else
+        return ty
+    end
+end
+
+function get_pattern_at(pat, i)
+    if i > #pat then
+        if (pat[#pat] == "..." or pat[#pat] == "$REST") then
+            return "ANY"
+        else
+            return "END"
+        end
+    end
+
+    if type(pat[i]) == "table" then
+        return pat[i][1]
+    end
+
+    return canonicalize_type(pat[i])
+end
+
+label_count = 0
+needs_bail = {}
+
+function gen_c_inner(active, depth, stack)
+    local limit = 0
+    for i=1,#active do
+        limit = math.max(limit, #active[i])
+    end
+
+    local needs_bail_label = nil
+    local active_str = make_active_str(active)
+
+    local pos = 2
+    while true do
+        print("Step", stack[3], stack[4])
+        -- which types lead to which active sets
+        local deltas = {}
+        for i=1,#active do
+            local ty = get_pattern_at(active[i], pos)
+            local list = deltas[ty]
+            if list then
+                list[#list + 1] = active[i]
+            else
+                deltas[ty] = { active[i] }
+            end
+        end
+
+        local case_count = 0
+        local leader = nil
+        local cases = {}
+        for k,v in pairs(deltas) do
+            local str = make_active_str(v)
+            local list = cases[str]
+            if not list then
+                list = {}
+                cases[str] = list
+                case_count = case_count + 1
+
+                if get_pattern_at(v[1], pos) ~= "ANY" then
+                    leader = v[1]
+                end
+            end
+
+            for i=1,#v do
+                list[#list + 1] = v[i]
+            end
+        end
+
+        local in_str = get_in(stack)
+        local has_leader = leader and 1 or 0
+        if case_count - has_leader <= 1 then
+            -- every case agrees, apply matching rule
+            if not leader then
+                add_line(depth, "// MATCH ANY "..in_str)
+            else
+                local key = get_pattern_at(leader, pos)
+                if key == "___" then
+                    add_line(depth, string.format("if (%s != NULL) { goto BAIL%d; }", in_str, label_count))
+
+                    needs_bail_label = label_count
+                    label_count = label_count + 1
+                elseif key == "END" then
+                    add_line(depth, "return ACCEPT(1111);")
+                else
+                    -- matched against specific node type
+                    local then_active = {}
+                    local else_active = {}
+                    for i=1,#active do
+                        local v = active[i]
+                        local ret = get_pattern_at(active[i], pos+1)
+
+                        if get_pattern_at(active[i], pos) ~= "ANY" then
+                            print("THEN", get_pattern_pretty(active[i][pos]), ret)
+                            then_active[#then_active + 1] = active[i][pos]
+                        else
+                            print("ELSE", get_pattern_pretty(active[i]), ret)
+                            else_active[#else_active + 1] = active[i]
+                        end
+                    end
+
+                    add_line(depth, "if ("..in_str.."->type == "..key..") {")
+                    local next_stack = push_expr(stack, depth+1, active)
+                    gen_c_inner(then_active, depth+1, next_stack)
+                    add_line(depth, "}")
+
+                    active = else_active
+                end
+            end
+        else
+            print("MULTI", case_count, has_leader, inspect(cases))
+            add_line(depth, "// MULTI-WAY!!! "..case_count)
+
+            local can_bail = nil
+            for k,v in pairs(cases) do
+                local keys = {}
+                for i=1,#v do
+                    local ty = get_pattern_at(v[i], pos)
+                    if ty == "ANY" then can_bail = k end
+                end
+            end
+
+            local next_stack = push_expr(stack, depth, active)
+
+            -- each path is stepping into the node so might as well do it up here
+            print("SWITCH", in_str)
+            add_line(depth, "do {")
+            for k,v in pairs(cases) do
+                if k ~= can_bail then
+                    local keys = {}
+                    local then_active = {}
+                    for i=1,#v do
+                        local ty = get_pattern_at(v[i], pos)
+                        add_if_new(keys, ty)
+
+                        if v[i][pos] and type(v[i][pos]) == "table" then
+                            print("STEP INTO", v[i][pos][1])
+                            then_active[#then_active + 1] = v[i][pos]
+                        end
+                    end
+
+                    local exprs = {}
+                    for i=1,#keys do
+                        exprs[#exprs + 1] = string.format("%s == %s", in_str, keys[i])
+                    end
+
+                    local expr = table.concat(exprs, " || ")
+                    print("CASE", inspect(keys), v, expr)
+
+                    add_line(depth+1, "if ("..expr..") {")
+                    -- gen_c_inner(then_active, depth+2, clone_stack(next_stack))
+                    add_line(depth+1, "}")
+                end
+            end
+
+            if can_bail then
+                add_line(depth+1, "// ANY CASE")
+                -- gen_c_inner(cases[can_bail], depth+1, next_stack)
+            end
+            add_line(depth, "} while (0);")
+        end
+        stack[3] = stack[3] + 1
+
+        print("CASES", case_count)
+        for k,v in pairs(cases) do
+            for i=1,#v do
+                print(k, get_pattern_pretty(v[i]))
+            end
+            print()
+        end
+
+        pos = pos + 1
+        if pos >= limit then
+            -- Pop from stack, continue to process
+            stack = clone_stack(stack[1])
+
+            pos = stack[3]
+            active = stack[5]
+            if stack[4] <= 1 then
+                break
+            end
+
+            add_line(depth, "// POP "..stack[4])
+        end
+    end
+
+    -- input_count query on the non-variadic patterns
+    local var_final = nil
+    local non_var_final = nil
+
+    for i=1,#active do
+        local pat = active[i]
+        local id = to_partition[pat]
+
+        if pat[#pat] ~= "..." and pat[#pat] ~= "$REST" then
+            if not non_var_final then
+                non_var_final = id
+            elseif non_var_final ~= id then
+                non_var_final = "JOVER"
+            end
+        else
+            if not var_final then
+                var_final = id
+            elseif var_final ~= id then
+                var_final = "JOVER"
+            end
+        end
+    end
+
+    if needs_bail_label then
+        add_line(depth, string.format("BAIL%d:", needs_bail_label))
+    end
+
+    -- We can only hit ACCEPT once we've walked to the end of the stream
+    if non_var_final and non_var_final ~= "JOVER" then
+        add_line(depth, string.format("if (%s->input_count == %d) { return ACCEPT(%d); }", stack[2], limit-1, non_var_final))
+    end
+
+    if var_final and var_final ~= "JOVER" then
+        add_line(depth, string.format("return ACCEPT(%d);", var_final))
+    end
+
+    -- There's no "next", we should bail
+    if not var_final and stack[4] == 1 then
+        add_line(depth, "return NULL;")
+    end
+
+    return active
+end
+
+function gen_c(active, depth, stack, pos)
+    local active_str = make_active_str(active)
+
+    -- which types lead to which active sets
+    local deltas = {}
+    for i=1,#active do
+        local ty = active[i][pos]
+        local list = deltas[ty]
+        if list then
+            list[#list + 1] = active[i]
+        else
+            deltas[ty] = { active[i] }
+        end
+    end
+
+    local case_count = 0
+    local cases = {}
+    for k,v in pairs(deltas) do
+        local str = make_active_str(v)
+        local list = cases[str]
+        if not list then
+            list = {}
+            cases[str] = list
+            case_count = case_count + 1
+        end
+
+        for i=1,#v do
+            list[#list + 1] = v[i]
+        end
+    end
+
+    -- each path is stepping into the node so might as well do it up here
+    local in_str = get_in(stack)
+
+    add_line(depth, "switch ("..in_str.."->type) {")
+    for k,v in pairs(cases) do
+        local keys = {}
+        for i=1,#v do
+            add_if_new(keys, v[i][1])
+        end
+
+        for i=1,#keys do
+            add_line(depth+1, "case "..keys[i]..":")
+        end
+        add_line(depth+1, "{")
+        local next_stack = push_expr(stack, depth, active)
+        gen_c_inner(v, depth+2, next_stack)
+        add_line(depth+1, "}")
+    end
+    add_line(depth, "}")
+    return stack
+end
+
 if true then
     lines[#lines + 1] = "#define ACCEPT(x) mach_dfa_accept_ ## x(ctx, f, n)"
     lines[#lines + 1] = "static TB_Node* mach_dfa_match(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {"
     lines[#lines + 1] = "    TB_Node* k;"
 
-    local stack = { nil, "n", nil, 0 }
-    gen_c(0, 1, stack)
+    local all = {}
+    for i=1,#all_patterns do
+        all[i] = all_patterns[i][2]
+        print(get_pattern_pretty(all[i]))
+    end
+
+    local stack = { nil, "n", nil, 0, all }
+    gen_c(all, 1, stack, 1)
 
     lines[#lines + 1] = "    return NULL;"
     lines[#lines + 1] = "}"
@@ -1382,15 +1342,15 @@ if true then
 end
 
 local final_src = table.concat(lines, "\n")
--- print(final_src)
+print(final_src)
 
-if true then
+if false then
     local f = io.open(arg[3], "w")
     f:write(final_src)
     f:close()
 end
 
--- os.exit(0)
+os.exit(0)
 
 local special_return_cases = {}
 if true then

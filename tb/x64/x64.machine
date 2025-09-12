@@ -14,6 +14,8 @@ where "ctx->features.x64 & TB_FEATURE_X64_BMI2"
 
 pat (TB_SHL dt=$dt ___ $lhs $rhs) => (x86_shl dt=$dt ___ ___ $rhs $lhs)
 
+// pat (TB_SHL dt=$dt ___ ($lhs: TB_ICONST ...) $rhs) => (x86_shl dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)")
+
 node (COND)
 node (cmp)
 node (test)
