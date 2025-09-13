@@ -1,8 +1,6 @@
 local buffer  = require "string.buffer"
 local inspect = require "meta/inspect"
 
-local mach_prefix = arg[1].."_"
-
 function string:starts_with(start)
     return self:sub(1, #start) == start
 end
@@ -153,8 +151,8 @@ local function lexer(str)
     end
 end
 
-print(arg[2])
-local source = run_command("clang -E -xc "..arg[2])
+print(arg[1])
+local source = run_command("clang -E -xc "..arg[1])
 
 local is_operand = {}
 
@@ -214,57 +212,8 @@ while true do
 
     mem_capture = nil
     local start_line = line_num
-    if t == "node" or t == "extra" then
-        local first = t
 
-        t = lex()
-        if t ~= "(" then
-            print("fuck but in parsing")
-            os.exit(1)
-        end
-
-        local desc = parse_node()
-        if first == "extra" then
-            mach_extra_type = desc[1]
-        else
-            -- define node types
-            if not node_types[mach_prefix..desc[1]] then
-                node_types[mach_prefix..desc[1]] = { id=node_type_count, name=mach_prefix..desc[1] }
-                node_type_count = node_type_count + 1
-            end
-        end
-    elseif t == "pipeline" then
-        t = lex()
-        if t ~= "(" then
-            print("fuck but in parsing")
-            os.exit(1)
-        end
-
-        local desc = parse_node()
-
-        curr_pipeline = { name=desc[1], units={} }
-        for i=2,#desc do
-            if desc[i][1] == "unit" then
-                local name = desc[i][2]
-                curr_pipeline.units[name] = 1
-            end
-        end
-
-        for i=1,desc.ports do
-            local name = string.format("p%x", i-1)
-            curr_pipeline.units[name] = 1
-        end
-
-        print(desc[1], inspect(curr_pipeline.units))
-    elseif t == "inst_class" then
-        t = lex()
-        if t ~= "(" then
-            print("fuck but in parsing")
-            os.exit(1)
-        end
-
-        local desc = parse_node()
-    elseif t == "pat" or t == "subpat" then
+    if t == "pat" or t == "subpat" then
         local is_subpat = t == "subpat"
 
         t = lex()
@@ -292,12 +241,36 @@ while true do
             t = parse_node()
         end
         all_patterns[#all_patterns + 1] = { is_subpat, pattern, where, t }
+    elseif t == "(" then
+        local n = parse_node()
 
-        -- reset muh shit
-        captures = {}
-        capture_count = 0
+        if n[1] == "namespace" then
+            mach_prefix = n[2].."_"
+        elseif n[1] == "node" then
+            -- define node types
+            local name = mach_prefix..n[2]
+            if node_types[name] then
+                print(string.format("node type '%s' has already been defined", n[2]))
+                os.exit(1)
+            end
+
+            if not n[3] then
+                print(string.format("node '%s' must have a defined 'extra type'", n[2]))
+                os.exit(1)
+            end
+
+            node_types[name] = { id=node_type_count, name=name, extra=n[3] }
+            node_type_count = node_type_count + 1
+        else
+            print(inspect(n))
+        end
+    else
+        print("expected either pat, subpat or an S-expr, got '"..t.."'")
+        os.exit(1)
     end
 end
+
+os.exit(0)
 
 --------------------------
 -- DFA construction
@@ -506,24 +479,31 @@ for i,pat in ipairs(all_patterns) do
 end
 
 to_partition = {}
+pattern_ids = {}
 partition_count = 0
 
-function walk_into(n, idx)
+function walk_into(n, idx, idx2)
     for i=2,#n do
         if type(n[i]) == "table" then
-            walk_into(n[i], idx)
+            walk_into(n[i], idx, idx2)
         end
     end
 
     to_partition[n] = idx
+    pattern_ids[n] = idx2
 end
 
+local pattern_count = 0
 for i,name in ipairs(ordered) do
     local set = partitions[name]
     partition_count = partition_count + 1
+
+    assert(partition_count == i)
     for i=1,#set do
-        walk_into(set[i][2], partition_count)
+        walk_into(set[i][2], partition_count, pattern_count)
+        pattern_count = pattern_count + 1
     end
+
     print(i, name, #set)
 end
 
@@ -619,9 +599,8 @@ function push_expr(stack, depth, active)
     return { stack, new_name, 0, stack[4]+1, active }
 end
 
-if false then
-    local mach_prefix_caps = string.upper(arg[1])
-
+if true then
+    local mach_prefix_caps = string.upper(mach_prefix)
     lines[#lines + 1] = "typedef enum "..mach_prefix_caps.."NodeType {"
 
     local function cmp_node_types(table, a, b)
@@ -643,6 +622,8 @@ if false then
     lines[#lines + 1] = "    }"
     lines[#lines + 1] = "}"
     lines[#lines + 1] = ""
+    lines[#lines + 1] = "static void global_init(void) {"
+    lines[#lines + 1] = "}"
 end
 
 node_extra_desc = {
@@ -658,7 +639,7 @@ node_extra_desc = {
 }
 
 function extra_node_type_name(t)
-    local extra_type = mach_extra_type
+    local extra_type = nil
     if  t == "TB_CMP_ULE" or
         t == "TB_CMP_ULT" or
         t == "TB_CMP_SLE" or
@@ -686,6 +667,9 @@ function extra_node_type_name(t)
         extra_type = "TB_NodeFloat32"
     elseif t == "TB_F64CONST" then
         extra_type = "TB_NodeFloat64"
+    else
+        extra_type = node_types[t].extra
+        assert(extra_type)
     end
     return extra_type
 end
@@ -899,9 +883,9 @@ function find_captures(strs, n, expr, shared)
     return id_cnt
 end
 
-if false then
-    for id,head in ipairs(ordered_accept) do
-        local set = accept[head]
+if true then
+    for id,name in ipairs(ordered) do
+        local set = partitions[name]
         -- if id == 5 then goto skip end
 
         -- split replacement rules based on replacement shape
@@ -1062,18 +1046,31 @@ end
 label_count = 0
 needs_bail = {}
 
-function gen_c_inner(active, depth, stack)
+function get_active_limit(active)
     local limit = 0
     for i=1,#active do
-        limit = math.max(limit, #active[i])
-    end
+        local len = #active[i] - 1
+        local last = active[i][#active[i]]
 
-    local needs_bail_label = nil
+        if last == "..." or last == "$REST" then
+            len = len - 1
+        end
+        limit = math.max(limit, len)
+    end
+    return limit
+end
+
+function gen_c_inner(depth, stack, can_bail)
+    local active = stack[5]
+    assert(depth < 10)
+
+    local limit = get_active_limit(active)
     local active_str = make_active_str(active)
 
-    local pos = 2
     while true do
-        print("Step", stack[3], stack[4])
+        assert(stack[4] >= 1)
+        local pos = stack[3] + 2
+
         -- which types lead to which active sets
         local deltas = {}
         for i=1,#active do
@@ -1088,6 +1085,7 @@ function gen_c_inner(active, depth, stack)
 
         local case_count = 0
         local leader = nil
+        local bail_out = nil
         local cases = {}
         for k,v in pairs(deltas) do
             local str = make_active_str(v)
@@ -1098,7 +1096,9 @@ function gen_c_inner(active, depth, stack)
                 case_count = case_count + 1
 
                 if get_pattern_at(v[1], pos) ~= "ANY" then
-                    leader = v[1]
+                    leader = k
+                else
+                    bail_out = k
                 end
             end
 
@@ -1108,119 +1108,113 @@ function gen_c_inner(active, depth, stack)
         end
 
         local in_str = get_in(stack)
-        local has_leader = leader and 1 or 0
-        if case_count - has_leader <= 1 then
-            -- every case agrees, apply matching rule
-            if not leader then
-                add_line(depth, "// MATCH ANY "..in_str)
-            else
-                local key = get_pattern_at(leader, pos)
-                if key == "___" then
-                    add_line(depth, string.format("if (%s != NULL) { goto BAIL%d; }", in_str, label_count))
-
-                    needs_bail_label = label_count
-                    label_count = label_count + 1
-                elseif key == "END" then
-                    add_line(depth, "return ACCEPT(1111);")
-                else
-                    -- matched against specific node type
-                    local then_active = {}
-                    local else_active = {}
-                    for i=1,#active do
-                        local v = active[i]
-                        local ret = get_pattern_at(active[i], pos+1)
-
-                        if get_pattern_at(active[i], pos) ~= "ANY" then
-                            print("THEN", get_pattern_pretty(active[i][pos]), ret)
-                            then_active[#then_active + 1] = active[i][pos]
-                        else
-                            print("ELSE", get_pattern_pretty(active[i]), ret)
-                            else_active[#else_active + 1] = active[i]
-                        end
-                    end
-
-                    add_line(depth, "if ("..in_str.."->type == "..key..") {")
-                    local next_stack = push_expr(stack, depth+1, active)
-                    gen_c_inner(then_active, depth+1, next_stack)
-                    add_line(depth, "}")
-
-                    active = else_active
-                end
-            end
-        else
-            print("MULTI", case_count, has_leader, inspect(cases))
-            add_line(depth, "// MULTI-WAY!!! "..case_count)
-
-            local can_bail = nil
-            for k,v in pairs(cases) do
-                local keys = {}
-                for i=1,#v do
-                    local ty = get_pattern_at(v[i], pos)
-                    if ty == "ANY" then can_bail = k end
-                end
-            end
-
-            local next_stack = push_expr(stack, depth, active)
-
-            -- each path is stepping into the node so might as well do it up here
-            print("SWITCH", in_str)
-            add_line(depth, "do {")
-            for k,v in pairs(cases) do
-                if k ~= can_bail then
-                    local keys = {}
-                    local then_active = {}
-                    for i=1,#v do
-                        local ty = get_pattern_at(v[i], pos)
-                        add_if_new(keys, ty)
-
-                        if v[i][pos] and type(v[i][pos]) == "table" then
-                            print("STEP INTO", v[i][pos][1])
-                            then_active[#then_active + 1] = v[i][pos]
-                        end
-                    end
-
-                    local exprs = {}
-                    for i=1,#keys do
-                        exprs[#exprs + 1] = string.format("%s == %s", in_str, keys[i])
-                    end
-
-                    local expr = table.concat(exprs, " || ")
-                    print("CASE", inspect(keys), v, expr)
-
-                    add_line(depth+1, "if ("..expr..") {")
-                    -- gen_c_inner(then_active, depth+2, clone_stack(next_stack))
-                    add_line(depth+1, "}")
-                end
-            end
-
-            if can_bail then
-                add_line(depth+1, "// ANY CASE")
-                -- gen_c_inner(cases[can_bail], depth+1, next_stack)
-            end
-            add_line(depth, "} while (0);")
-        end
         stack[3] = stack[3] + 1
 
-        print("CASES", case_count)
-        for k,v in pairs(cases) do
-            for i=1,#v do
-                print(k, get_pattern_pretty(v[i]))
+        if false then
+            print("Step", stack[4], "[", pos, "]", limit, leader, bail_out, in_str)
+
+            for k,v in pairs(cases) do
+                for i=1,#v do
+                    print("", k, get_pattern_at(v[i], pos), get_pattern_pretty(v[i]))
+                end
+                print()
             end
-            print()
         end
 
-        pos = pos + 1
-        if pos >= limit then
+        -- add_line(depth, "// WALK "..in_str..", "..make_active_str(active))
+        if leader == "___" then
+            add_line(depth, string.format("if (%s != NULL) { break; }", in_str))
+        elseif case_count == 1 and bail_out then
+            add_line(depth, "// MATCH ANY "..in_str)
+        elseif case_count == 0 then
+            add_line(depth, "break;")
+            stack[3] = stack[3] + 1
+            return active
+        else
+            -- Handle leader case
+            if leader == "END" then
+                goto skip
+            end
+
+            local new_name = string.format("n$%d", var_counter)
+            add_line(depth, string.format("TB_Node* %s = %s;", new_name, in_str))
+            var_counter = var_counter + 1
+
+            local consumed = {} -- set of inputs consumed by non-ANY cases
+            for k,v in pairs(cases) do
+                local cond = get_pattern_at(v[1], pos)
+                if cond ~= "ANY" then
+                    local preds = {}
+                    for i=1,#v do
+                        local cond = get_pattern_at(v[i], pos)
+                        add_if_new(preds, string.format("%s->type == %s", new_name, cond))
+                    end
+                    local cond = table.concat(preds, " || ")
+
+                    -- compute our active set and while we're doing that, prune the
+                    -- active set from the final ANY case. the only way to reach the
+                    -- ANY case is to bail so we can consider all the other paths dead
+                    -- at that point.
+                    local then_active = {}
+                    for i=1,#active do
+                        local v = active[i]
+                        local at = get_pattern_at(active[i], pos)
+                        if at == cond then
+                            then_active[#then_active + 1] = active[i][pos]
+                            consumed[at] = true
+                        end
+                    end
+
+                    add_line(depth, string.format("do { if (%s) {", cond))
+
+                    -- Push onto stack
+                    local next_stack = { stack, new_name, 0, stack[4]+1, then_active }
+                    gen_c_inner(depth+1, next_stack, true)
+                    add_line(depth, "} } while (0);")
+                    lines[#lines + 1] = ""
+                end
+            end
+
+            local any_active = {}
+            for i=1,#active do
+                local v = active[i]
+                local at = get_pattern_at(active[i], pos)
+                if not consumed[at] then
+                    any_active[#any_active + 1] = active[i]
+                end
+            end
+
+            active = any_active
+        end
+
+        ::skip::
+        if stack and stack[3] > limit then
             -- Pop from stack, continue to process
             stack = clone_stack(stack[1])
 
-            pos = stack[3]
-            active = stack[5]
-            if stack[4] <= 1 then
+            -- add_line(depth, "// POP "..stack[4])
+            if stack[4] < 1 then
                 break
             end
 
-            add_line(depth, "// POP "..stack[4])
+            local old_active = stack[5]
+            local live = {}
+            for i=1,#active do
+                local id = pattern_ids[active[i]]
+                live[id] = true
+            end
+
+            local new_active = {}
+            for i=1,#old_active do
+                local id = pattern_ids[old_active[i]]
+                if live[id] then
+                    -- print("KEEP LIVE", old_active[i])
+                    new_active[#new_active + 1] = old_active[i]
+     	       end
+            end
+
+            active = new_active
+            limit = get_active_limit(active)
         end
     end
 
@@ -1232,6 +1226,7 @@ function gen_c_inner(active, depth, stack)
         local pat = active[i]
         local id = to_partition[pat]
 
+        -- add_line(depth, string.format("// ACCEPT: %s", get_pattern_pretty(pat)))
         if pat[#pat] ~= "..." and pat[#pat] ~= "$REST" then
             if not non_var_final then
                 non_var_final = id
@@ -1247,22 +1242,21 @@ function gen_c_inner(active, depth, stack)
         end
     end
 
-    if needs_bail_label then
-        add_line(depth, string.format("BAIL%d:", needs_bail_label))
-    end
+    -- add_line(depth, string.format("// DONE %s %s %s", var_final, non_var_final, make_active_str(active)))
 
-    -- We can only hit ACCEPT once we've walked to the end of the stream
-    if non_var_final and non_var_final ~= "JOVER" then
-        add_line(depth, string.format("if (%s->input_count == %d) { return ACCEPT(%d); }", stack[2], limit-1, non_var_final))
-    end
-
+    local expr = "NULL"
     if var_final and var_final ~= "JOVER" then
-        add_line(depth, string.format("return ACCEPT(%d);", var_final))
+        expr = "ACCEPT("..var_final..")"
     end
 
-    -- There's no "next", we should bail
-    if not var_final and stack[4] == 1 then
-        add_line(depth, "return NULL;")
+    if non_var_final and non_var_final ~= "JOVER" then
+        expr = string.format("(%s->input_count == %d ? ACCEPT(%d) : %s)", stack[2], limit, non_var_final, expr)
+    end
+
+    if not can_bail then
+        add_line(depth, string.format("return %s;", expr))
+    elseif expr ~= "NULL" then
+        add_line(depth, string.format("if (k = %s, k) { return k; }", expr))
     end
 
     return active
@@ -1307,14 +1301,15 @@ function gen_c(active, depth, stack, pos)
         local keys = {}
         for i=1,#v do
             add_if_new(keys, v[i][1])
+            -- add_line(depth+1, string.format("// ACCEPT: %s", get_pattern_pretty(v[i])))
         end
 
         for i=1,#keys do
             add_line(depth+1, "case "..keys[i]..":")
         end
         add_line(depth+1, "{")
-        local next_stack = push_expr(stack, depth, active)
-        gen_c_inner(v, depth+2, next_stack)
+        local next_stack = push_expr(stack, depth, v)
+        gen_c_inner(depth+2, next_stack, false)
         add_line(depth+1, "}")
     end
     add_line(depth, "}")
@@ -1323,7 +1318,7 @@ end
 
 if true then
     lines[#lines + 1] = "#define ACCEPT(x) mach_dfa_accept_ ## x(ctx, f, n)"
-    lines[#lines + 1] = "static TB_Node* mach_dfa_match(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {"
+    lines[#lines + 1] = "static TB_Node* node_isel_raw(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {"
     lines[#lines + 1] = "    TB_Node* k;"
 
     local all = {}
@@ -1342,10 +1337,10 @@ if true then
 end
 
 local final_src = table.concat(lines, "\n")
-print(final_src)
+-- print(final_src)
 
-if false then
-    local f = io.open(arg[3], "w")
+if true then
+    local f = io.open(arg[2], "w")
     f:write(final_src)
     f:close()
 end

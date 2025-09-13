@@ -268,11 +268,11 @@ rule("run", {
 -- TB's DSL
 if added["tb"] then
     if in_use_archs["x64"] then
-        command("tb/x64/x64_gen.h", "meta/dsl.lua", arg[-1].." $in x86 tb/x64/x64.machine tb/x64/x64_gen.h", "tb/x64/x64.machine")
+        command("tb/x64/x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine tb/x64/x64_gen.h", "tb/x64/x64.machine")
     end
 
     if in_use_archs["a64"] then
-        command("tb/aarch64/a64_gen.h", "meta/dsl.lua", arg[-1].." $in a64 tb/aarch64/a64.machine tb/aarch64/a64_gen.h", "tb/aarch64/a64.machine")
+        command("tb/aarch64/a64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/aarch64/a64.machine tb/aarch64/a64_gen.h", "tb/aarch64/a64.machine")
     end
 end
 

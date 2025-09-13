@@ -1,8 +1,9 @@
-extra (X86MemOp)
+(namespace x86)
 
-#if 1
-node (shl)
-node (shlx)
+#if 0
+// (node NAME EXTRA_TYPE)
+(node shl X86MemOp)
+(node shlx X86MemOp)
 
 pat (TB_SHL dt=$dt ___ $lhs $rhs)
 where "ctx->features.x64 & TB_FEATURE_X64_BMI2"
@@ -14,12 +15,12 @@ where "ctx->features.x64 & TB_FEATURE_X64_BMI2"
 
 pat (TB_SHL dt=$dt ___ $lhs $rhs) => (x86_shl dt=$dt ___ ___ $rhs $lhs)
 
-// pat (TB_SHL dt=$dt ___ ($lhs: TB_ICONST ...) $rhs) => (x86_shl dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)")
+pat (TB_SHL dt=$dt ___ ($lhs: TB_ICONST ...) $rhs) => (x86_shl dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)")
 
-node (COND)
-node (cmp)
-node (test)
-node (ucomi)
+(node COND X86MemOp)
+(node cmp X86MemOp)
+(node test X86MemOp)
+(node ucomi X86MemOp)
 
 // compares
 #define CMP_OP(op_name, cc) \
@@ -40,7 +41,7 @@ pat (TB_IF $ctrl $x) => "X"
 // *******************************
 // memory operands
 // *******************************
-node (MEMORY)
+(node MEMORY X86MemOp)
 
 // [base + index]
 pat (TB_PTR_OFFSET ___ $base $index)
@@ -96,10 +97,10 @@ pat (TB_PTR_OFFSET ___ (x86_MEMORY (TB_MACH_FRAME_PTR ...) flags=$flags disp=$di
 // *******************************
 // FLAGS
 // *******************************
-node (COND)
-node (cmp)
-node (test)
-node (ucomi)
+(node COND X86MemOp)
+(node cmp X86MemOp)
+(node test X86MemOp)
+(node ucomi X86MemOp)
 
 // compares
 #define CMP_OP(op_name, cc) \
@@ -121,8 +122,8 @@ pat (TB_CMP_NE  cmp_dt=$dt ___ $lhs $rhs) where "TB_IS_FLOAT_TYPE($dt)" => (x86_
 pat (TB_CMP_EQ cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && TB_NODE_GET_EXTRA_T($rhs, TB_NodeInt)->value == 0" => (x86_COND dt=TB_TYPE_I8 (x86_test dt=TB_TYPE_I64 ___ ___ $lhs $lhs extra_dt=$dt) cond=E)
 pat (TB_CMP_NE cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && TB_NODE_GET_EXTRA_T($rhs, TB_NodeInt)->value == 0" => (x86_COND dt=TB_TYPE_I8 (x86_test dt=TB_TYPE_I64 ___ ___ $lhs $lhs extra_dt=$dt) cond=NE)
 
-node (jcc)
-node (jmp_MULTI)
+(node jcc X86MemOp)
+(node jmp_MULTI X86MemOp)
 
 /* canonicalize the if-shaped branches */
 pat (TB_IF ...) => "isel_if_branch(ctx, f, n)"
@@ -137,23 +138,23 @@ pat (TB_BRANCH dt=$dt $ctrl $x) => "isel_multi_way_branch(ctx, f, n)"
 
 // if we don't get rid of the "condition" by merging it with something
 // else then it's being directly used.
-node (setcc)
+(node setcc X86MemOp)
 pat (x86_COND $cmp cond=$cond) => (x86_setcc dt=TB_TYPE_I8 ___ ___ $cmp cond=$cond)
 
-node (cmovcc)
+(node cmovcc X86MemOp)
 pat (TB_SELECT dt=$dt ___ $pred $a $b) => (x86_cmovcc dt=$dt ___ ___ $b $a (x86_test dt=TB_TYPE_I64 ___ ___ $pred $pred extra_dt="n->inputs[1]->dt") cond=NE)
 pat (TB_SELECT dt=$dt ___ (x86_COND $cmp cond=$cond) $a $b) => (x86_cmovcc dt=$dt ___ ___ $b $a $cmp cond=$cond)
 
-node (bt)
+(node bt X86MemOp)
 pat (TB_AND dt=$dt ___ (TB_SHL ___ ($con: TB_ICONST ...) $y) $x) where "as_int32($con) == 1" => (x86_COND dt=TB_TYPE_I8 (x86_bt dt=TB_TYPE_I64 ___ ___ $y $x extra_dt=$dt) cond=B)
 
-node (adc)
+(node adc X86MemOp)
 pat (x86_cmovcc dt=$dt ___ ___ $x (TB_ADD ___ $y ($con: TB_ICONST ...)) $pred) where "as_int32($con) == 1 && TB_NODE_GET_EXTRA_T(n, X86MemOp)->cond == B" => (x86_adc dt=$dt ___ ___ $x $pred flags="OP_IMMEDIATE" imm="0")
 
 // *******************************
 // misc
 // *******************************
-node (call)
+(node call X86MemOp)
 pat (TB_CALL $ctrl $mem (x86_MEMORY ($sym: TB_MACH_SYMBOL ...)) $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem $sym $REST proto="TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto")
 pat (TB_CALL $ctrl $mem $target $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem $target $REST mode=MODE_LD proto="TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto")
 
@@ -162,12 +163,8 @@ pat (TB_VA_START ...) => "isel_va_start(ctx, f, n)"
 // *******************************
 // BMI2
 // *******************************
-node (shlx)
-node (shrx)
-node (sarx)
-
 #define BMI2_OP(op_name, mnemonic) \
-node (mnemonic) \
+(node mnemonic X86MemOp) \
 pat (op_name dt=$dt ___ $lhs $rhs) where "ctx->features.x64 & TB_FEATURE_X64_BMI2" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
 pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs) where "ctx->features.x64 & TB_FEATURE_X64_BMI2" => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD) \
 
@@ -178,8 +175,8 @@ BMI2_OP(TB_SAR, sarx)
 // *******************************
 // integer ops
 // *******************************
-node (mov)
-node (lea)
+(node mov X86MemOp)
+(node lea X86MemOp)
 
 pat ($lhs: x86_MEMORY ...) => (x86_lea dt=TB_TYPE_PTR ___ ___ $lhs mode=MODE_LD)
 
@@ -191,14 +188,14 @@ pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) $val) where "TB_IS_INT_OR_PTR($v
 pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) ($val: TB_ICONST ...) flags=$flags) where "TB_IS_INT_OR_PTR($val->dt) && fits_into_int32($val->dt, $val)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs flags="$flags | OP_IMMEDIATE" mode=MODE_ST extra_dt="n->inputs[3]->dt" imm="as_int32($val)")
 
 #define NORMIE_OP(op_name, mnemonic) \
-node (mnemonic) \
+(node mnemonic X86MemOp) \
 pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs) \
 pat (op_name dt=$dt ___ $lhs (TB_LOAD $ctrl $mem ($rhs: x86_MEMORY ...))) => (x86_ ## mnemonic dt=$dt $ctrl $mem $rhs $lhs mode=MODE_LD) \
 pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
 pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs)
 
 #define NORMIE_OP8(op_name, mnemonic) \
-node (mnemonic) \
+(node mnemonic X86MemOp) \
 pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs) \
 pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_uint8($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)")
 
@@ -216,8 +213,8 @@ NORMIE_OP8(TB_SAR, sar)
 NORMIE_OP8(TB_ROL, rol)
 NORMIE_OP8(TB_ROR, ror)
 
-node (div)
-node (idiv)
+(node div X86MemOp)
+(node idiv X86MemOp)
 
 pat (TB_UDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
 pat (TB_SDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
@@ -227,8 +224,8 @@ pat (TB_SMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE 
 // *******************************
 // float ops
 // *******************************
-node (vmov)
-node (vzero)
+(node vmov X86MemOp)
+(node vzero X86MemOp)
 
 pat (TB_LOAD dt=$dt $ctrl $mem $addr) where "TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $addr mode=MODE_LD)
 pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) where "TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $lhs mode=MODE_LD)
@@ -246,7 +243,7 @@ pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) where "is_float_zero($x)"
 pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) => (x86_vmov dt=$dt ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float_sym(ctx, n)") mode=MODE_LD)
 
 #define FLOATIE_OP(op_name, mnemonic) \
-node (mnemonic) \
+(node mnemonic X86MemOp) \
 pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs)
 
 FLOATIE_OP(TB_FADD, vadd)
@@ -259,13 +256,13 @@ FLOATIE_OP(TB_FMIN, vmin)
 // *******************************
 // casting
 // *******************************
-node (movsx8)
-node (movzx8)
-node (movsx16)
-node (movzx16)
-node (movsx32)
+(node movsx8 X86MemOp)
+(node movzx8 X86MemOp)
+(node movsx16 X86MemOp)
+(node movzx16 X86MemOp)
+(node movsx32 X86MemOp)
 
-node (vxor)
+(node vxor X86MemOp)
 pat (TB_FNEG dt=$dt ___ $src)
 => (x86_vxor dt=$dt ___ ___ (TB_MACH_SYMBOL "f->root_node" sym="gimme_float_neg_zero(ctx, $dt)") $src mode=MODE_LD)
 
@@ -307,7 +304,7 @@ where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == T
 // *******************************
 // Skylake pipeline
 // *******************************
-pipeline(Skylake
+(pipeline Skylake
     // 1 "complex" decoder, 3 simple decoders
     (unit DecodeS)
     (unit DecodeC)
@@ -316,5 +313,7 @@ pipeline(Skylake
     ports=8
 )
 
-inst_class (IntOp1 "p0156*1")
+(inst_class IntOp1 "p0156*1")
 
+// use IntOp1 if we're an add
+(inst_reserve IntOp1 (x86_add ... mode=$mode) where="mode == MODE_LD")

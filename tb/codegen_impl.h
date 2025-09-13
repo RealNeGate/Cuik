@@ -427,7 +427,7 @@ static TB_Node* node_isel_raw_OLD(Ctx* restrict ctx, TB_Function* f, TB_Node* n,
 
                         // if there's no non-memory match, we'll take it as a last resort
                         if (wants_operand == 1 && next == 0) {
-                            TB_Node* new_in = mach_dfa_bare_memory(ctx, f, in);
+                            TB_Node* new_in = NULL; // mach_dfa_bare_memory(ctx, f, in);
                             set_input(f, curr, new_in, index);
 
                             in = new_in;
@@ -493,7 +493,7 @@ static TB_Node* node_isel_raw_OLD(Ctx* restrict ctx, TB_Function* f, TB_Node* n,
 
     // we've found a match, jump to the relevant C match
     size_t old_node_count = f->node_count;
-    TB_Node* k = mach_dfa_accept(ctx, f, n, state);
+    TB_Node* k = NULL; // mach_dfa_accept(ctx, f, n, state);
 
     /* if (k && k->gvn >= old_node_count) {
         // we can GVN machine nodes :)
