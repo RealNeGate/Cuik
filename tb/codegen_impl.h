@@ -299,7 +299,6 @@ static uint32_t mach_grammar_exp;
 static uint32_t* mach_grammar;
 
 static bool mach_is_operand[512];
-static bool mach_is_subpat[512];
 static TB_Node* mach_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state);
 static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n);
 
@@ -365,9 +364,9 @@ static void indent(int depth) {
 // root is at depth=1
 static TB_Node* node_isel_raw_OLD(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int depth) {
     TB_ASSERT(n->type != TB_PHI);
-    if (depth == 1 && mach_is_subpat[n->type]) {
+    /*if (depth == 1 && mach_is_subpat[n->type]) {
         return NULL;
-    }
+    }*/
 
     NodeCursor stk[16];
     int head = 1, state = 0;

@@ -471,8 +471,8 @@ static void schedule_packs(TB_Function* f, NL_Table* ops, Set* visited, DynArray
     // push inputs first
     FOR_N(j, 1, op->ops[0]->input_count) {
         FOR_N(i, 0, op->width) {
-            if (op->ops[j]->inputs[i]) {
-                VectorOp* in = nl_table_get(ops, op->ops[j]->inputs[i]);
+            if (op->ops[i]->inputs[j]) {
+                VectorOp* in = nl_table_get(ops, op->ops[i]->inputs[j]);
                 if (in) {
                     schedule_packs(f, ops, visited, schedule, in);
                 }
@@ -480,7 +480,7 @@ static void schedule_packs(TB_Function* f, NL_Table* ops, Set* visited, DynArray
         }
     }
 
-    printf("  PUSH V%d\n", op->id);
+    // printf("  PUSH V%d\n", op->id);
     dyn_array_put(*schedule, op);
 }
 
