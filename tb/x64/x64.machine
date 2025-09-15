@@ -1,43 +1,5 @@
 (namespace x86)
 
-#if 0
-// (node NAME EXTRA_TYPE)
-(node shl X86MemOp)
-(node shlx X86MemOp)
-
-pat (TB_SHL dt=$dt ___ $lhs $rhs)
-where "ctx->features.x64 & TB_FEATURE_X64_BMI2"
-=> (x86_shlx dt=$dt ___ ___ $lhs $rhs)
-
-pat (TB_SHL dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs)
-where "ctx->features.x64 & TB_FEATURE_X64_BMI2"
-=> (x86_shlx dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD)
-
-pat (TB_SHL dt=$dt ___ $lhs $rhs) => (x86_shl dt=$dt ___ ___ $rhs $lhs)
-
-pat (TB_SHL dt=$dt ___ ($lhs: TB_ICONST ...) $rhs) => (x86_shl dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)")
-
-(node COND X86MemOp)
-(node cmp X86MemOp)
-(node test X86MemOp)
-(node ucomi X86MemOp)
-
-// compares
-#define CMP_OP(op_name, cc) \
-pat (op_name cmp_dt=$dt ___ $lhs $rhs) where "TB_IS_BOOL_INT_PTR($dt)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=cc) \
-pat (op_name cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_BOOL_INT_PTR($dt) && fits_into_int32($dt, $rhs)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)" extra_dt=$dt) cond=cc)
-
-CMP_OP(TB_CMP_SLE, LE)
-CMP_OP(TB_CMP_SLT, L)
-CMP_OP(TB_CMP_ULE, BE)
-CMP_OP(TB_CMP_ULT, B)
-CMP_OP(TB_CMP_EQ,  E)
-CMP_OP(TB_CMP_NE,  NE)
-
-pat (TB_IF ...) => "X"
-pat (TB_IF $ctrl (x86_COND $cmp)) => "X"
-pat (TB_IF $ctrl $x) => "X"
-#else
 // *******************************
 // memory operands
 // *******************************
@@ -299,7 +261,6 @@ where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == T
 pat (TB_ZERO_EXT dt=$dt ___ ($src: TB_LOAD $ctrl $mem ($addr: x86_MEMORY ...)))
 where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
 => (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD)
-#endif
 
 // *******************************
 // Skylake pipeline

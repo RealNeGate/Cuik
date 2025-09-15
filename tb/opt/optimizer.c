@@ -1554,7 +1554,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_OPTLOG(PEEP, printf("=== COMPACT ===\n"));
             STATS_ENTER(COMPACT);
             size_t old = tb_arena_current_size(&f->arena);
-            // tb_compact_nodes(f, ws);
+            tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
             STATS_EXIT(COMPACT);
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));

@@ -1283,10 +1283,10 @@ function gen_c_inner(depth, stack, can_bail, operands)
         expr = string.format("(%s->input_count == %d ? ACCEPT(%d) : %s)", stack[2], limit, non_var_final, expr)
     end
 
-    add_line(depth, string.format("k = %s;", expr))
     if not can_bail then
         add_line(depth, string.format("return %s;", expr))
     elseif expr ~= "NULL" then
+        add_line(depth, string.format("k = %s;", expr))
         add_line(depth, "if (k) { return k; }")
         if #operands > 0 then
             add_line(depth, "else {")
