@@ -1,5 +1,6 @@
-local jason = require('jason')
-local inspect = require('inspect')
+local lume = require('lib/lume')
+local jason = require('lib/jason')
+local inspect = require('lib/inspect')
 
 --[[ file structure
 	0. helper functions
@@ -44,8 +45,7 @@ local function dump(object)
 	if type(object) ~= 'table' then
 		return tostring(object)
 	else -- table
-		local string = {''}
-		table.insert(string, '{')
+		local string = {'{'}
 		for key, val in pairs(object) do
 			table.insert(string, dump(key) .. ' = ' .. dump(val))
 			table.insert(string, ', ')
@@ -470,7 +470,7 @@ local function is_final(q)
 end
 
 local function step_bit(q, bit)
-	--[[ a pattern lives if 1/3 things happen
+	--[[ a pattern lives if 1 of 3 things happen
 		pattern[q.index] == bit -- we find what we expect
 		pattern[q.index] == '_' -- we find a singular 'any'
 		q.index >= #pattern     -- we've reached permanent 'any'
@@ -880,7 +880,7 @@ if options.graphviz then
 			else
 				labels[b] = labels[b] .. ',' .. i
 			end
-		end 
+		end
 		for b, l in pairs(labels) do
 			table.insert(strings, '\t' .. a .. ' -> ' .. b .. ' [label="' .. l .. '"]')
 		end

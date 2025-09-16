@@ -1,5 +1,5 @@
 local buffer  = require "string.buffer"
-local inspect = require "meta/inspect"
+local inspect = require "meta/lib/inspect"
 
 local mach_prefix = arg[1].."_"
 
