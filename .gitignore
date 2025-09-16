@@ -96,3 +96,4 @@ tests/suite/clang.txt
 tests/suite/cuik.txt
 tests/suite/bar.txt
 tests/suite/foo.txt
+meta/instructions.xml

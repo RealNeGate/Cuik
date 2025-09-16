@@ -1,122 +1,7 @@
 local buffer  = require "string.buffer"
 local inspect = require "meta/inspect"
 
-function OrderedSet()
-    local t = { ord={}, entries={} }
-
-    function t:put(k)
-        if not self.entries[k] then
-            self.entries[k] = true
-            self.ord[#self.ord + 1] = k
-        end
-    end
-
-    function t:iter()
-        local i = 0
-        local n = #self.ord
-        return function ()
-            i = i + 1
-            if i <= n then
-                return self.ord[i]
-            end
-        end
-    end
-
-    return t
-end
-
-function Partitions()
-    local t = { ord={}, entries={} }
-
-    function t:put(k, v)
-        local list = self.entries[k]
-        if not list then
-            self.entries[k] = { v }
-            self.ord[#self.ord + 1] = k
-            return true
-        else
-            list[#list + 1] = v
-            return false
-        end
-    end
-
-    function t:put_list(k, v)
-        local list = self.entries[k]
-        local is_new = false
-        if not list then
-            list = {}
-            self.entries[k] = list
-            self.ord[#self.ord + 1] = k
-            is_new = true
-        end
-
-        for i=1,#v do
-            list[#list + 1] = v[i]
-        end
-        return is_new
-    end
-
-    function t:count()
-        return #self.ord
-    end
-
-    function t:sort(cmp_fn)
-        table.sort(self.ord, function(a, b)
-            return cmp_fn(self.entries[a], self.entries[b])
-        end)
-    end
-
-    function t:iter()
-        local i = 0
-        local n = #self.ord
-        return function ()
-            i = i + 1
-            if i <= n then
-                local k = self.ord[i]
-                return k, self.entries[k]
-            end
-        end
-    end
-
-    return t
-end
-
-function string:starts_with(start)
-    return self:sub(1, #start) == start
-end
-
-function run_command(cmd)
-    local f = assert(io.popen(cmd))
-    local content = f:read("*all")
-    f:close()
-    return content
-end
-
-function sort(set, cmp_fn)
-    local a = {}
-    for k, v in pairs(set) do
-        table.insert(a, k)
-    end
-
-    table.sort(a, function(a, b)
-        return cmp_fn(set, a, b)
-    end)
-    return a
-end
-
-function shallowcopy(orig)
-    local orig_type = type(orig)
-    local copy
-    if orig_type == 'table' then
-        copy = {}
-        for orig_key, orig_value in pairs(orig) do
-            copy[orig_key] = orig_value
-        end
-    else -- number, string, boolean, etc
-        copy = orig
-    end
-    return copy
-end
+require "meta/prelude"
 
 local node_enum_types = {}
 do
@@ -156,83 +41,12 @@ do
     end
 end
 
---------------------------
--- lexer
---------------------------
-local ch_class = { [32] = "ws", [9] = "ws", [10] = "ws" }
-for i=33,126 do ch_class[i] = "sym" end
-for i=48,57  do ch_class[i] = "num" end
-for i=65,90  do ch_class[i] = "ident" end
-for i=97,122 do ch_class[i] = "ident" end
-ch_class[36] = "ident"
-ch_class[95] = "ident"
-
-local line_num = 1
-
-local function either(a, b, c) return a == b or a == c end
-local function lexer(str)
-    local i = 1
-    return function()
-        -- skip whitespace
-        while ch_class[str:byte(i)] == "ws" or str:byte(i) == 35 do
-            if str:byte(i) == 10 then
-                i = i + 1
-                line_num = line_num + 1
-            elseif ch_class[str:byte(i)] == "ws" then
-                i = i + 1
-            elseif str:byte(i) == 35 then -- hash are comments
-                while str:byte(i) ~= 10 do
-                    i = i + 1
-                end
-            end
-        end
-
-        if i > #str then
-            return nil
-        end
-
-        local start = i
-        local class = ch_class[str:byte(i)]
-        if str:byte(i) == 34 then
-            i = i + 1
-            while str:byte(i) ~= 34 do
-                i = i + 1
-            end
-            i = i + 1
-            return str:sub(start+1, i-2)
-        elseif str:byte(i) == 46 then
-            i = i + 1
-            while str:byte(i) == 46 do
-                i = i + 1
-            end
-            return str:sub(start, i - 1)
-        elseif class == "num" then
-            i = i + 1
-            while ch_class[str:byte(i)] == "num" do
-                i = i + 1
-            end
-            return tonumber(str:sub(start, i - 1))
-        elseif class == "ident" then
-            i = i + 1
-            while either(ch_class[str:byte(i)], "ident", "num") do
-                i = i + 1
-            end
-            return str:sub(start, i - 1)
-        elseif class == "sym" then
-            if str:byte(i) == string.byte("=") and str:byte(i + 1) == string.byte(">") then
-                i = i + 2
-            else
-                i = i + 1
-            end
-            return str:sub(start, i - 1)
-        else
-            error("fuck but in lexing")
-        end
-    end
-end
-
 print(arg[1])
 local source = run_command("clang -E -xc "..arg[1])
+local lex = lexer(source)
+
+local lines = {}
+local reg_classes = {}
 
 local is_operand = {}
 
@@ -242,47 +56,19 @@ local stack_action = {}
 local node_type_count = 0
 local node_types = {}
 
-local lex = lexer(source)
-
-local function parse_node()
-    local n = {}
-    local t = lex()
-
-    if t:byte(1) == string.byte("$") then
-        n["name"] = t
-
-        t = lex()
-        if t ~= ":" then
-            print("fuck but in colon")
-            os.exit(1)
-        end
-
-        t = lex()
-    end
-
-    while t ~= ")" do
-        if t == "(" then
-            n[#n + 1] = parse_node()
-            t = lex()
-        else
-            local peek = lex()
-            if peek == "=" then
-                n[t] = lex()
-                t = lex()
-            else
-                n[#n + 1] = t
-                t = peek
-            end
-        end
-    end
-    return n
-end
-
 local all_patterns = {}
 local subpat_map = OrderedSet()
 
-local curr_pipeline = {}
-local inst_classes = {}
+function skip_ws(j, def)
+    while j < #def and def:byte(j) == 32 do
+        j = j + 1
+    end
+    return j
+end
+
+lines[#lines + 1] = "#include \"../emitter.h\""
+lines[#lines + 1] = "#include \"../tb_internal.h\""
+lines[#lines + 1] = ""
 
 while true do
     local t = lex()
@@ -302,7 +88,7 @@ while true do
             os.exit(1)
         end
 
-        local pattern = parse_node()
+        local pattern = parse_node(lex)
 
         t = lex()
         local where = nil
@@ -318,17 +104,29 @@ while true do
 
         t = lex()
         if t == "(" then
-            t = parse_node()
+            t = parse_node(lex)
             if is_subpat then
                 subpat_map:put(pattern[1])
             end
         end
         all_patterns[#all_patterns + 1] = { pattern, where, is_subpat, t }
     elseif t == "(" then
-        local n = parse_node()
+        local n = parse_node(lex)
 
         if n[1] == "namespace" then
             mach_prefix = n[2].."_"
+        elseif n[1] == "reg_class" then
+            reg_classes[#reg_classes + 1] = { n[2], math.max(1, #n - 2) }
+
+            if #n > 3 then
+                lines[#lines + 1] = "typedef enum "..n[2].." {"
+                for i=3,#n do
+                    lines[#lines + 1] = "    "..n[i]..","
+                end
+                lines[#lines + 1] = "    "..n[2].."_NONE = -1,"
+                lines[#lines + 1] = "} "..n[2]..";"
+                lines[#lines + 1] = ""
+            end
         elseif n[1] == "node" then
             -- define node types
             local name = mach_prefix..n[2]
@@ -344,6 +142,121 @@ while true do
 
             node_types[name] = { id=node_type_count, name=name, extra=n[3] }
             node_type_count = node_type_count + 1
+        elseif n[1] == "enum" then
+            local name = n[2]
+            if name == "___" then
+                lines[#lines + 1] = "enum {"
+            else
+                lines[#lines + 1] = "typedef enum "..name.." {"
+            end
+
+            local ord = 0
+            for i=3,#n do
+                local name = n[i]
+                if type(n[i]) == "table" then
+                    ord = n[i][2]
+                    name = n[i][1]
+                end
+
+                lines[#lines + 1] = string.format("    %s = %d,", name, ord)
+                ord = ord + 1
+            end
+
+            if name == "___" then
+                lines[#lines + 1] = "};"
+            else
+                lines[#lines + 1] = "} "..name..";"
+            end
+            lines[#lines + 1] = ""
+        elseif n[1] == "pipeline" then
+            local pipeline = { units={}, classes={} }
+
+            local unit_count = 0
+            if n.ports then
+                -- initialize execution ports
+                for i=1,n.ports do
+                    local name = "p"..(i-1)
+                    pipeline.units[name] = unit_count
+                    unit_count = unit_count + 1
+                end
+            end
+
+            for i=2,#n do
+                if type(n[i]) == "table" then
+                    if n[i][1] == "unit" then
+                        local name = n[i][2]
+                        pipeline.units[name] = unit_count
+                        unit_count = unit_count + 1
+                    elseif n[i][1] == "class" then
+                        local name  = n[i][2]
+                        local proto = n[i][3]
+
+                        local usage = {}
+                        for j=4,#n do
+                            usage[#usage + 1] = n[i][j]
+                        end
+
+                        print()
+                        print("Class", name, inspect(usage))
+
+                        if false then
+                            -- parse definition
+                            local j = 1
+                            local cycle = 0
+                            while j <= #def do
+                                j = skip_ws(j, def)
+
+                                -- cycle count
+                                local cnt = 0
+                                while j <= #def and def:byte(j) >= 48 and def:byte(j) <= 57 do
+                                    cnt = cnt*10 + (def:byte(j) - 48)
+                                    j = j + 1
+                                end
+                                assert(j <= #def)
+                                assert(def:sub(j, j) == "*")
+                                j = j + 1
+
+                                if def:sub(j, j) == "p" then
+                                    j = j + 1
+
+                                    local u = {}
+                                    while j <= #def and def:byte(j) >= 48 and def:byte(j) <= 57 do
+                                        local port = "p"..(def:byte(j) - 48)
+                                        assert(pipeline.units[port])
+                                        u[#u + 1] = pipeline.units[port]
+                                        j = j + 1
+                                    end
+
+                                    print("Port", cnt, inspect(u))
+
+                                    u.count = cnt
+                                    usage[#usage + 1] = u
+                                end
+
+                                j = skip_ws(j, def)
+                                if def:sub(j, j) ~= "+" then
+                                    break
+                                end
+                                j = j + 1
+                            end
+                        end
+
+                        function enumerate_class()
+
+                        end
+
+                        -- generate new instruction classes for all
+                        -- possible unit utilizations
+                        local final = {}
+                        enumerate_class(usage, final)
+                        print(inspect(final))
+
+                        pipeline.classes[name] = usage
+                    end
+                end
+            end
+
+            print(inspect(pipeline))
         else
             print(inspect(n))
         end
@@ -352,6 +265,26 @@ while true do
         os.exit(1)
     end
 end
+
+lines[#lines + 1] = "enum {"
+for i=1,#reg_classes do
+    lines[#lines + 1] = string.format("    REG_CLASS_%s = %d,", reg_classes[i][1], i);
+end
+lines[#lines + 1] = "    REG_CLASS_COUNT,"
+lines[#lines + 1] = "};"
+lines[#lines + 1] = ""
+lines[#lines + 1] = "enum {"
+lines[#lines + 1] = "    BUNDLE_INST_MAX = 1,"
+lines[#lines + 1] = "};"
+lines[#lines + 1] = ""
+lines[#lines + 1] = "#include \"../codegen_impl.h\""
+lines[#lines + 1] = ""
+lines[#lines + 1] = "static void mach_dsl_init(Ctx* restrict ctx, TB_ABI abi) {"
+for i=1,#reg_classes do
+    lines[#lines + 1] = string.format("    ctx->num_regs[REG_CLASS_%s] = %d;", reg_classes[i][1], reg_classes[i][2]);
+end
+lines[#lines + 1] = "}"
+lines[#lines + 1] = ""
 
 --------------------------
 -- DFA construction
@@ -493,7 +426,6 @@ for i,name in ipairs(ordered) do
 end
 
 -- Generate C code for the matcher
-local lines = {}
 visited = {}
 function add_line(depth, line)
     lines[#lines + 1] = string.rep(" ", depth*4) .. line
@@ -541,36 +473,6 @@ function clone_stack(stack)
     return { prev, stack[2], stack[3], stack[4], stack[5] }
 end
 
-var_counter = 0
-function gen_edge(head, stack, depth)
-    local stack_depth = stack[4]
-
-    -- Push can only really go up once each time
-    if not stack_action[head] or stack_action[head] == stack_depth then
-        if stack[3] then
-            stack[3] = stack[3] + 1
-        end
-        return stack
-    elseif stack_action[head] > stack_depth then
-        local in_str = get_in(stack)
-        local new_name = nil
-        if stack[3] then
-            new_name = string.format("n$%d", var_counter)
-            add_line(depth, string.format("TB_Node* %s = %s;", new_name, in_str))
-            var_counter = var_counter + 1
-        else
-            new_name = stack[2]
-        end
-        return { stack, new_name, 0, stack[4]+1 }
-    end
-
-    while stack_action[head] < stack_depth do
-        stack = stack[1]
-        stack_depth = stack[4]
-    end
-    return stack
-end
-
 if true then
     local mach_prefix_caps = string.upper(mach_prefix:sub(1, -2))
     lines[#lines + 1] = "typedef enum "..mach_prefix_caps.."NodeType {"
@@ -596,6 +498,7 @@ if true then
     lines[#lines + 1] = ""
     lines[#lines + 1] = "static void global_init(void) {"
     lines[#lines + 1] = "}"
+    lines[#lines + 1] = ""
 end
 
 node_extra_desc = {
@@ -608,6 +511,7 @@ node_extra_desc = {
     ["TB_NodeFloat32"]  = { value="float" },
     ["TB_NodeFloat64"]  = { value="double" },
     ["TB_NodeInt"]      = { value="uint64_t" },
+    ["TB_NodeIf"]       = { prob="float" },
 }
 
 function extra_node_type_name(t)
@@ -623,6 +527,8 @@ function extra_node_type_name(t)
         extra_type = "TB_NodeCompare"
     elseif t == "TB_SYMBOL" then
         extra_type = "TB_NodeSymbol"
+    elseif t == "TB_IF" then
+        extra_type = "TB_NodeIf"
     elseif t == "TB_LOCAL" then
         extra_type = "TB_NodeLocal"
     elseif t == "TB_MACH_SYMBOL" then
@@ -1064,6 +970,7 @@ function match_prio(type)
     end
 end
 
+var_counter = 0
 function gen_c_inner(depth, stack, can_bail, operands)
     local active = stack[5]
     assert(depth < 10)
