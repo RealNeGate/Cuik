@@ -302,9 +302,8 @@ where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == T
     // Float ports
     (defunit FP0    4)
     (defunit FP1    4)
-    (defunit Writeback 1)
 
-    (class AluOp (___ ___ $rhs  $lhs) (ALU0 ALU1))
+    (class AluOp (___ ___ $rhs  $lhs) (2 ALU0 ALU1))
 
     /*ports=8
 

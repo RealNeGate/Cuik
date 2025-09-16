@@ -169,7 +169,7 @@ while true do
             end
             lines[#lines + 1] = ""
         elseif n[1] == "pipeline" then
-            local pipeline = { units={}, classes={} }
+            local pipeline = { units={}, classes={}, usages={} }
 
             local unit_count = 0
             if n.ports then
@@ -241,17 +241,39 @@ while true do
                             end
                         end
 
-                        function enumerate_class()
+                        local function enumerate_class(usage, final, head)
+                            while head <= #usage do
+                                -- find next split point
+                                local piece = usage[head]
+                                if type(piece) == "table" and #piece > 2 then
+                                    -- clone timelines that follow the different paths
+                                    for i=3,#piece do
+                                        local cloned = {}
+                                        for j=1,#usage do
+                                            cloned[j] = usage[j]
+                                        end
+                                        cloned[head] = { usage[head][1], usage[head][i] }
+                                        enumerate_class(cloned, final, head+1)
+                                    end
+                                    usage[head] = { usage[head][1], usage[head][2] }
+                                end
+                                head = head + 1
+                            end
 
+                            final[#final + 1] = usage
+                            print("Path", inspect(usage))
                         end
 
                         -- generate new instruction classes for all
                         -- possible unit utilizations
                         local final = {}
-                        enumerate_class(usage, final)
-                        print(inspect(final))
+                        enumerate_class(usage, final, 1)
 
-                        pipeline.classes[name] = usage
+                        for i=1,#final do
+                            pipeline.usages[#pipeline.usages + 1] = final[i]
+                        end
+
+                        pipeline.classes[name] = final
                     end
                 end
             end

@@ -196,7 +196,7 @@ function parse_node(lex)
     local n = {}
     local t = lex()
 
-    if t:byte(1) == string.byte("$") then
+    if type(t) == "string" and t:byte(1) == string.byte("$") then
         n["name"] = t
 
         t = lex()
