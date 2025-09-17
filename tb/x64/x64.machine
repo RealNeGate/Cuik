@@ -23,8 +23,6 @@
 // *******************************
 // memory operands
 // *******************************
-(node MEMORY X86MemOp)
-
 // Unnamed C enum
 (enum ___
     (OP_IMMEDIATE 1)
@@ -33,6 +31,8 @@
 
 // Unnamed C enum
 (enum ___ MODE_REG MODE_LD MODE_ST)
+
+(node MEMORY X86MemOp)
 
 // [base + index]
 pat (TB_PTR_OFFSET ___ $base $index)
@@ -291,29 +291,19 @@ pat (TB_ZERO_EXT dt=$dt ___ ($src: TB_LOAD $ctrl $mem ($addr: x86_MEMORY ...)))
 where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
 => (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD)
 
-// *******************************
-// Skylake pipeline
-// *******************************
-(pipeline Skylake
-    (defunit ALU0   2) // MAC capable
-    (defunit ALU1   2) // DIV capable
-    (defunit Branch 2)
-    (defunit LdSt   2)
+#if 1
+(pipeline A57
+    (unit ALU0   2) // MAC capable
+    (unit ALU1   2) // DIV capable
+    (unit Branch 2)
+    (unit LdSt   2)
     // Float ports
-    (defunit FP0    4)
-    (defunit FP1    4)
+    (unit FP0    4)
+    (unit FP1    4)
 
     (class AluOp (___ ___ $rhs  $lhs) (2 ALU0 ALU1))
-
-    /*ports=8
-
-    (class IntOp1      (___ ___ $rhs  $lhs     ) "1*p0156")
-    (class IntOpLd1    (___ ___ $base $idx $lhs) "1*p0156 + 1*p23")
-    (class IntOpSt1    (___ ___ $base $src     ) "1*p0156 + 1*p23 + 1*p237 + 1*p4")
-    (class IntOpStIdx1 (___ ___ $base $idx $src) "1*p0156 + 2*p23 + 1*p4")
-
-    (inst_reserve IntOp1      (x86_add mode=$mode) where="mode == MODE_REG")
-    (inst_reserve IntOpLd1    (x86_add mode=$mode) where="mode == MODE_LD")
-    (inst_reserve IntOpSt1    (x86_add mode=$mode) where="mode == MODE_ST")*/
+    (class FpOp  (___ ___ $rhs  $lhs) (2 FP0  FP1))
+    (class Div   (___ ___ $rhs  $lhs) (10 ALU1))
 )
+#endif
 

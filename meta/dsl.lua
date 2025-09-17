@@ -70,6 +70,42 @@ lines[#lines + 1] = "#include \"../emitter.h\""
 lines[#lines + 1] = "#include \"../tb_internal.h\""
 lines[#lines + 1] = ""
 
+function decl_type(n)
+    local name = n[2]
+    local kind = n[1]
+
+    if name == "___" then
+        lines[#lines + 1] = kind.." {"
+    else
+        lines[#lines + 1] = "typedef "..kind.." "..name.." {"
+    end
+
+    if kind == "struct" or kind == "union" then
+
+    elseif kind == "enum" then
+        local ord = 0
+        for i=3,#n do
+            local name = n[i]
+            if type(n[i]) == "table" then
+                ord = n[i][2]
+                name = n[i][1]
+            end
+
+            lines[#lines + 1] = string.format("    %s = %d,", name, ord)
+            ord = ord + 1
+        end
+    else
+        assert(false, "bad")
+    end
+
+    if name == "___" then
+        lines[#lines + 1] = "};"
+    else
+        lines[#lines + 1] = "} "..name..";"
+    end
+    lines[#lines + 1] = ""
+end
+
 while true do
     local t = lex()
     if t == nil then
@@ -142,32 +178,8 @@ while true do
 
             node_types[name] = { id=node_type_count, name=name, extra=n[3] }
             node_type_count = node_type_count + 1
-        elseif n[1] == "enum" then
-            local name = n[2]
-            if name == "___" then
-                lines[#lines + 1] = "enum {"
-            else
-                lines[#lines + 1] = "typedef enum "..name.." {"
-            end
-
-            local ord = 0
-            for i=3,#n do
-                local name = n[i]
-                if type(n[i]) == "table" then
-                    ord = n[i][2]
-                    name = n[i][1]
-                end
-
-                lines[#lines + 1] = string.format("    %s = %d,", name, ord)
-                ord = ord + 1
-            end
-
-            if name == "___" then
-                lines[#lines + 1] = "};"
-            else
-                lines[#lines + 1] = "} "..name..";"
-            end
-            lines[#lines + 1] = ""
+        elseif n[1] == "enum" or n[1] == "struct" or n[1] == "union" then
+            decl_type(n)
         elseif n[1] == "pipeline" then
             local pipeline = { units={}, classes={}, usages={} }
 
@@ -185,8 +197,9 @@ while true do
                 if type(n[i]) == "table" then
                     if n[i][1] == "unit" then
                         local name = n[i][2]
-                        pipeline.units[name] = unit_count
+
                         unit_count = unit_count + 1
+                        pipeline.units[name] = unit_count
                     elseif n[i][1] == "class" then
                         local name  = n[i][2]
                         local proto = n[i][3]
@@ -248,7 +261,7 @@ while true do
                                 if type(piece) == "table" and #piece > 2 then
                                     -- clone timelines that follow the different paths
                                     for i=3,#piece do
-                                        local cloned = {}
+                                        local cloned = { name=usage.name }
                                         for j=1,#usage do
                                             cloned[j] = usage[j]
                                         end
@@ -264,6 +277,8 @@ while true do
                             print("Path", inspect(usage))
                         end
 
+                        usage.name = name
+
                         -- generate new instruction classes for all
                         -- possible unit utilizations
                         local final = {}
@@ -276,6 +291,100 @@ while true do
                         pipeline.classes[name] = final
                     end
                 end
+            end
+
+            local max_cycles = 0
+            for i=1,#pipeline.usages do
+                local u = pipeline.usages[i]
+                local t = 0
+                for j=1,#u do
+                    if type(u[j]) == "table" then
+                        t = t + u[j][1]
+                    else
+                        t = t + 1
+                    end
+                end
+                max_cycles = math.max(max_cycles, t)
+            end
+
+            local function alloc_bit_matrix(m, n)
+                local mat = {}
+                for i=1,m do
+                    local row = {}
+                    for j=1,n do
+                        row[j] = "0"
+                    end
+                    mat[i] = row
+                end
+                return mat
+            end
+
+            local function print_bit_matrix(mat, tag)
+                print("Matrix", tag)
+                for i=1,#mat do
+                    print(i, table.concat(mat[i]))
+                end
+            end
+
+            print()
+            print("Max cycles", max_cycles)
+            print("Units", inspect(pipeline.units))
+
+            -- Allocate resource and collision matrices
+            local collisions = {}
+            local resources = {}
+            for i=1,#pipeline.usages do
+                local u = pipeline.usages[i]
+                collisions[i] = alloc_bit_matrix(max_cycles, #pipeline.usages)
+
+                -- fill in resources
+                local t = 1
+                local tab = alloc_bit_matrix(max_cycles, unit_count)
+                for j=1,#u do
+                    local stop = type(u[j]) == "table" and u[j][1] or 1
+                    stop = stop + t
+
+                    local unit = type(u[j]) == "table" and u[j][2] or u[j]
+                    unit = pipeline.units[unit]
+
+                    while t < stop do
+                        tab[t][unit] = "1"
+                        t = t + 1
+                    end
+                end
+
+                print_bit_matrix(tab, "Resource "..u.name)
+                resources[i] = tab
+            end
+
+            -- Fill collision matrices
+            for a=1,#pipeline.usages do
+                local ia = resources[a]
+                local col = collisions[a]
+
+                local tab = {}
+                for t=1,max_cycles do
+                    for b=1,#pipeline.usages do
+                        local ib = resources[b]
+
+                        -- M[a, b, t] = (I[a, j+t] /\ I[b, j]) ~= 0
+                        local busy = false
+                        for j=1,max_cycles do
+                            for unit=1,unit_count do
+                                if (t+j <= max_cycles and ia[t+j][unit]) and ib[j][unit] then
+                                    busy = true
+                                end
+                            end
+                        end
+
+                        if busy then
+                            -- print("Busy", a, b)
+                            col[t][b] = "1"
+                        end
+                    end
+                end
+
+                print_bit_matrix(col, "Collision "..pipeline.usages[a].name)
             end
 
             print(inspect(pipeline))
@@ -1060,7 +1169,7 @@ function gen_c_inner(depth, stack, can_bail, operands)
                 goto skip
             end
 
-            local new_name = string.format("n$%d", var_counter)
+            local new_name = string.format("n__%d", var_counter)
             add_line(depth, string.format("TB_Node* %s = %s;", new_name, in_str))
             var_counter = var_counter + 1
 
@@ -1103,7 +1212,7 @@ function gen_c_inner(depth, stack, can_bail, operands)
                     if can_match_operand then
                         add_line(depth, string.format("do { if (k = NULL, %s) {", expr))
 
-                        local new_name_2 = "n$"..var_counter
+                        local new_name_2 = "n__"..var_counter
                         var_counter = var_counter + 1
 
                         next_stack[2] = new_name_2
