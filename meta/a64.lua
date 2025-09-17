@@ -1,3 +1,4 @@
+local lume = require('lib/lume')
 local jason = require('lib/jason')
 local inspect = require('lib/inspect')
 
@@ -176,8 +177,8 @@ local function path(item)
 	end
 	return table.concat(out, '$')
 end
-local filtered_branches = {'sve', 'sme', 'simd_dp'}
-for _, v in ipairs(filtered_branches) do filtered_branches[v] = true end
+-- local filtered_branches = {'sve', 'sme', 'simd_dp'}
+-- for _, v in ipairs(filtered_branches) do filtered_branches[v] = true end
 local function walk(item, list)
 	table.insert(list, item)
 	item.path = path(item)
@@ -192,49 +193,45 @@ local function walk(item, list)
 	end
 end
 
-local instructions = {}
+local items = {}
 for _, i in ipairs(data.instructions) do
 	-- info(walter): just dealing with a64 for now
 	if i.name == 'A64' then
-		walk(i, instructions)
+		walk(i, items)
 	end
 end
+local instructions = lume.filter(items, is_inst)
 timer('parse')
--- local count = 0
--- for _, v in ipairs(instructions) do
--- 	if is_inst(v) then count = count + 1 end
--- end
--- print('insts', count)
--- if true then return end
 
 --------------------------------
 -- decision tree
 --------------------------------
 -- disassembler numero uno, absolute ass version
 local chain = {}
-for _, inst in ipairs(instructions) do
+for _, inst in ipairs(items) do
 	if is_inst(inst) then
 		local str = '((inst & 0b%s) == 0b%s) {\n\t\t%s\n\t}'
 		local mask = table.concat(inst.mask)
 		local bits = table.concat(inst.pattern):gsub('x', '0')
-		local body = 'printf("%08x\\t'..inst.name..'\\n", inst);'
+		local body = 'return "'..inst.name..'";'
 		table.insert(chain, string.format(str, mask, bits, body))
 	end
 end
-local disassembler1 = [[void disassemble1(int inst) {
+local disassembler1 = [[#include <stdint.h>
+char* disassemble(uint32_t inst) {
 	if ]]..table.concat(chain, ' else if ')..[[ else {
-		printf("%08x\tUNKNOWN\n", inst);
+		return "ERROR";
 	}
-}
-]]
+}]]
+writefile('a64disassembler1.h', disassembler1)
 
 
--- disassembler 2, follow their own road
+-- disassembler 2, follow their own path
 local disassembler2 = {}
 local function walk(inst, depth)
 	local indent = string.rep('\t', depth)
 	if is_inst(inst) then
-		table.insert(disassembler2, indent..'printf("%08x\\t'..inst.name..'\\n", inst);')
+		table.insert(disassembler2, indent..'return "'..inst.name..'";')
 	else
 		for i, child in ipairs(inst.children) do
 			local str = '((inst & 0b%s) == 0b%s) {'
@@ -248,106 +245,116 @@ local function walk(inst, depth)
 			end
 			walk(child, depth + 1)
 		end
-		table.insert(disassembler2, indent..'} else {\n'..indent..'\tprintf("%08x\\tUNKNOWN\\n", inst);\n'..indent..'}')
+		table.insert(disassembler2, indent..'} else {\n'..indent..'\treturn "UNKNOWN";\n'..indent..'}')
 	end
 end
-walk(instructions[1], 1)
-disassembler2 = 'void disassemble2(int inst) {\n'..table.concat(disassembler2, '\n')..'\n}\n'
+walk(items[1], 1)
+disassembler2 = [[#include <stdint.h>
+char* disassemble(uint32_t inst) {
+]]..table.concat(disassembler2, '\n')..[[
+}]]
+writefile('a64disassembler2.h', disassembler2)
 
 
--- disassembler 3, sort my tree
-local sorted_list = {}
-for i, inst in ipairs(instructions) do
-	if is_inst(inst) then
-		table.insert(sorted_list, inst)
+-- disassembler 3, all the set bits
+local function getsetmask(list)
+	local mask = {} for i=1,32 do mask[i] = '1' end
+	for _, inst in ipairs(list) do
+		for i=1,32 do
+			if inst.pattern[i] == 'x' then
+				mask[i] = '0'
+			end
+		end
 	end
+	return mask
 end
+local function applymask(pattern, mask)
+	local pat = copy(pattern)
+	for i=1,32 do
+		if mask[i] == '0' then
+			pat[i] = 'x'
+		end
+	end
+	return pat
+end
+local seen = {}
 local function walk(list)
-	local function maskout(pattern, mask)
-		local pat = copy(pattern)
-		for i = 1, 32 do
-			if mask[i] == '0' then
-				pat[i] = '0'
+	local out = {} -- { ['mask'] = { inst, ... } }
+	local mask = getsetmask(list)
+	for _, l in ipairs(list) do
+		local pat = table.concat(applymask(l.pattern, mask))
+		if not out[pat] then
+			out[pat] = {}
+		end
+		table.insert(out[pat], l)
+	end
+	if tablesize(out) == 1 then -- no differentiating patterns
+		for k, v in pairs(out) do
+			out = lume.map(v, function(x) return x.name end)
+		end
+	else -- walk each new sublist
+		for k, v in pairs(out) do
+			if #v > 1 then
+				if not seen[k] then
+					seen[k] = true
+					out[k] = walk(v)
+				else
+					out[k] = lume.map(v, function(x) return x.name end)
+				end
+			else
+				out[k] = lume.map(v, function(x) return x.name end)
 			end
 		end
-		return table.concat(pat):gsub('x', '0')
 	end
-	if #list == 1 then
-		return list
-	end
-	table.sort(list, function (a, b)
-		local apat = table.concat(a.pattern):gsub('x', '0')
-		local bpat = table.concat(b.pattern):gsub('x', '0')
-		return apat < bpat
-	end)
-	local mid = math.ceil(#list / 2)
-	local mask = list[mid].mask
-	table.sort(list, function (a, b)
-		local apat = maskout(a.pattern, mask)
-		local bpat = maskout(b.pattern, mask)
-		return apat < bpat
-	end)
-	while mid < #list and maskout(list[mid].pattern, mask) == maskout(list[mid+1].pattern, mask) do
-		mid = mid + 1
-	end
-	if mid == #list then
-		return list
-		-- print(string.format('%s\n%s\n%s\t%s\n%s\t%s\n%s', mid, table.concat(mask), table.concat(list[1].pattern), maskout(list[1].pattern, mask), table.concat(list[2].pattern), maskout(list[2].pattern, mask), inspect(list, {depth=2})))
-		-- error()
-	else
-		local lo = slice(list, 1, mid)
-		local hi = slice(list, mid + 1, #list)
-		return {mid = list[mid], lo = walk(lo), hi = walk(hi)}
-	end
+	return out
 end
-sorted_list = walk(sorted_list)
--- for _, v in ipairs(sorted_list) do
--- 	print(table.concat(v.pattern), v.name)
--- end
-local function test(list, depth)
-	local names = {'ADRP_only_pcreladdr', 'SUBS_64S_addsub_imm'} for _, n in ipairs(names) do names[n] = true end
-	if not list.mid then
-		for _, v in ipairs(list) do
-			if names[v.name] then
-				print(table.concat(v.pattern), string.rep('.', depth), v.name)
-				return true
-			end
-		end
-	else
-		local out = test(list.lo, depth + 1)
-		local out = test(list.hi, depth + 1) or out
-		if out then
-			print(table.concat(list.mid.pattern), string.rep('.', depth))
-			return true
-		end
-	end
-	return false
-end
-test(sorted_list, 1)
+local tree4 = walk(instructions)
+
+-- generate the C code
 local disassembler3 = {}
-local function walk(tree, depth, path)
+local function walk(tree, depth)
 	local indent = string.rep('\t', depth)
-	if not tree.mid then
-		for _, v in ipairs(tree) do
-			local str = indent..'printf("%08x\\t%s\\t'..v.name..'\\n", inst, "'..path..'");'
-			table.insert(disassembler3, str)
+	if #tree > 0 then -- list
+		local name = table.concat(tree, ', ')
+		table.insert(disassembler3, indent..string.format('return "%s";', name))
+	else -- table
+		local mask, _ = next(tree)
+		mask = mask:gsub('0', '1'):gsub('x', '0')
+		table.insert(disassembler3, indent..string.format('switch (inst & 0b%s) {', mask))
+		for k, v in pairs(tree) do
+			local bits = k:gsub('x', '0')
+			table.insert(disassembler3, indent..string.format('case 0b%s: {', bits))
+			walk(v, depth + 1)
+			table.insert(disassembler3, indent..'} break;')
 		end
-	else
-		local str = indent..'if ((inst & 0b%s) <= 0b%s) {'
-		local mask = table.concat(tree.mid.mask)
-		local split = table.concat(tree.mid.pattern):gsub('x', '0')
-		table.insert(disassembler3, string.format(str, mask, split))
-		walk(tree.lo, depth + 1, path..'1')
-		table.insert(disassembler3, indent..'} else {')
-		walk(tree.hi, depth + 1, path..'0')
+		table.insert(disassembler3, indent..'default: printf("ERROR"); return NULL;')
 		table.insert(disassembler3, indent..'}')
 	end
 end
-walk(sorted_list, 1, '')
-disassembler3 = 'void disassemble3(int inst) {\n'..table.concat(disassembler3, '\n')..'\n}\n'
+walk(tree4, 1)
+disassembler3 = [[#include <stdint.h>
+char* disassemble(uint32_t inst) {
+]]..table.concat(disassembler3, '\n')..[[
+}]]
+writefile('a64disassembler3.h', disassembler3)
 
-writefile('a64_disassembler.h', '#include <stdio.h>\n'..disassembler1..disassembler2..disassembler3)
 timer('decision tree')
+
+-- wot it look like
+local depths = {}
+local function walk(tree, depth)
+	for k, v in pairs(tree) do
+		if tonumber(k) then
+			table.insert(depths, depth)
+			break
+		else
+			walk(v, depth + 1)
+		end
+	end
+end
+walk(tree4, 0)
+print('depths', inspect(histogram(depths)))
+
 
 --------------------------------
 -- total time
@@ -367,7 +374,7 @@ if true then return end
 -- keep a list of patterns
 -- remove trailing any-bits
 local patterns = {}
-for _, inst in ipairs(instructions) do
+for _, inst in ipairs(items) do
 	local lim = #inst.pattern
 	for i = #inst.pattern, 1, -1 do
 		if inst.pattern[i] ~= 'x' then
@@ -391,7 +398,7 @@ end
 	of bits as fully set or as an operand.
 ]]
 local maskgroups = {}
-for idx, item in ipairs(instructions) do
+for idx, item in ipairs(items) do
 	if is_inst(item) then
 		local mask = copy(item.mask)
 		if table.concat(mask):sub(28, 32):find('0') then
@@ -530,7 +537,7 @@ while #worklist > 0 do
 			-- 	print('INPUT', input, 'INDEX', qprime.index)
 			-- 	for k, v in pairs(qprime.active) do
 			-- 		for _, p in ipairs(v) do
-			-- 			print(p, table.concat(instructions[p].pattern), instructions[p].path)
+			-- 			print(p, table.concat(items[p].pattern), items[p].path)
 			-- 		end
 			-- 	end
 			-- end
@@ -573,7 +580,7 @@ while #worklist > 0 do
 						table.insert(dfa.F[qprime.id], k)
 						if qprimesize > 1 then
 							for _, p in ipairs(v) do
-								local inst = instructions[p]
+								local inst = items[p]
 								-- print(table.concat(inst.pattern), inst.path)
 							end
 						end
@@ -647,7 +654,7 @@ end
 -- operation id
 --------------------------------
 local opids = {}
-for _, i in ipairs(instructions) do
+for _, i in ipairs(items) do
 	local o = i.operation_id
 	if o then
 		if not opids[o] then
@@ -769,7 +776,7 @@ end
 -- 	for _, s 
 -- end
 -- local test
--- for _, item in ipairs(instructions) do
+-- for _, item in ipairs(items) do
 -- 	if item.name == 'ADD_64_addsub_shift' then
 -- 		test = item
 -- 		break
@@ -788,7 +795,7 @@ end
 -- print masks
 --------------------------------
 local bitmasks = {}
-for _, item in ipairs(instructions) do
+for _, item in ipairs(items) do
 	table.insert(bitmasks, string.format(
 		'#define MASK_%s (0b%s)\n#define BITS_%s (0b%s)\n',
 		item.path, table.concat(item.mask, ''),
