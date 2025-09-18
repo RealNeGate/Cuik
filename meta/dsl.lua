@@ -273,7 +273,9 @@ while true do
                                 head = head + 1
                             end
 
+                            usage.name = usage.name..#final
                             final[#final + 1] = usage
+
                             print("Path", inspect(usage))
                         end
 
@@ -291,6 +293,11 @@ while true do
                         pipeline.classes[name] = final
                     end
                 end
+            end
+
+            local unit2name = {}
+            for k,v in pairs(pipeline.units) do
+                unit2name[v] = k
             end
 
             local max_cycles = 0
@@ -322,7 +329,7 @@ while true do
             local function print_bit_matrix(mat, tag)
                 print("Matrix", tag)
                 for i=1,#mat do
-                    print(i, table.concat(mat[i]))
+                    print(string.format("  %3d %s", i, table.concat(mat[i])))
                 end
             end
 
@@ -371,20 +378,21 @@ while true do
                         local busy = false
                         for j=1,max_cycles do
                             for unit=1,unit_count do
-                                if (t+j <= max_cycles and ia[t+j][unit]) and ib[j][unit] then
+                                if (t+j <= max_cycles and ia[t+j][unit] == "1") and ib[j][unit] == "1" then
+                                    -- print("Busy", pipeline.usages[a].name, pipeline.usages[b].name, t, unit2name[unit], ib[j][unit])
                                     busy = true
+                                    break
                                 end
                             end
                         end
 
                         if busy then
-                            -- print("Busy", a, b)
                             col[t][b] = "1"
                         end
                     end
                 end
 
-                print_bit_matrix(col, "Collision "..pipeline.usages[a].name)
+                print_bit_matrix(col, "Collision "..pipeline.usages[a].name..", "..a)
             end
 
             print(inspect(pipeline))

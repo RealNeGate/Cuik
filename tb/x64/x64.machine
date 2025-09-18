@@ -306,4 +306,3 @@ where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == T
     (class Div   (___ ___ $rhs  $lhs) (10 ALU1))
 )
 #endif
-
