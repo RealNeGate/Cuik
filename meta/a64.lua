@@ -157,7 +157,7 @@ local function encoding(item)
 			local len = enc.range.width
 			local val = enc.value.value
 			for i = 1, len do
-				pattern[#pattern - bit - len + i] = val:sub(i + 1, i + 1) -- note: starts with quote
+				pattern[bit + i] = val:sub(i + 1, i + 1) -- note: starts with quote
 			end
 		end
 	end
@@ -207,53 +207,53 @@ timer('parse')
 -- decision tree
 --------------------------------
 -- disassembler numero uno, absolute ass version
-local chain = {}
-for _, inst in ipairs(items) do
-	if is_inst(inst) then
-		local str = '((inst & 0b%s) == 0b%s) {\n\t\t%s\n\t}'
-		local mask = table.concat(inst.mask)
-		local bits = table.concat(inst.pattern):gsub('x', '0')
-		local body = 'return "'..inst.name..'";'
-		table.insert(chain, string.format(str, mask, bits, body))
-	end
-end
-local disassembler1 = [[#include <stdint.h>
-char* disassemble(uint32_t inst) {
-	if ]]..table.concat(chain, ' else if ')..[[ else {
-		return "ERROR";
-	}
-}]]
-writefile('a64disassembler1.h', disassembler1)
+-- local chain = {}
+-- for _, inst in ipairs(items) do
+-- 	if is_inst(inst) then
+-- 		local str = '((inst & 0b%s) == 0b%s) {\n\t\t%s\n\t}'
+-- 		local mask = table.concat(inst.mask)
+-- 		local bits = table.concat(inst.pattern):gsub('x', '0')
+-- 		local body = 'return "'..inst.name..'";'
+-- 		table.insert(chain, string.format(str, mask, bits, body))
+-- 	end
+-- end
+-- local disassembler1 = [[#include <stdint.h>
+-- char* disassemble(uint32_t inst) {
+-- 	if ]]..table.concat(chain, ' else if ')..[[ else {
+-- 		return "ERROR";
+-- 	}
+-- }]]
+-- writefile('a64disassembler1.h', disassembler1)
 
 
--- disassembler 2, follow their own path
-local disassembler2 = {}
-local function walk(inst, depth)
-	local indent = string.rep('\t', depth)
-	if is_inst(inst) then
-		table.insert(disassembler2, indent..'return "'..inst.name..'";')
-	else
-		for i, child in ipairs(inst.children) do
-			local str = '((inst & 0b%s) == 0b%s) {'
-			local mask = table.concat(child.mask)
-			local bits = table.concat(child.pattern):gsub('x', '0')
-			local check = string.format(str, mask, bits)
-			if i == 1 then
-				table.insert(disassembler2, indent..'if '..check)
-			else
-				table.insert(disassembler2, indent..'} else if '..check)
-			end
-			walk(child, depth + 1)
-		end
-		table.insert(disassembler2, indent..'} else {\n'..indent..'\treturn "UNKNOWN";\n'..indent..'}')
-	end
-end
-walk(items[1], 1)
-disassembler2 = [[#include <stdint.h>
-char* disassemble(uint32_t inst) {
-]]..table.concat(disassembler2, '\n')..[[
-}]]
-writefile('a64disassembler2.h', disassembler2)
+-- -- disassembler 2, follow their own path
+-- local disassembler2 = {}
+-- local function walk(inst, depth)
+-- 	local indent = string.rep('\t', depth)
+-- 	if is_inst(inst) then
+-- 		table.insert(disassembler2, indent..'return "'..inst.name..'";')
+-- 	else
+-- 		for i, child in ipairs(inst.children) do
+-- 			local str = '((inst & 0b%s) == 0b%s) {'
+-- 			local mask = table.concat(child.mask)
+-- 			local bits = table.concat(child.pattern):gsub('x', '0')
+-- 			local check = string.format(str, mask, bits)
+-- 			if i == 1 then
+-- 				table.insert(disassembler2, indent..'if '..check)
+-- 			else
+-- 				table.insert(disassembler2, indent..'} else if '..check)
+-- 			end
+-- 			walk(child, depth + 1)
+-- 		end
+-- 		table.insert(disassembler2, indent..'} else {\n'..indent..'\treturn "UNKNOWN";\n'..indent..'}')
+-- 	end
+-- end
+-- walk(items[1], 1)
+-- disassembler2 = [[#include <stdint.h>
+-- char* disassemble(uint32_t inst) {
+-- ]]..table.concat(disassembler2, '\n')..[[
+-- }]]
+-- writefile('a64disassembler2.h', disassembler2)
 
 
 -- disassembler 3, all the set bits
@@ -261,7 +261,7 @@ local function getsetmask(list)
 	local mask = {} for i=1,32 do mask[i] = '1' end
 	for _, inst in ipairs(list) do
 		for i=1,32 do
-			if inst.pattern[i] == 'x' then
+			if inst.mask[i] == '0' then
 				mask[i] = '0'
 			end
 		end
@@ -282,7 +282,7 @@ local function walk(list)
 	local out = {} -- { ['mask'] = { inst, ... } }
 	local mask = getsetmask(list)
 	for _, l in ipairs(list) do
-		local pat = table.concat(applymask(l.pattern, mask))
+		local pat = table.concat(applymask(l.pattern, mask)):reverse()
 		if not out[pat] then
 			out[pat] = {}
 		end
@@ -294,13 +294,9 @@ local function walk(list)
 		end
 	else -- walk each new sublist
 		for k, v in pairs(out) do
-			if #v > 1 then
-				if not seen[k] then
-					seen[k] = true
-					out[k] = walk(v)
-				else
-					out[k] = lume.map(v, function(x) return x.name end)
-				end
+			if #v > 1 and not seen[k] then
+				seen[k] = true
+				out[k] = walk(v)
 			else
 				out[k] = lume.map(v, function(x) return x.name end)
 			end
@@ -308,7 +304,7 @@ local function walk(list)
 	end
 	return out
 end
-local tree4 = walk(instructions)
+local tree3 = walk(instructions)
 
 -- generate the C code
 local disassembler3 = {}
@@ -319,41 +315,268 @@ local function walk(tree, depth)
 		table.insert(disassembler3, indent..string.format('return "%s";', name))
 	else -- table
 		local mask, _ = next(tree)
-		mask = mask:gsub('0', '1'):gsub('x', '0')
+		mask = mask:gsub('0', '1'):gsub('x', '0'):reverse()
 		table.insert(disassembler3, indent..string.format('switch (inst & 0b%s) {', mask))
 		for k, v in pairs(tree) do
-			local bits = k:gsub('x', '0')
+			local bits = k:gsub('x', '0'):reverse()
 			table.insert(disassembler3, indent..string.format('case 0b%s: {', bits))
 			walk(v, depth + 1)
 			table.insert(disassembler3, indent..'} break;')
 		end
-		table.insert(disassembler3, indent..'default: printf("ERROR"); return NULL;')
+		table.insert(disassembler3, indent..'default: return 0;')
 		table.insert(disassembler3, indent..'}')
 	end
 end
-walk(tree4, 1)
-disassembler3 = [[#include <stdint.h>
+walk(tree3, 1)
+disassembler3 = [[#include <stddef.h>
+#include <stdint.h>
 char* disassemble(uint32_t inst) {
-]]..table.concat(disassembler3, '\n')..[[
-}]]
+]]..table.concat(disassembler3, '\n')..'\n}\n'
 writefile('a64disassembler3.h', disassembler3)
 
 timer('decision tree')
 
 -- wot it look like
-local depths = {}
-local function walk(tree, depth)
-	for k, v in pairs(tree) do
-		if tonumber(k) then
-			table.insert(depths, depth)
-			break
-		else
-			walk(v, depth + 1)
-		end
+-- local depths = {}
+-- local function walk(tree, depth)
+-- 	for k, v in pairs(tree) do
+-- 		if tonumber(k) then
+-- 			table.insert(depths, depth)
+-- 			break
+-- 		else
+-- 			walk(v, depth + 1)
+-- 		end
+-- 	end
+-- end
+-- walk(tree3, 0)
+-- print('depths', inspect(histogram(depths)))
+
+
+
+--------------------------------
+-- operands
+--------------------------------
+local function addfield(pat, field)
+	local bit = field.range.start
+	local len = field.range.width
+	for i = 1, len do
 	end
 end
-walk(tree4, 0)
-print('depths', inspect(histogram(depths)))
+local decoders = {}
+local encoders = {}
+for _, i in ipairs(instructions) do
+	-- if not i.path:find('sve') and not i.path:find('sme') then
+	table.insert(decoders, string.format('void* %s_decode(uint32_t inst) {', i.name))
+	table.insert(encoders, string.format('uint32_t %s_encode(%s) {\n\treturn 0b%s', i.name, table.concat(lume.map(lume.filter(i.encoding.values, function(x) return is_field(x) and x.value.value:find('x') end), function(x) return 'uint32_t '..x.name end), ', '), table.concat(i.pattern):gsub('x', '0'):reverse()))
+		local pat = copy(i.pattern)
+		for _, e in ipairs(i.encoding.values) do
+			if is_field(e) then
+				table.insert(decoders, string.format('\tuint32_t %s = (inst >> %d) & 0b%s;', e.name, e.range.start, string.rep('1', e.range.width)))
+				if e.value.value:find('x') then
+					table.insert(encoders, string.format('\t\t| ((%s & 0b%s) << %d)', e.name, string.rep('1', e.range.width), e.range.start))
+				end
+				local bit = e.range.start
+				local len = e.range.width
+				for b = 1, len do
+					local c = e.value.value:sub(b + 1, b + 1)
+					if c == 'x' and pat[bit + b] == 'x' then
+						pat[bit + b] = '_'
+					end
+				end
+			end
+		end
+		table.insert(decoders, '}')
+		table.insert(encoders, '\t;\n}')
+		if table.concat(pat):find('x') then
+			print(i.path, table.concat(pat):reverse())
+			error('unsaturated pattern')
+		end
+	-- end
+end
+
+decoders = [[#include <stddef.h>
+#include <stdint.h>
+]]..table.concat(decoders, '\n')..'\n'
+writefile('a64decoders.h', decoders)
+
+encoders = [[#include <stddef.h>
+#include <stdint.h>
+]]..table.concat(encoders, '\n')..'\n'
+writefile('a64encoders.h', encoders)
+
+timer('encoders and decoders')
+
+
+
+--------------------------------
+-- assembly syntax
+--------------------------------
+local function rules_pp()
+end
+local function asm_pp(asm)
+	local function todo(a)
+		error(inspect(a))
+	end
+	local types = {
+		['Instruction.Assembly']              = function(a)
+			local out = {}
+			for _, sym in ipairs(a.symbols) do
+				local str = asm_pp(sym)
+				if str == nil then return nil end
+				table.insert(out, str)
+			end
+			return table.concat(out)
+		end,
+		['Instruction.Symbols.Literal']       = function(l)
+			return l.value
+		end,
+		['Instruction.Symbols.RuleReference'] = function(r)
+			return asm_pp(data.assembly_rules[r.rule_id])
+		end,
+		['Instruction.Rules.Token']           = function(t)
+			return t.default
+		end,
+		['Instruction.Rules.Rule']            = function(r)
+			if r.symbols then
+				local str = asm_pp(r.symbols)
+				if str ~= nil then
+					return str
+				end
+			end
+			return r.display
+		end,
+		['Instruction.Rules.Choice']          = function(c)
+			for _, choice in ipairs(c.choices) do
+				local str = asm_pp(choice)
+				if str ~= nil then
+					return str
+				end
+			end
+			return c.display
+		end,
+	}
+	local syms = {}
+	if types[asm._type] then
+		return types[asm._type](asm)
+	else
+		error('invalid type:', asm._type)
+	end
+end
+local unique = {}
+for _, i in ipairs(instructions) do
+	local ops = asm_pp(i.assembly)
+	print(ops)
+	ops = ops:match('%s*%S*%s*(.*)')
+	if not unique[ops] then
+		unique[ops] = {}
+	end
+	table.insert(unique[ops], i.name)
+end
+local list = {}
+for k, v in pairs(unique) do
+	table.insert(list, k)
+end
+table.sort(list)
+-- for _, l in ipairs(list) do print(l) end
+-- print(inspect(unique))
+
+
+
+--------------------------------
+-- condition ast
+--------------------------------
+local ast_unimplemented = {}
+local function ast_pp(tree, path)
+	if path == nil then path = '' end
+	local out = {}
+	local todo = function (tree, path)
+		if not ast_unimplemented[tree._type] then
+			ast_unimplemented[tree._type] = {}
+		end
+		table.insert(ast_unimplemented[tree._type], path)
+		return 'TODO('..tree._type..'('..path..'))'
+	end
+	local cases = {
+		['AST.BinaryOp']              = function (tree, path)
+			table.insert(out, ast_pp(tree.left, path..'>left'))
+			table.insert(out, tree.op)
+			table.insert(out, ast_pp(tree.right, path..'>right'))
+			return table.concat(out, ' ')
+		end,
+		['AST.Bool']                  = function (tree, path)
+			return tree.value
+		end,
+		['AST.Concat']                = todo,
+		['AST.DotAtom']               = function (tree, path)
+			for i, v in ipairs(tree.values) do
+				if i > 1 then table.insert(out, '.') end
+				table.insert(out, ast_pp(v, path..'>'..i))
+			end
+			return table.concat(out, '')
+		end,
+		['AST.Function']              = function (tree, path)
+			table.insert(out, tree.name)
+			table.insert(out, '(')
+			for i, a in ipairs(tree.arguments) do
+				if i > 1 then table.insert(out, ', ') end
+				table.insert(out, ast_pp(a, path..'>'..i))
+			end
+			table.insert(out, ')')
+			return table.concat(out, '')
+		end,
+		['AST.Identifier']            = function (tree, path)
+			return tree.value
+		end,
+		['AST.Integer']               = function (tree, path)
+			return ''..tree.value
+		end,
+		['AST.Real']                  = todo,
+		['AST.Set']                   = function (tree, path)
+			table.insert(out, '[')
+			for i, v in ipairs(tree.values) do
+				if i > 1 then table.insert(out, ', ') end
+				table.insert(out, ast_pp(v, path..'>'..i))
+			end
+			table.insert(out, ']')
+			return table.concat(out, '')
+		end,
+		['AST.SquareOp']              = todo,
+		['AST.Tuple']                 = todo,
+		['AST.TypeAnnotation']        = todo,
+		['AST.UnaryOp']               = function (tree, path)
+			table.insert(out, tree.op)
+			table.insert(out, '(')
+			table.insert(out, ast_pp(tree.expr, path))
+			table.insert(out, ')')
+			return table.concat(out, '')
+		end,
+		['Types.Field']               = function (tree, path)
+			table.insert(out, string.format('%s.%s', tree.value.name, tree.value.field))
+			return table.concat(out, '')
+		end,
+		['Types.PstateField']         = todo,
+		['Types.RegisterMultiFields'] = todo,
+		['Types.RegisterType']        = todo,
+		['Types.String']              = todo,
+		['Values.Value']              = function (tree, path)
+			return tree.value
+		end,
+	}
+	if tree then
+		if cases[tree._type] then
+			return cases[tree._type](tree, path)
+		else
+			return 'UNKNOWN('..tree._type..')'
+		end
+	else
+		return 'NIL'
+	end
+end
+-- for _, i in ipairs(instructions) do
+-- 	print(i.path, ast_pp(i.condition, i.path))
+-- end
+-- print(inspect(ast_unimplemented))
+
 
 
 --------------------------------
@@ -677,97 +900,6 @@ end
 -- 		print(string.format('\t%s\t%s', p[2], p[1]))
 -- 	end
 -- end
-
---------------------------------
--- condition ast
---------------------------------
-local ast_unimplemented = {}
-local function ast_pp(tree, path)
-	if path == nil then path = '' end
-	local out = {}
-	local todo = function (tree, path)
-		if not ast_unimplemented[tree._type] then
-			ast_unimplemented[tree._type] = {}
-		end
-		table.insert(ast_unimplemented[tree._type], path)
-		return 'TODO('..tree._type..'('..path..'))'
-	end
-	local cases = {
-		['AST.BinaryOp']              = function (tree, path)
-			table.insert(out, ast_pp(tree.left, path..'>left'))
-			table.insert(out, tree.op)
-			table.insert(out, ast_pp(tree.right, path..'>right'))
-			return table.concat(out, ' ')
-		end,
-		['AST.Bool']                  = function (tree, path)
-			return tree.value
-		end,
-		['AST.Concat']                = todo,
-		['AST.DotAtom']               = function (tree, path)
-			for i, v in ipairs(tree.values) do
-				if i > 1 then table.insert(out, '.') end
-				table.insert(out, ast_pp(v, path..'>'..i))
-			end
-			return table.concat(out, '')
-		end,
-		['AST.Function']              = function (tree, path)
-			table.insert(out, tree.name)
-			table.insert(out, '(')
-			for i, a in ipairs(tree.arguments) do
-				if i > 1 then table.insert(out, ', ') end
-				table.insert(out, ast_pp(a, path..'>'..i))
-			end
-			table.insert(out, ')')
-			return table.concat(out, '')
-		end,
-		['AST.Identifier']            = function (tree, path)
-			return tree.value
-		end,
-		['AST.Integer']               = function (tree, path)
-			return ''..tree.value
-		end,
-		['AST.Real']                  = todo,
-		['AST.Set']                   = function (tree, path)
-			table.insert(out, '[')
-			for i, v in ipairs(tree.values) do
-				if i > 1 then table.insert(out, ', ') end
-				table.insert(out, ast_pp(v, path..'>'..i))
-			end
-			table.insert(out, ']')
-			return table.concat(out, '')
-		end,
-		['AST.SquareOp']              = todo,
-		['AST.Tuple']                 = todo,
-		['AST.TypeAnnotation']        = todo,
-		['AST.UnaryOp']               = function (tree, path)
-			table.insert(out, tree.op)
-			table.insert(out, '(')
-			table.insert(out, ast_pp(tree.expr, path))
-			table.insert(out, ')')
-			return table.concat(out, '')
-		end,
-		['Types.Field']               = function (tree, path)
-			table.insert(out, string.format('%s.%s', tree.value.name, tree.value.field))
-			return table.concat(out, '')
-		end,
-		['Types.PstateField']         = todo,
-		['Types.RegisterMultiFields'] = todo,
-		['Types.RegisterType']        = todo,
-		['Types.String']              = todo,
-		['Values.Value']              = function (tree, path)
-			return tree.value
-		end,
-	}
-	if tree then
-		if cases[tree._type] then
-			return cases[tree._type](tree, path)
-		else
-			return 'UNKNOWN('..tree._type..')'
-		end
-	else
-		return 'NIL'
-	end
-end
 
 --------------------------------
 -- assembly syntax
