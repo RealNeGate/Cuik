@@ -275,10 +275,30 @@ Token lexer_read(Lexer* restrict l) {
 
     // generate valid token types
     switch (state) {
-        case 36:
-        case 42: {
+        case 48: {
             if (current[-1] == '\\') {
                 current -= 1;
+            } else if (current[-1] == 'L' && (current[0] == '\'' || current[0] == '"')) {
+                char quote_type = *current++;
+                for (; *current && *current != quote_type; current++) {
+                    // skip escape codes
+                    if (*current == '\\') {
+                        // this will skip twice because of the for loop's next
+                        //  \  "  . . .
+                        //  ^     ^
+                        //  old   new
+                        current += 1;
+                    }
+                }
+
+                current += 1;
+                t.type = quote_type;
+
+                if (start[0] == 'L') {
+                    t.type += 256;
+                    start += 1;
+                }
+                break;
             }
 
             #if USE_INTRIN && CUIK__IS_X64
@@ -315,7 +335,7 @@ Token lexer_read(Lexer* restrict l) {
             break;
         }
 
-        case 48: {
+        case 54: {
             t.type = TOKEN_INTEGER;
 
             // we've gotten through the simple integer stuff, time for floats

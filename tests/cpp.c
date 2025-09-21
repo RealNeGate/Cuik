@@ -1,3 +1,6 @@
+= == >= <<=
+fdjah 0 04ga .5f
+LL L'a' L"AAPLPLPGE"
 
 /*#define     hash_hash # ## #
 #define     mkstr(a) # a
