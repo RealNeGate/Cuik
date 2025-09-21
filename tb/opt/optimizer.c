@@ -19,7 +19,6 @@
 // helps us do some matching later
 static void remove_user(TB_Function* f, TB_Node* n, int slot);
 static void remove_input(TB_Function* f, TB_Node* n, size_t i);
-static void violent_kill(TB_Function* f, TB_Node* n);
 static bool alloc_types(TB_Function* f);
 
 static bool can_gvn(TB_Node* n);
@@ -258,7 +257,7 @@ void tb__gvn_remove(TB_Function* f, TB_Node* n) {
     }
 }
 
-static void violent_kill(TB_Function* f, TB_Node* n) {
+void tb_violent_kill(TB_Function* f, TB_Node* n) {
     // remove from GVN if we're murdering it
     size_t extra = extra_bytes(n);
     nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
@@ -735,7 +734,7 @@ TB_Node* make_ptr_offset(TB_Function* f, TB_Node* lhs, TB_Node* rhs) {
 
     TB_Node* k = tb_opt_peep_node(f, n);
     if (k != n && n->user_count == 0) {
-        violent_kill(f, n);
+        tb_violent_kill(f, n);
         n = k;
     }
 
@@ -748,7 +747,7 @@ TB_Node* make_int_unary(TB_Function* f, TB_DataType dt, TB_NodeTypeEnum type, TB
 
     TB_Node* k = tb_opt_peep_node(f, n);
     if (k != n && n->user_count == 0) {
-        violent_kill(f, n);
+        tb_violent_kill(f, n);
         n = k;
     }
 
@@ -762,7 +761,7 @@ TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_N
 
     TB_Node* k = tb_opt_peep_node(f, n);
     if (k != n && n->user_count == 0) {
-        violent_kill(f, n);
+        tb_violent_kill(f, n);
         n = k;
     }
     return n;

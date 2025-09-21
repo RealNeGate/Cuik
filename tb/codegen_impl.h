@@ -742,7 +742,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             TB_OPTDEBUG(ISEL3)(printf("ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
             tb__gvn_remove(f, n);
 
-            size_t old_node_count = f->node_count;
+            size_t old_node_count = ctx.old_node_count = f->node_count;
             bool progress;
             do {
                 TB_Node* k = node_isel_raw(&ctx, f, n, 1);

@@ -225,3 +225,15 @@ function parse_node(lex)
     end
     return n
 end
+
+function add_if_new(set, v)
+    for i=1,#set do
+        if set[i] == v then
+            return i
+        end
+    end
+
+    set[#set + 1] = v
+    return #set
+end
+

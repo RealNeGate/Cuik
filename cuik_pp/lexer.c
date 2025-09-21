@@ -13,22 +13,25 @@
 
 #include "dfa.h"
 
+static uint32_t hash(uint32_t k) {
+    uint32_t lo = (k & 0xFFFF) * (PERFECT_HASH_SEED & 0xFFFF);
+    uint32_t hi = (k >> 16u) * (PERFECT_HASH_SEED >> 16u);
+    return ((hi<<16u) + lo) >> 8u;
+}
 static uint64_t hash_with_len(const void* data, size_t len) {
     const uint8_t* p = data;
-
     uint64_t h = 0;
-    for (size_t i = 0; i < len; i++) {
-        h = (h << 5) + p[i];
-        uint64_t g = h & 0xf0000000;
-
-        if (g != 0) h = (h ^ (g >> 24)) ^ g;
+    for (size_t i = 0; i < len && i < 8; i++) {
+        h |= (uint64_t)p[i] << (uint64_t)(i*8);
     }
-    return h;
+
+    uint32_t x = hash(h & 0xFFFFFFFF);
+    uint32_t y = hash(h >> 32u);
+    return (x + y) % 179;
 }
 
 TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
-    // Auto-generated with lexgen.c
-    size_t v = (hash_with_len(str, len) * PERFECT_HASH_SEED) >> 56;
+    size_t v = hash_with_len(str, len);
     v = keywords_table[v];
 
     if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x800000) {
@@ -160,12 +163,6 @@ static unsigned char* backslash_join(Lexer* restrict l, unsigned char* start, un
     return mini.current;
 }
 
-static size_t dfa_fn(uint8_t ch, size_t state) {
-    // eval dfa
-    uint64_t row = dfa[ch][state&1];
-    return (row >> (state & 63)) & 63;
-}
-
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
@@ -248,35 +245,38 @@ Token lexer_read(Lexer* restrict l) {
     }
 
     // quit, we're done
-    if (__builtin_expect(*current == '\0', 0)) {
+    unsigned char* start = current;
+    unsigned char first = *start;
+    if (__builtin_expect(first == '\0', 0)) {
         return (Token){ .content = { 0, current } };
     }
+    current++;
 
-    // eval DFA for token
-    unsigned char* start = current;
-    size_t state = 0;
-    for (;;) {
-        uint8_t ch = *current;
+    // eval first char
+    uint8_t eq_class = eq_classes[first];
+    uint64_t state = dfa[eq_class] & 63;
 
-        // read convert to class (compresses the DFA a lot)
-        // uint8_t eq_row = eq_classes[ch >> 1];
-        // uint8_t eq = (eq_row >> (ch & 1)*4) & 0xF;
-
-        // eval dfa
-        size_t next = dfa_fn(ch, state);
-        if (next == 0) break;
-
-        state = next;
-        current += 1;
+    // eval rest
+    if (state) {
+        for (;;) {
+            uint8_t ch = *current;
+            // read convert to class (compresses the DFA a lot)
+            uint8_t eq_class = eq_classes[ch];
+            if (ch == first) { eq_class = 1; }
+            // eval DFA
+            uint64_t row = dfa[eq_class];
+            uint64_t next = (row >> (state & 63)) & 63;
+            if (next == 0) break;
+            state = next, current += 1;
+        }
     }
-    assert(current != start || *current == 0);
 
-    // printf("%c%.*s", t.hit_line ? '\n' : ' ', (int) (current - start), start);
+    // __debugbreak();
 
     // generate valid token types
     switch (state) {
-        case 6:
-        case 54: {
+        case 36:
+        case 42: {
             if (current[-1] == '\\') {
                 current -= 1;
             }
@@ -315,7 +315,7 @@ Token lexer_read(Lexer* restrict l) {
             break;
         }
 
-        case 7: {
+        case 48: {
             t.type = TOKEN_INTEGER;
 
             // we've gotten through the simple integer stuff, time for floats
@@ -336,47 +336,41 @@ Token lexer_read(Lexer* restrict l) {
             break;
         }
 
-        case 30: {
-            char quote_type = current[-1];
-
-            for (; *current && *current != quote_type; current++) {
-                // skip escape codes
-                if (*current == '\\') {
-                    // this will skip twice because of the for loop's next
-                    //  \  "  . . .
-                    //  ^     ^
-                    //  old   new
-                    current += 1;
-                }
-            }
-
-            current += 1;
-            t.type = quote_type;
-
-            if (start[0] == 'L') {
-                t.type += 256;
-                start += 1;
-            }
-            break;
-        }
-
         default: {
-            // dots can go on forever :p
-            if (current[-1] == '.') {
-                while (*current == '.') current++;
+            if (current[-1] == '\'' || current[-1] == '"') {
+                char quote_type = start[0];
+                for (; *current && *current != quote_type; current++) {
+                    // skip escape codes
+                    if (*current == '\\') {
+                        // this will skip twice because of the for loop's next
+                        //  \  "  . . .
+                        //  ^     ^
+                        //  old   new
+                        current += 1;
+                    }
+                }
+
+                current += 1;
+                t.type = quote_type;
+
+                if (start[0] == 'L') {
+                    t.type += 256;
+                    start += 1;
+                }
+            } else {
+                // add chars together (max of 3)
+                int length = current - start;
+                assert(length <= 3);
+                // if (length > 3) length = 3;
+
+                uint32_t mask = UINT32_MAX >> ((4 - length) * 8);
+
+                // potentially unaligned access :P
+                uint32_t chars;
+                memcpy(&chars, start, sizeof(uint32_t));
+
+                t.type = chars & mask;
             }
-
-            // add chars together (max of 3)
-            int length = current - start;
-            if (length > 3) length = 3;
-
-            uint32_t mask = UINT32_MAX >> ((4 - length) * 8);
-
-            // potentially unaligned access :P
-            uint32_t chars;
-            memcpy(&chars, start, sizeof(uint32_t));
-
-            t.type = chars & mask;
             break;
         }
     }

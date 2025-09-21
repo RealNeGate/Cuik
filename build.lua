@@ -276,9 +276,12 @@ if added["tb"] then
     end
 end
 
+-- New lexgen
+command("cuik_pp/keywords.h cuik_pp/dfa.h", "meta/lexgen.lua", arg[-1].. " $in", "")
+
 -- lexer metaprogram
-command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
-command("cuik_pp/keywords.h cuik_pp/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
+-- command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
+-- command("cuik_pp/keywords.h cuik_pp/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
 
 -- package freestanding headers into C file
 function list_files(path)

@@ -90,7 +90,7 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
             Lattice* l = value_of(f, abb);
             assert(l->tag == LATTICE_INT && l->_int.min == l->_int.max);
 
-            violent_kill(f, abb);
+            tb_violent_kill(f, abb);
 
             TB_Node* con = make_int_node(f, n->dt, l->_int.min);
             set_input(f, n, a->inputs[1], 1);
@@ -557,7 +557,7 @@ static TB_Node* ideal_bits(TB_Function* f, TB_Node* n) {
         Lattice* l = value_of(f, abb);
         TB_ASSERT(l->tag == LATTICE_INT && l->_int.min == l->_int.max);
 
-        violent_kill(f, abb);
+        tb_violent_kill(f, abb);
 
         TB_Node* con = make_int_node(f, n->dt, l->_int.min);
         set_input(f, n, a->inputs[1], 1);

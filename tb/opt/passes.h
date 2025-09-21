@@ -395,6 +395,7 @@ TB_Node* worklist_pop(TB_Worklist* ws);
 void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void subsume_node_without_phis(TB_Function* f, TB_Node* n, TB_Node* new_n);
+void tb_violent_kill(TB_Function* f, TB_Node* n);
 void tb__gvn_remove(TB_Function* f, TB_Node* n);
 
 // Scheduler's cost model crap (talk about these in codegen_impl.h)

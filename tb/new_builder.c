@@ -629,7 +629,7 @@ void tb_builder_label_kill(TB_GraphBuilder* g, TB_Node* label) {
     if (label->type != TB_NULL) {
         TB_ASSERT(label->type == TB_SYMBOL_TABLE);
         TB_ASSERT_MSG(label != g->curr, "can't kill the label we're using rn, that's rude");
-        violent_kill(g->f, label);
+        tb_violent_kill(g->f, label);
     }
 }
 

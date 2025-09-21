@@ -325,7 +325,8 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
         void* dst = &dst_base[opt->offset];
         const char* oldstr = NULL;
         if (opt->type != ARG_BOOL) {
-            if (len > 1 && first[2] != 0) {
+            int short_len = opt->short_name ? strlen(opt->short_name) : 0;
+            if (short_len == 1 && first[2] != 0) {
                 // short names for args might be directly followed by the
                 // arg value (e.g. "-j5")
                 oldstr = first+2;
@@ -348,6 +349,18 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
             } else {
                 *(bool*) dst = true;
             }
+        } else if (opt->type == ARG_ENUM) {
+            for (Option* kid = opt+1; kid != &options[OPTION_COUNT] && kid->type == ARG_ENUM_VAL; kid++) {
+                if (strcmp(kid->short_name, oldstr) == 0) {
+                    *(int*) dst = kid->offset;
+                    goto skip;
+                }
+            }
+
+            fprintf(stderr, "\x1b[31merror\x1b[0m: that's not valid (TODO error), got %s\n", oldstr);
+            return false;
+
+            skip:;
         } else if (opt->type == ARG_INT) {
             *(int*) dst = atoi(oldstr);
         } else if (opt->type == ARG_STR) {

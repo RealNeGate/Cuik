@@ -171,6 +171,8 @@ struct Ctx {
     TB_CFG cfg;
     TB_Worklist* walker_ws;
 
+    size_t old_node_count;
+
     // user callbacks
     NodeConstraint constraint;
     NodeConstraintKill constraint_kill;

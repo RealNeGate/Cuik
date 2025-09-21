@@ -456,7 +456,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                 if (n->dt.type == TB_TAG_VOID && n->user_count == 0) {
                     TB_OPTLOG(MEMORY, printf("  KILL %%%u\n", n->gvn));
 
-                    violent_kill(f, state->phis[i]);
+                    tb_violent_kill(f, state->phis[i]);
                     state->phis[i] = NULL;
                     if (latest) {
                         latest[1 + i] = NULL;

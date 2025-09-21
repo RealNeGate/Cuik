@@ -1,4 +1,3 @@
-local buffer  = require "string.buffer"
 local inspect = require "meta/inspect"
 
 require "meta/prelude"
@@ -209,8 +208,8 @@ while true do
                             usage[#usage + 1] = n[i][j]
                         end
 
-                        print()
-                        print("Class", name, inspect(usage))
+                        -- print()
+                        -- print("Class", name, inspect(usage))
 
                         if false then
                             -- parse definition
@@ -276,7 +275,7 @@ while true do
                             usage.name = usage.name..#final
                             final[#final + 1] = usage
 
-                            print("Path", inspect(usage))
+                            -- print("Path", inspect(usage))
                         end
 
                         usage.name = name
@@ -333,9 +332,9 @@ while true do
                 end
             end
 
-            print()
-            print("Max cycles", max_cycles)
-            print("Units", inspect(pipeline.units))
+            -- print()
+            -- print("Max cycles", max_cycles)
+            -- print("Units", inspect(pipeline.units))
 
             -- Allocate resource and collision matrices
             local collisions = {}
@@ -360,7 +359,7 @@ while true do
                     end
                 end
 
-                print_bit_matrix(tab, "Resource "..u.name)
+                -- print_bit_matrix(tab, "Resource "..u.name)
                 resources[i] = tab
             end
 
@@ -392,10 +391,10 @@ while true do
                     end
                 end
 
-                print_bit_matrix(col, "Collision "..pipeline.usages[a].name..", "..a)
+                -- print_bit_matrix(col, "Collision "..pipeline.usages[a].name..", "..a)
             end
 
-            print(inspect(pipeline))
+            -- print(inspect(pipeline))
         else
             print(inspect(n))
         end
@@ -479,17 +478,6 @@ local function active_str(set)
         strs[#strs + 1] = set[i]
     end
     return table.concat(strs, ",")
-end
-
-local function add_if_new(set, v)
-    for i=1,#set do
-        if set[i] == v then
-            return i
-        end
-    end
-
-    set[#set + 1] = v
-    return #set
 end
 
 -- all_patterns: [int](pattern, where_str, ...)
@@ -1395,7 +1383,8 @@ if true then
     lines[#lines + 1] = "}"
     lines[#lines + 1] = ""
     lines[#lines + 1] = "#define ACCEPT(x) mach_dfa_accept_ ## x(ctx, f, n)"
-    lines[#lines + 1] = "#define TRY_OPERAND(in, expected) (k = node_isel_raw(ctx, f, in, depth+1), k && k->type == expected)"
+    lines[#lines + 1] = "#define TRY_OPERAND(in, expected) ((k = node_isel_try_operand(ctx, f, in, depth+1, expected)) != NULL)"
+    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, int expected);"
     lines[#lines + 1] = "static TB_Node* node_isel_raw(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {"
     lines[#lines + 1] = "    if (depth == 1 && mach_is_subpat(n->type)) { return NULL; }"
     lines[#lines + 1] = "    TB_Node* k;"
@@ -1408,6 +1397,19 @@ if true then
     local stack = { nil, "n", nil, 0, all }
     gen_c(all, 1, stack, 1)
 
+    lines[#lines + 1] = "    return NULL;"
+    lines[#lines + 1] = "}"
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, int expected) {"
+    lines[#lines + 1] = "    TB_Node* k = node_isel_raw(ctx, f, n, depth);"
+    lines[#lines + 1] = "    if (k) {"
+    lines[#lines + 1] = "        if (k->type == expected) {"
+    lines[#lines + 1] = "            return k;"
+    lines[#lines + 1] = "        } else if (k->user_count == 0) {"
+    lines[#lines + 1] = "            tb_violent_kill(f, k);"
+    lines[#lines + 1] = "        }"
+    lines[#lines + 1] = "        worklist_push(f->worklist, k);"
+    lines[#lines + 1] = "    }"
     lines[#lines + 1] = "    return NULL;"
     lines[#lines + 1] = "}"
     lines[#lines + 1] = "#undef ACCEPT"
