@@ -297,7 +297,6 @@ static void construct_prologue_epilogue(Ctx* restrict ctx, TB_Function* f) {
 static uint32_t mach_grammar_exp;
 static uint32_t* mach_grammar;
 
-static bool mach_is_operand[512];
 static TB_Node* mach_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state);
 static TB_Node* mach_dfa_bare_memory(Ctx* ctx, TB_Function* f, TB_Node* n);
 
@@ -394,7 +393,7 @@ static TB_Node* node_isel_raw_OLD(Ctx* restrict ctx, TB_Function* f, TB_Node* n,
                 }
 
                 if (wants_operand) {
-                    if (depth == 1 && mach_is_operand[in->type]) {
+                    if (depth == 1) { // if (depth == 1 && mach_is_operand[in->type]) {
                         TB_OPTDEBUG(ISEL2)(printf("\n"));
 
                         TB_Node* new_in = node_isel_raw(ctx, f, in, depth + 1);
@@ -583,7 +582,7 @@ static void postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, TB_Node* n, size_t ol
         postorder_isel_walk(ctx, ws, n->inputs[i], old_node_count);
     }
 
-    TB_OPTDEBUG(ISEL3)(printf("PUSH "), tb_print_dumb_node(NULL, n), printf("\n"));
+    TB_OPTDEBUG(ISEL)(printf("  PUSH "), tb_print_dumb_node(NULL, n), printf("\n"));
     dyn_array_put(ws->items, n);
 }
 
@@ -739,36 +738,29 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 continue;
             }
 
-            TB_OPTDEBUG(ISEL3)(printf("ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
             tb__gvn_remove(f, n);
+            TB_OPTDEBUG(ISEL)(printf("\n=== T=%d ===\n", ++f->stats.time));
 
             size_t old_node_count = ctx.old_node_count = f->node_count;
             bool progress;
             do {
-                TB_Node* k = node_isel_raw(&ctx, f, n, 1);
+                TB_OPTDEBUG(ISEL)(printf("Match? "), tb_print_dumb_node(NULL, n), printf("\n"));
+                TB_Node* k = node_isel_raw(&ctx, f, n, 0);
                 progress = k != NULL;
 
                 if (k) {
-                    TB_OPTDEBUG(ISEL3)(printf(" => "), tb_print_dumb_node(NULL, k));
+                    TB_OPTDEBUG(ISEL)(printf("  Accept: "), tb_print_dumb_node(NULL, k), printf("\n"));
                     if (k != n) {
                         subsume_node(f, n, k);
                     }
                     n = k;
+                } else {
+                    TB_OPTDEBUG(ISEL)(printf("  Reject\n"));
                 }
             } while (progress);
-            TB_OPTDEBUG(ISEL3)(printf("\n"));
+            TB_OPTDEBUG(ISEL)(printf("\n"));
 
             n = tb_opt_gvn_node(f, n);
-
-            // kill any nodes on the right side of the node
-            while (worklist_count(ws) >= start) {
-                TB_Node* k = worklist_pop(ws);
-                if (k->user_count == 0 && !is_proj(k)) {
-                    TB_OPTDEBUG(ISEL3)(printf("KILL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, k), printf("\n"));
-                    tb__gvn_remove(f, k);
-                    tb_kill_node(f, k);
-                }
-            }
 
             // ISel can introduce fresh nodes, we should add these to the worklist
             // in postorder, I don't mind this using the stack because it's mostly
@@ -776,6 +768,28 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             FOR_N(i, 0, n->input_count) {
                 postorder_isel_walk(&ctx, ws, n->inputs[i], old_node_count);
             }
+
+            // kill any nodes on the right side of the node, preserve the rest and reprocess them
+            size_t read_head  = start;
+            size_t write_head = start-1;
+            size_t read_tail = worklist_count(ws);
+            while (read_head < read_tail) {
+                TB_Node* k = ws->items[read_head];
+                if (k->user_count == 0 && !is_proj(k)) {
+                    // technically the visited bit stays on in this path but i don't care, it's dead
+                    TB_OPTDEBUG(ISEL)(printf("  KILL "), tb_print_dumb_node(NULL, k), printf("\n"));
+                    tb__gvn_remove(f, k);
+                    tb_kill_node(f, k);
+                } else {
+                    TB_OPTDEBUG(ISEL)(printf("  REPROCESS "), tb_print_dumb_node(NULL, k), printf("\n"));
+                    if (read_head != write_head) {
+                        ws->items[write_head] = k;
+                    }
+                    write_head++;
+                }
+                read_head++;
+            }
+            dyn_array_set_length(ws->items, write_head);
 
             node_add_tmps(&ctx, n);
         }
@@ -785,6 +799,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             ctx.frame_ptr = NULL;
         }
 
+        worklist_clear(ws);
         tb_arena_restore(&f->tmp_arena, pins_sp);
         log_phase_end(f, og_size, "isel");
 

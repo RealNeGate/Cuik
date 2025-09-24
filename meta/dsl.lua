@@ -47,8 +47,6 @@ local lex = lexer(source)
 local lines = {}
 local reg_classes = {}
 
-local is_operand = {}
-
 local state_count = 1
 local stack_action = {}
 
@@ -57,6 +55,7 @@ local node_types = {}
 
 local all_patterns = {}
 local subpat_map = OrderedSet()
+local operand_map = OrderedSet()
 
 function skip_ws(j, def)
     while j < #def and def:byte(j) == 32 do
@@ -143,6 +142,10 @@ while true do
             if is_subpat then
                 subpat_map:put(pattern[1])
             end
+
+            if t[1] == mach_prefix.."MEMORY" or t[1] == mach_prefix.."COND" then
+                operand_map:put(pattern[1], t[1])
+            end
         end
         all_patterns[#all_patterns + 1] = { pattern, where, is_subpat, t }
     elseif t == "(" then
@@ -150,6 +153,9 @@ while true do
 
         if n[1] == "namespace" then
             mach_prefix = n[2].."_"
+
+            operand_map:put(mach_prefix.."MEMORY", mach_prefix.."MEMORY")
+            operand_map:put(mach_prefix.."COND", mach_prefix.."COND")
         elseif n[1] == "reg_class" then
             reg_classes[#reg_classes + 1] = { n[2], math.max(1, #n - 2) }
 
@@ -549,7 +555,7 @@ for i,name in ipairs(ordered) do
         walk_into(set[i][1], partition_count, pattern_count)
         pattern_count = pattern_count + 1
     end
-    -- print(i, name, #set)
+    print(i, name, #set)
 end
 
 -- Generate C code for the matcher
@@ -1153,8 +1159,10 @@ function gen_c_inner(depth, stack, can_bail, operands)
         -- add_line(depth, "// WALK "..in_str..", "..make_active_str(active))
         local case_count = cases:count()
         if leader == "___" then
+            add_line(depth, string.format("DFA_LOG(depth+%d, %s, \"Step\");", stack[4], in_str))
             add_line(depth, string.format("if (%s != NULL) { break; }", in_str))
         elseif case_count == 1 and bail_out then
+            add_line(depth, string.format("DFA_LOG(depth+%d, %s, \"Step\");", stack[4], in_str))
             add_line(depth, "// MATCH ANY "..in_str)
         elseif case_count == 0 then
             add_line(depth, "break;")
@@ -1164,6 +1172,8 @@ function gen_c_inner(depth, stack, can_bail, operands)
             if leader == "END" then
                 goto skip
             end
+
+            add_line(depth, string.format("DFA_LOG(depth+%d, %s, \"Step\");", stack[4], in_str))
 
             local new_name = string.format("n__%d", var_counter)
             add_line(depth, string.format("TB_Node* %s = %s;", new_name, in_str))
@@ -1176,16 +1186,18 @@ function gen_c_inner(depth, stack, can_bail, operands)
                     local preds = {}
                     local has = {}
                     local can_match_operand = false
+                    local log_expr = {}
                     for i=1,#v do
                         local cond = get_pattern_at(v[i], pos)
                         has[cond] = true
 
                         if cond == mach_prefix.."MEMORY" or cond == mach_prefix.."COND" then
-                            add_if_new(preds, string.format("TRY_OPERAND(%s, %s)", new_name, cond))
+                            add_if_new(preds, string.format("TRY_OPERAND(%s, %s, depth+%d)", new_name, cond, stack[4]))
                             can_match_operand = true
                         else
                             add_if_new(preds, string.format("%s->type == %s", new_name, cond))
                         end
+                        add_if_new(log_expr, cond)
                     end
                     local expr = table.concat(preds, " || ")
 
@@ -1205,6 +1217,8 @@ function gen_c_inner(depth, stack, can_bail, operands)
 
                     local next_stack = { stack, new_name, 0, stack[4]+1, then_active }
                     local new_operands = operands
+
+                    add_line(depth, string.format("DFA_LOG2(depth+1, \"TRY '%s'\");", table.concat(log_expr, " || ")))
                     if can_match_operand then
                         add_line(depth, string.format("do { if (k = NULL, %s) {", expr))
 
@@ -1382,11 +1396,33 @@ if true then
     lines[#lines + 1] = "    }"
     lines[#lines + 1] = "}"
     lines[#lines + 1] = ""
+    lines[#lines + 1] = "static int mach_is_operand(int type) {"
+    lines[#lines + 1] = "    switch (type) {"
+    for k in operand_map:iter() do
+        lines[#lines + 1] = "        case "..k..": return "..operand_map.entries[k]..";"
+    end
+    lines[#lines + 1] = "        default: return 0;"
+    lines[#lines + 1] = "    }"
+    lines[#lines + 1] = "}"
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "static void mach_indent(int depth) {"
+    lines[#lines + 1] = "    while (depth--) { printf(\"  \"); }"
+    lines[#lines + 1] = "}"
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "#if TB_OPTDEBUG_ISEL"
+    lines[#lines + 1] = "#define DFA_LOG(depth, n, fmt, ...) (mach_indent(depth), printf(fmt, __VA_ARGS__), printf(\": \"), tb_print_dumb_node(NULL, n), printf(\"\\n\"))"
+    lines[#lines + 1] = "#define DFA_LOG2(depth, fmt, ...) (mach_indent(depth), printf(fmt, __VA_ARGS__), printf(\"\\n\"))"
+    lines[#lines + 1] = "#else"
+    lines[#lines + 1] = "#define DFA_LOG(depth, n, fmt, ...)"
+    lines[#lines + 1] = "#define DFA_LOG2(depth, fmt, ...)"
+    lines[#lines + 1] = "#endif"
+    lines[#lines + 1] = ""
     lines[#lines + 1] = "#define ACCEPT(x) mach_dfa_accept_ ## x(ctx, f, n)"
-    lines[#lines + 1] = "#define TRY_OPERAND(in, expected) ((k = node_isel_try_operand(ctx, f, in, depth+1, expected)) != NULL)"
-    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, int expected);"
+    lines[#lines + 1] = "#define TRY_OPERAND(in, expected, indent_depth) (k = node_isel_try_operand(ctx, f, in, indent_depth, expected, depth == 0), k)"
+    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, int expected, bool at_base);"
     lines[#lines + 1] = "static TB_Node* node_isel_raw(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {"
-    lines[#lines + 1] = "    if (depth == 1 && mach_is_subpat(n->type)) { return NULL; }"
+    lines[#lines + 1] = "    if (depth == 0 && mach_is_subpat(n->type)) { return NULL; }"
+    lines[#lines + 1] = ""
     lines[#lines + 1] = "    TB_Node* k;"
 
     local all = {}
@@ -1400,16 +1436,26 @@ if true then
     lines[#lines + 1] = "    return NULL;"
     lines[#lines + 1] = "}"
     lines[#lines + 1] = ""
-    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, int expected) {"
+    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, int expected, bool at_base) {"
+    lines[#lines + 1] = "    if (n->type == expected) {"
+    lines[#lines + 1] = "        return n;"
+    lines[#lines + 1] = "    }"
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "    if (!at_base || mach_is_operand(n->type) != expected) {"
+    lines[#lines + 1] = "        return NULL;"
+    lines[#lines + 1] = "    }"
+    lines[#lines + 1] = ""
     lines[#lines + 1] = "    TB_Node* k = node_isel_raw(ctx, f, n, depth);"
     lines[#lines + 1] = "    if (k) {"
     lines[#lines + 1] = "        if (k->type == expected) {"
+    lines[#lines + 1] = "            DFA_LOG(depth+1, k, \"Accept\");"
     lines[#lines + 1] = "            return k;"
     lines[#lines + 1] = "        } else if (k->user_count == 0) {"
     lines[#lines + 1] = "            tb_violent_kill(f, k);"
     lines[#lines + 1] = "        }"
     lines[#lines + 1] = "        worklist_push(f->worklist, k);"
     lines[#lines + 1] = "    }"
+    lines[#lines + 1] = "    DFA_LOG2(depth+1, \"Reject\");"
     lines[#lines + 1] = "    return NULL;"
     lines[#lines + 1] = "}"
     lines[#lines + 1] = "#undef ACCEPT"

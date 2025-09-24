@@ -194,13 +194,13 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         TB_Node* curr = n;
                         while (bb == NULL) {
                             bb = f->scheduled[curr->gvn];
-                            if (cfg_is_region(curr)) { // dead block? odd
+                            if (curr->type == TB_DEAD || cfg_is_region(curr)) { // dead block? odd
                                 break;
                             }
                             curr = curr->inputs[0];
                         }
 
-                        if (bb == NULL) {
+                        if (bb == NULL || curr->type == TB_DEAD) {
                             continue;
                         }
 

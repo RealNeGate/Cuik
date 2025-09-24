@@ -165,6 +165,7 @@ static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
     // note that "subtypes" of region like TB_NATURAL_LOOP and TB_AFFINE_LOOP are
     // valid for fast doms since they guarentee they're dominated by inputs[0]
     while (steps < FAST_IDOM_LIMIT && bb != expected_dom && bb->type != TB_REGION && bb->type != TB_ROOT) {
+        TB_ASSERT(bb->inputs[0]);
         bb = bb->inputs[0];
         steps++;
     }
@@ -463,7 +464,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
 
                     if (init->tag == LATTICE_INT && trips_max <= INT64_MAX) {
                         Lattice* range = affine_iv(f, init, trips_min, trips_max, step, bits);
-                        if (range) { return range; }
+                        if (range) { return lattice_int_widen(f, range, old); }
                     }
 
                     if (step > 0 && cant_signed_overflow(n->inputs[2])) {
@@ -473,7 +474,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
 
                         // JOIN would achieve this effect too btw
                         if (old == &TOP_IN_THE_SKY) {
-                            return lattice_gimme_int(f, min, max, bits);
+                            return lattice_int_widen(f, lattice_gimme_int(f, min, max, bits), old);
                         } else {
                             min = TB_MAX(min, old->_int.min);
                             max = TB_MIN(max, old->_int.max);
@@ -492,7 +493,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                             uint64_t zeros = lsb_diff ? UINT64_MAX >> (64 - lsb_diff) : 0;
                             #endif
 
-                            return lattice_gimme_int2(f, min, max, 0, 0, bits);
+                            return lattice_int_widen(f, lattice_gimme_int2(f, min, max, 0, 0, bits), old);
                         }
                     }
                 }
@@ -1452,7 +1453,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPT_LOG_ENABLED
-    if (strcmp(f->super.name, "foo") == 0) {
+    if (strcmp(f->super.name, "stb_write") == 0) {
         f->enable_log = true;
     }
     #endif

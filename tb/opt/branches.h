@@ -574,9 +574,10 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
         br->prob = 1.0f - br->prob;
 
         FOR_USERS(u, n) {
-            TB_ASSERT(USERN(u)->type == TB_PROJ);
-            TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
-            p->index = !p->index;
+            if (USERN(u)->type == TB_PROJ) {
+                TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
+                p->index = !p->index;
+            }
         }
 
         set_input(f, n, new_cmp, 1);
@@ -597,9 +598,10 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
             // flip successors
             if (cmp_type == TB_CMP_EQ) {
                 FOR_USERS(u, n) {
-                    TB_ASSERT(USERN(u)->type == TB_PROJ);
-                    TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
-                    p->index = !p->index;
+                    if (USERN(u)->type == TB_PROJ) {
+                        TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
+                        p->index = !p->index;
+                    }
                 }
             }
 
@@ -613,12 +615,13 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
         return n;
     }
 
-    // empty BB, just does if branch but the condition is effect-less
-    // if (a && b) A else B => if (a ? b : 0) A else B
+    // If-conversion
     //
-    // TODO(NeGate): implement form which works on an arbitrary falsey
-    if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_IF && is_empty_bb(f, n)) {
-        TB_NodeBranchProj* br_path = TB_NODE_GET_EXTRA(n->inputs[0]);
+    //      if (a && b) { A else B }
+    //   => if (a ? b : 0) A else B
+    //
+    if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_IF) {
+        TB_NodeProj* br_path = TB_NODE_GET_EXTRA(n->inputs[0]);
 
         int index = br_path->index;
         TB_Node* pred_branch = n->inputs[0]->inputs[0];
@@ -634,7 +637,7 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
             TB_Node* shared_edge2 = cfg_next_control(USERN(other_proj2));
 
             // if they're the same then we've got a shortcircuit eval setup
-            if (shared_edge == shared_edge2) {
+            if (shared_edge == shared_edge2 && USERN(other_proj)->user_count == 1 && USERN(other_proj2)->user_count == 1) {
                 TB_ASSERT(cfg_is_region(shared_edge));
                 int shared_i  = USERI(USERN(other_proj)->users);
                 int shared_i2 = USERI(USERN(other_proj2)->users);

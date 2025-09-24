@@ -508,12 +508,24 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
             continue;
         }
 
+        Pair* base = p;
         Pair* curr = p;
+        bool cycle = false;
 
         // find leftmost pair (keep walking until there's no more pairs
         // which consider our LHS the RHS)
         while (pairs->r_map[curr->lhs->gvn]) {
             curr = pairs->r_map[curr->lhs->gvn];
+
+            if (curr == base) {
+                TB_OPTDEBUG(SLP)(printf("  CYCLE: %%%u -- %%%u\n", curr->lhs->gvn, curr->rhs->gvn));
+                cycle = true;
+                break;
+            }
+        }
+
+        if (cycle) {
+            break;
         }
 
         dyn_array_clear(combined);
@@ -614,6 +626,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     }
     #endif
 
+    size_t len = 0;
     dyn_array_for(i, schedule) {
         VectorOp* op = schedule[i];
         TB_Node* first = op->ops[0];
@@ -679,18 +692,14 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
             FOR_N(i, 0, op->width) {
                 nl_table_remove(&ops, op->ops[i]);
             }
-
-            size_t len = dyn_array_length(schedule);
-            if (len - 1 != i) {
-                i++;
-                memmove(&schedule[i - 1], &schedule[i], (len - i) * sizeof(VectorOp*));
-            }
-            dyn_array_pop(schedule);
+        } else {
+            schedule[len++] = op;
         }
     }
+    dyn_array_set_length(schedule, len);
 
     // nothing left which is valid, bail out
-    if (dyn_array_length(schedule) == 0) {
+    if (len == 0) {
         return false;
     }
 

@@ -1422,7 +1422,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
 
             SET_CAST(0, lhs);
 
-            if (e->op == EXPR_PLUS_ASSIGN && cuik_type_is_pointer(cuik_canonical_type(lhs))) {
+            if ((e->op == EXPR_PLUS_ASSIGN || e->op == EXPR_MINUS_ASSIGN) && cuik_type_is_pointer(cuik_canonical_type(lhs))) {
                 // pointer arithmatic
                 SET_CAST(1, cuik_uncanonical_type(&tu->target->ptrdiff_type));
                 return lhs;

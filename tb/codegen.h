@@ -286,7 +286,7 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
 static double get_node_spill_cost(Ctx* restrict ctx, TB_Node* n) {
     if (n->type == TB_MACH_TEMP) {
         return 1.0;
-    } else if (n->type == TB_MACH_FRAME_PTR || n->user_count == 0) {
+    } else if (n->type == TB_MACH_FRAME_PTR || (n->type != TB_PHI && n->user_count == 0)) {
         // no users? probably a projection that can't be spilled
         return INFINITY;
     } else {

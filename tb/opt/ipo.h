@@ -260,7 +260,7 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
         while (scc->stk[--head] != f) {}
 
         if (is_cycle || scc->stk_cnt - head > 1) {
-            printf("Call cycle (depth=%d, %zu):\n", depth, scc->stk_cnt - head);
+            // printf("Call cycle (depth=%d, %zu):\n", depth, scc->stk_cnt - head);
 
             is_cycle = true;
             f->attrs |= TB_FUNCTION_NOINLINE;
@@ -272,7 +272,7 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
             kid_f = scc->stk[--scc->stk_cnt];
 
             if (is_cycle) {
-                printf("  %s\n", kid_f->super.name);
+                // printf("  %s\n", kid_f->super.name);
             }
 
             SCCNode* kid_n = nl_table_get(&scc->nodes, kid_f);

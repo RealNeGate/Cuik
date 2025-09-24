@@ -452,8 +452,8 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
         switch (n->type) {
             case TB_SHL: {
                 if (bmin == bmax) {
-                    uint64_t new_min = (min << bmin) & mask;
-                    uint64_t new_max = (max << bmin) & mask;
+                    int64_t new_min = (min << bmin) & mask;
+                    int64_t new_max = (max << bmin) & mask;
 
                     // we know exactly where the bits went
                     zeros <<= bmin;
@@ -464,7 +464,15 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     // overflow check
                     if ((new_min >> bmin) == min &&
                         (new_max >> bmin) == max) {
-                        return lattice_gimme_int2(f, new_min, new_max, zeros, ones, bits);
+                        // convert back to signed
+                        min = tb__sxt(new_min, bits, 64);
+                        max = tb__sxt(new_max, bits, 64);
+                        if (min > max) {
+                            min = lattice_int_min(bits);
+                            max = lattice_int_max(bits);
+                        }
+
+                        return lattice_gimme_int2(f, min, max, zeros, ones, bits);
                     }
                 } else {
                     // we at least shifted this many bits therefore we

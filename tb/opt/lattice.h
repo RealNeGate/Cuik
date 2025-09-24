@@ -217,6 +217,15 @@ Lattice* lattice_truthy(Lattice* l) {
     }
 }
 
+static Lattice* lattice_int_widen(TB_Function* f, Lattice* l, Lattice* old) {
+    if (old->tag == LATTICE_INT && l->tag == LATTICE_INT && l->_int.widen < old->_int.widen) {
+        Lattice new_l = *l;
+        new_l._int.widen = old->_int.widen;
+        return lattice_intern(f, new_l);
+    }
+    return l;
+}
+
 static uint64_t lattice_int_min(int bits) { return (1ll << (bits - 1)) | ~tb__mask(bits); }
 static uint64_t lattice_int_max(int bits) { return (1ll << (bits - 1)) - 1; }
 static uint64_t lattice_uint_max(int bits) { return UINT64_MAX >> (64 - bits); }

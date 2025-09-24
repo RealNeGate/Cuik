@@ -37,6 +37,18 @@ static Cuik_Attribute* parse_attributes(Cuik_Parser* restrict parser, TokenStrea
             // ignoring them.
             tokens_next(s);
             expect_char(s, '(');
+            expect_char(s, '(');
+
+            Cuik_Attribute* a = TB_ARENA_ALLOC(parser->arena, Cuik_Attribute);
+            a->prev = last;
+            a->loc.start = tokens_get_location(s);
+
+            Token* t = tokens_get(s);
+            if (t->type == TOKEN_IDENTIFIER) {
+                a->name = atoms_put(t->content.length, t->content.data);
+            } else {
+                a->name = NULL;
+            }
 
             int depth = 1;
             while (depth) {
@@ -48,6 +60,10 @@ static Cuik_Attribute* parse_attributes(Cuik_Parser* restrict parser, TokenStrea
 
                 tokens_next(s);
             }
+
+            expect_char(s, ')');
+            a->loc.end = tokens_get_location(s);
+            last = a;
         } else {
             return last;
         }

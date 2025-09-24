@@ -3,9 +3,13 @@ local inspect = require "meta/inspect"
 function OrderedSet()
     local t = { ord={}, entries={} }
 
-    function t:put(k)
+    function t:put(k, v)
+        if not v then
+            v = true
+        end
+
         if not self.entries[k] then
-            self.entries[k] = true
+            self.entries[k] = v
             self.ord[#self.ord + 1] = k
         end
     end

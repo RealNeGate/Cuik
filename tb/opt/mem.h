@@ -40,7 +40,7 @@ typedef struct {
 
     TB_Node* base;
     uint32_t cnt, cap;
-    SimpleMemRef stores[];
+    SimpleMemRef* stores;
 } MemorySet;
 
 typedef struct MemoryState {
@@ -144,7 +144,7 @@ static SimpleMemRef find_simple_mem_ref(TB_Function* f, LocalSplitter* ctx, TB_N
 }
 
 static int find_aliasing_store(LocalSplitter* restrict ctx, MemorySet* set, int64_t offset) {
-    size_t left = 0, right = aarray_length(set->stores);
+    size_t left = 0, right = set->cnt;
     while (left != right) {
         size_t i = (left + right) / 2;
         if (set->stores[i].offset >= offset) { right = i; }
@@ -156,11 +156,12 @@ static int find_aliasing_store(LocalSplitter* restrict ctx, MemorySet* set, int6
 static MemorySet* memory_set_find_or_create(TB_Function* f, NL_Table* non_aliasing, TB_Node* base) {
     MemorySet* set = nl_table_get(non_aliasing, base);
     if (set == NULL) {
-        set = cuik_malloc(sizeof(MemorySet) + 4*sizeof(SimpleMemRef));
+        set = tb_arena_alloc(&f->tmp_arena, sizeof(MemorySet));
         set->ready = true;
         set->base = base;
         set->cap = 4;
         set->cnt = 0;
+        set->stores = cuik_malloc(4*sizeof(SimpleMemRef));
         nl_table_put(non_aliasing, base, set);
     }
     return set;
@@ -171,9 +172,8 @@ static void memory_set_insert(TB_Function* f, NL_Table* non_aliasing, MemorySet*
         size_t new_cap = set->cap*2;
         if (new_cap < 4) { new_cap = 4; }
 
-        set = cuik_realloc(set, sizeof(MemorySet) + new_cap*sizeof(SimpleMemRef));
         set->cap = new_cap;
-        nl_table_put(non_aliasing, set->base, set);
+        set->stores = cuik_realloc(set->stores, sizeof(MemorySet) + new_cap*sizeof(SimpleMemRef));
     }
 
     TB_ASSERT((i + 1) + (set->cnt - i) <= set->cap);
@@ -250,11 +250,12 @@ static void merge_memory(TB_Function* f, NL_Table* non_aliasing, NL_Table* other
         }
 
         TB_ASSERT(this->base == that->base);
-        MemorySet* set = cuik_malloc(sizeof(MemorySet) + (this->cnt + that->cnt)*sizeof(SimpleMemRef));
+        MemorySet* set = tb_arena_alloc(&f->tmp_arena, sizeof(MemorySet));
         set->ready = true;
         set->base = this->base;
         set->cap = this->cnt + that->cnt;
         set->cnt = 0;
+        set->stores = cuik_malloc((this->cnt + that->cnt)*sizeof(SimpleMemRef));
 
         // two sorted lists, we can walk each head
         int x = 0, y = 0;
@@ -269,7 +270,6 @@ static void merge_memory(TB_Function* f, NL_Table* non_aliasing, NL_Table* other
                 x++, y++;
                 continue;
             }
-
             if (this->stores[x].offset < that->stores[y].offset) {
                 set->stores[set->cnt++] = this->stores[x++];
                 set->stores[set->cnt++] = that->stores[y++];
@@ -284,6 +284,7 @@ static void merge_memory(TB_Function* f, NL_Table* non_aliasing, NL_Table* other
         // leftover that
         while (y < that->cnt) { set->stores[set->cnt++] = that->stores[y++]; }
 
+        TB_ASSERT(set->cnt <= set->cap);
         e->v = set;
     }
 
@@ -292,13 +293,15 @@ static void merge_memory(TB_Function* f, NL_Table* non_aliasing, NL_Table* other
         MemorySet* that = nl_table_get(non_aliasing, e->k);
         if (that == NULL) {
             // clone it
-            MemorySet* set = cuik_malloc(sizeof(MemorySet) + this->cnt * sizeof(SimpleMemRef));
+            MemorySet* set = tb_arena_alloc(&f->tmp_arena, sizeof(MemorySet));
             set->ready = true;
             set->base = this->base;
             set->cap = this->cnt;
             set->cnt = this->cnt;
+            set->stores = cuik_malloc(this->cnt * sizeof(SimpleMemRef));
             memcpy(set->stores, this->stores, this->cnt * sizeof(SimpleMemRef));
 
+            TB_ASSERT(e->k == set->base);
             nl_table_put(non_aliasing, e->k, set);
         }
     }
@@ -1084,7 +1087,8 @@ int tb_opt_locals(TB_Function* f) {
                 MemoryState* state = set->v;
                 if (--state->refs == 0) {
                     nl_table_for(e, &state->non_aliasing) {
-                        cuik_free(e->v);
+                        MemorySet* set = e->v;
+                        cuik_free(set->stores);
                     }
                     nl_table_free(state->non_aliasing);
                 }

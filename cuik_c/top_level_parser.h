@@ -255,7 +255,15 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
         bool has_body = false;
         if (!attr.is_typedef) {
-            n->attr_list = parse_attributes(parser, s, n->attr_list);
+            n->attr_list = parse_attributes(parser, s, attribute_list);
+
+            bool is_root = false;
+            for (Cuik_Attribute* a = n->attr_list; a; a = a->prev) {
+                if (a->name && strcmp(a->name, "used") == 0) {
+                    is_root = true;
+                    break;
+                }
+            }
 
             if (decl.name != NULL) {
                 // declaration endings
@@ -273,7 +281,8 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     if (n->decl.attrs.is_inline) {
                         diag_err(s, decl.loc, "non-function declarations cannot be inline");
                     }
-                    n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
+
+                    n->decl.attrs.is_root = is_root || (!attr.is_extern && !attr.is_static);
 
                     if (tokens_get(s)->type == '{') {
                         expr_start = skip_brackets(s, decl.loc, true, &expr_end);
@@ -287,7 +296,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     }
 
                     n->op = STMT_FUNC_DECL;
-                    n->decl.attrs.is_root = attr.is_tls || !(attr.is_static || attr.is_inline);
+                    n->decl.attrs.is_root = is_root || attr.is_tls || !(attr.is_static || attr.is_inline);
 
                     expr_start = skip_brackets(s, decl.loc, false, &expr_end);
                     if (expr_start < 0) {

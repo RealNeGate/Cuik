@@ -35,6 +35,7 @@ typedef struct {
 bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_Worklist* ws, TB_LoopTree* loop);
 
 static void loop_add_kid(TB_LoopTree* kid, TB_LoopTree* mom) {
+    TB_ASSERT(kid != mom);
     kid->parent = mom;
     kid->next   = mom->kid;
     mom->kid    = kid;
@@ -116,7 +117,7 @@ static void loop_scc_walk(LoopSCC* restrict scc, TB_CFG* restrict cfg, TB_BasicB
                 if (cfg->root_loop == NULL) {
                     TB_OPTDEBUG(LOOP)(printf("    * Loop%d is next to Loop%d\n", new_loop->id, last->id));
                     new_loop->next = last;
-                } else {
+                } else if (new_loop != cfg->root_loop) {
                     TB_OPTDEBUG(LOOP)(printf("    * Loop%d is inside Loop%d\n", new_loop->id, cfg->root_loop->id));
                     loop_add_kid(new_loop, cfg->root_loop);
                 }
@@ -464,15 +465,16 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             TB_Node* next_val = old_phi->inputs[2];
             for (size_t j = 0; j < old_phi->user_count;) {
                 TB_Node* un = USERN(&old_phi->users[j]);
+                int ui = USERI(&old_phi->users[j]);
 
-                if (cloned[un->gvn] && un != old_phi) {
+                if (cloned[un->gvn] && un != old_phi && un->inputs[ui] != old_phi) {
                     #if TB_OPTDEBUG_LOOP
                     printf("   USER(");
                     tb_print_dumb_node(NULL, un);
-                    printf(", %d, %%%u)\n", USERI(&old_phi->users[j]), next_val->gvn);
+                    printf(", %d, %%%u)\n", ui, next_val->gvn);
                     #endif
 
-                    set_input(f, un, next_val, USERI(&old_phi->users[j]));
+                    set_input(f, un, next_val, ui);
                 } else {
                     j++;
                 }
@@ -1377,7 +1379,7 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
 
             // find out which are the entry paths
             bool* is_backedge = tb_arena_alloc(&f->tmp_arena, back_path_count * sizeof(bool));
-            memset(is_backedge, 0, back_path_count * sizeof(bool));
+            memset(is_backedge, 0, header->input_count * sizeof(bool));
             FOR_N(j, 0, back_path_count) {
                 is_backedge[backedges[j]] = true;
             }

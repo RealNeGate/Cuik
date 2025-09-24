@@ -13,6 +13,11 @@ void tb_print_dumb_edge(Lattice** types, TB_Node* n, OutStream* s) {
 }
 
 void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, OutStream* s) {
+    if (n == NULL) {
+        s_writef(s, "___");
+        return;
+    }
+
     s_color(s, cool_ansi_color(n->gvn));
     s_writef(s, "%%%u: ", n->gvn);
     s_color(s, 0);
