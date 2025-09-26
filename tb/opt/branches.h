@@ -61,6 +61,10 @@ static TB_Node* prune_region(TB_Function* f, TB_Node* n) {
     return changes ? n : NULL;
 }
 
+static TB_Node* is_if_proj(TB_Function* f, TB_Node* n) {
+    return n->type == TB_PROJ && n->inputs[0]->type == TB_IF ? n->inputs[0] : NULL;
+}
+
 static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
@@ -616,9 +620,8 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
     }
 
     // If-conversion
-    //
-    //      if (a && b) { A else B }
-    //   => if (a ? b : 0) A else B
+    //   (a && b) => (a ? b : 0)
+    //   (a || b) => (a ? 1 : b)
     //
     if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_IF) {
         TB_NodeProj* br_path = TB_NODE_GET_EXTRA(n->inputs[0]);
@@ -637,7 +640,12 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
             TB_Node* shared_edge2 = cfg_next_control(USERN(other_proj2));
 
             // if they're the same then we've got a shortcircuit eval setup
-            if (shared_edge == shared_edge2 && USERN(other_proj)->user_count == 1 && USERN(other_proj2)->user_count == 1) {
+            if (
+                shared_edge == shared_edge2 &&
+                n->inputs[0]->user_count == 1 &&
+                USERN(other_proj)->user_count == 1 &&
+                USERN(other_proj2)->user_count == 1
+            ) {
                 TB_ASSERT(cfg_is_region(shared_edge));
                 int shared_i  = USERI(USERN(other_proj)->users);
                 int shared_i2 = USERI(USERN(other_proj2)->users);
@@ -673,14 +681,20 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
                     tb_kill_node(f, pred_branch);
                     set_input(f, n, before, 0);
 
-                    // construct branchless merge
-                    TB_Node* false_node = make_int_node(f, n->inputs[1]->dt, 0);
-
-                    // a ? b : 0
                     TB_Node* selector = tb_alloc_node(f, TB_SELECT, n->inputs[1]->dt, 4, 0);
-                    set_input(f, selector, cmp,          1);
-                    set_input(f, selector, n->inputs[1], 2);
-                    set_input(f, selector, false_node,   3);
+                    TB_Node* false_node = make_int_node(f, n->inputs[1]->dt, 0);
+                    if (index) {
+                        // TB_Node* true_node = make_int_node(f, n->inputs[1]->dt, 1);
+                        // a ? 0 : b
+                        set_input(f, selector, cmp,          1);
+                        set_input(f, selector, false_node,   2);
+                        set_input(f, selector, n->inputs[1], 3);
+                    } else {
+                        // a ? b : 0
+                        set_input(f, selector, cmp,          1);
+                        set_input(f, selector, n->inputs[1], 2);
+                        set_input(f, selector, false_node,   3);
+                    }
 
                     set_input(f, n, selector, 1);
                     mark_node(f, selector);

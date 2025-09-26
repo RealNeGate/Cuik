@@ -758,6 +758,16 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
     return ret_type;
 }
 
+static int find_expr_bound(Cuik_Expr* restrict _, int pos) {
+    assert(pos >= 0);
+    int arity = cuik_get_expr_arity(&_->exprs[pos]);
+    int low = pos;
+    FOR_REV_N(j, 0, arity) {
+        low = find_expr_bound(_, low - 1);
+    }
+    return low;
+}
+
 Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Subexpr* restrict e, int arity, size_t* args) {
     switch (e->op) {
         case EXPR_INT: {
@@ -820,6 +830,14 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             if (src->size == 0) {
                 diag_err(&tu->tokens, e->loc, "cannot get the sizeof an incomplete type");
             }
+
+            // replace inner expression to avoid it being evaluated in later steps
+            int low = find_expr_bound(_, e - _->exprs);
+            FOR_N(i, low, e - _->exprs) {
+                _->exprs[i].op = EXPR_NONE;
+            }
+            e->op = EXPR_SIZEOF_T;
+            e->x_of_type.type = GET_TYPE(0);
 
             return cuik_uncanonical_type(&tu->target->size_type);
         }

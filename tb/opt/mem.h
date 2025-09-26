@@ -493,6 +493,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             MemoryState* pred = start_of_memory_sese(sese2set, old_mem);
             memcpy(latest, pred->latest, (1 + ctx->local_count) * sizeof(TB_Node*));
         }
+        state->sealed = true;
     }
     state->walked_once = true;
 
@@ -1052,7 +1053,7 @@ int tb_opt_locals(TB_Function* f) {
                 process_sese(f, &sese2set, &ctx, state->start, state, &non_aliasing);
                 cuikperf_region_end();
 
-                if (state->loop_head) {
+                if (state->loop_head && !state->loop_head->sealed) {
                     if (state->is_loop) {
                         process_sese(f, &sese2set, &ctx, state->start, state, &non_aliasing);
                     }
@@ -1072,7 +1073,6 @@ int tb_opt_locals(TB_Function* f) {
                         TB_OPTLOG(MEMORY, printf("  MEMORY LOOP: SESE %u is ready\n", state->loop_head->order));
 
                         i = state->loop_head->order + 1;
-                        state->sealed = true;
                     } else {
                         TB_OPTLOG(MEMORY, printf("  MEMORY LOOP: SESE %u is not ready\n", state->loop_head->order));
                     }

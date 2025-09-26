@@ -1411,6 +1411,9 @@ int tb_opt_peeps(TB_Function* f) {
                 DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.killed, n->type));
                 TB_OPTLOG(PEEP, printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
                 TB_OPTLOG(PEEP, printf(" => \x1b[196mKILL\x1b[0m\n"));
+                if (n->type == TB_SYMBOL_TABLE) {
+                    mark_node_n_users(f, n->inputs[0]);
+                }
                 tb_kill_node(f, n);
             } else if (peephole(f, n, true)) {
                 changes += 1;
@@ -1453,7 +1456,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPT_LOG_ENABLED
-    if (strcmp(f->super.name, "stb_write") == 0) {
+    if (1 || strcmp(f->super.name, "pack_table") == 0) {
         f->enable_log = true;
     }
     #endif

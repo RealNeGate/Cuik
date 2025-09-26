@@ -355,10 +355,6 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 return (ValDesc){ RVALUE, .n = tb_builder_uint(g, dt, e->int_lit.lit) };
             }
         }
-        case EXPR_SIZEOF: {
-            Cuik_Type* src = cuik_canonical_type(args[0].type);
-            return (ValDesc){ RVALUE, .n = tb_builder_sint(g, TB_TYPE_I64, src->size) };
-        }
         case EXPR_SIZEOF_T: {
             Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
             return (ValDesc){ RVALUE, .n = tb_builder_sint(g, TB_TYPE_I64, src->size) };
@@ -409,10 +405,9 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 assert(stmt->backing.s != NULL);
                 return (ValDesc){ LVALUE, .n = tb_builder_symbol(g, stmt->backing.s) };
             } else {
-                if (stmt->backing.n == NULL) {
+                /* if (stmt->backing.n == NULL) {
                     stmt->backing.n = tb_builder_label_make2(g, tb_builder_label_get(g), true);
-                }
-
+                } */
                 return (ValDesc){ LVALUE, .mem_var = stmt->decl.local_ordinal, .n = stmt->backing.n };
             }
         }
@@ -1056,6 +1051,7 @@ static ValDesc cg_expr(TranslationUnit* tu, TB_GraphBuilder* g, Cuik_Expr* restr
     Subexpr* exprs = e->exprs;
     for (; i < e->count; i++) {
         Subexpr* s = &exprs[i];
+        if (s->op == EXPR_NONE) { continue; }
 
         // once we know this we can organize the top slice of the stack as the inputs
         int arity = cuik_get_expr_arity(s);

@@ -642,7 +642,6 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
         } else if (indvar = affine_indvar(b, header), indvar) {
             limit = a;
             backwards = true;
-            tb_todo();
         }
 
         if (indvar) {

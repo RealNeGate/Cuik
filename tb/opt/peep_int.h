@@ -1087,7 +1087,7 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
     }
 
     // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))
-    if (src->type == TB_PHI) {
+    if (0 && src->type == TB_PHI) {
         FOR_N(i, 1, src->input_count) {
             if (src->inputs[i]->type != TB_ICONST) return NULL;
         }
