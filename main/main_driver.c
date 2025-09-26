@@ -187,6 +187,7 @@ int main(int argc, const char** argv) {
     }
 
     // spin up worker threads
+    uint64_t build_time = cuik_time_in_nanos();
     TPool pool = { 0 };
 
     #if CUIK_ALLOW_THREADS
@@ -217,6 +218,11 @@ int main(int argc, const char** argv) {
     #if CUIK_ALLOW_THREADS
     tpool_destroy(&pool);
     #endif
+
+    if (args.time_report) {
+        uint64_t elapsed = cuik_time_in_nanos() - build_time;
+        printf("\nBuild: %.3f", elapsed / 1000000.0);
+    }
 
     if (args.time) {
         cuikperf_stop();

@@ -178,12 +178,15 @@ pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_INT_OR_PTR($val->dt)" => (x86_
 pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) $val) where "TB_IS_INT_OR_PTR($val->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
 pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) ($val: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($val->dt) && fits_into_int32($val->dt, $val)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs flags="OP_IMMEDIATE" mode=MODE_ST extra_dt="n->inputs[3]->dt" imm="as_int32($val)")
 
+#define FLAGS_PROJ(cc,  rep) (x86_COND dt=TB_TYPE_I8 (TB_MACH_PROJ dt=TB_TYPE_I64 rep def="ctx->normie_mask[REG_CLASS_FLAGS]" index=0) cond=cc)
+
 #define NORMIE_OP(op_name, mnemonic) \
 (node mnemonic X86MemOp) \
 pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs) \
 pat (op_name dt=$dt ___ $lhs (TB_LOAD $ctrl $mem ($rhs: x86_MEMORY ...))) => (x86_ ## mnemonic dt=$dt $ctrl $mem $rhs $lhs mode=MODE_LD) \
 pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
-pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs)
+pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs) \
+subpat (TB_SHR ___ ($src: x86_ ## mnemonic) ($con: TB_ICONST ...)) where "as_int32($con) == 63" => FLAGS_PROJ(S, $src)
 
 #define NORMIE_OP8(op_name, mnemonic) \
 (node mnemonic X86MemOp) \
@@ -291,7 +294,7 @@ pat (TB_ZERO_EXT dt=$dt ___ ($src: TB_LOAD $ctrl $mem ($addr: x86_MEMORY ...)))
 where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
 => (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD)
 
-#if 1
+#if 0
 (pipeline A57
     (unit ALU0   2) // MAC capable
     (unit ALU1   2) // DIV capable

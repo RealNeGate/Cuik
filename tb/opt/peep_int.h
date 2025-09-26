@@ -15,6 +15,9 @@ static int node_pos(TB_Node* n) {
         case TB_ADD:
         return 2;
 
+        case TB_LOAD:
+        return 3;
+
         default:
         return 4;
 

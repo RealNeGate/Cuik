@@ -43,6 +43,7 @@ end
 print(arg[1])
 local source = run_command("clang -E -xc "..arg[1])
 local lex = lexer(source)
+--    print(source)
 
 local lines = {}
 local reg_classes = {}
@@ -139,10 +140,6 @@ while true do
         t = lex()
         if t == "(" then
             t = parse_node(lex)
-            if is_subpat then
-                subpat_map:put(pattern[1])
-            end
-
             if t[1] == mach_prefix.."MEMORY" or t[1] == mach_prefix.."COND" then
                 operand_map:put(pattern[1], t[1])
             end
@@ -440,10 +437,8 @@ function get_pattern_inner(n, shape)
     end
 
     if shape then
-        if n[1] == "x86_MEMORY" then
-            str = str.."MEM_OP"
-        elseif n[1] == "x86_COND" then
-            str = str.."CC_OP"
+        if n[1]:starts_with(mach_prefix) then
+            str = str.."MACH_OP"
         else
             str = str.."ANY_OP"
         end
@@ -895,7 +890,7 @@ if true then
         local set = partitions[name]
         -- if id ~= 12 then goto skip2 end
 
-        add_line(0, string.format("static TB_Node* mach_dfa_accept_%d(Ctx* ctx, TB_Function* f, TB_Node* n) {", id))
+        add_line(0, string.format("static TB_Node* mach_dfa_accept_%d(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {", id))
 
         -- All the captures are the same across the sets
         mem_capture = nil
@@ -932,6 +927,9 @@ if true then
                 local rep_shape = rule[4]
                 if type(rep_shape) ~= "string" then
                     rep_shape = get_pattern_shape(rep_shape)
+                end
+                if rule[3] then
+                    rep_shape = rep_shape.."_SUB"
                 end
                 add_if_new(strs, rep_shape)
             end
@@ -982,6 +980,11 @@ if true then
             add_line(2, "{")
             for where,list in packs:iter() do
                 add_line(3, "do {")
+
+                local is_subpat = set[list[1]][3]
+                if is_subpat then
+                    add_line(4, string.format("if (depth == 0) { break; }"))
+                end
 
                 mem_capture = nil
                 find_captures(set[list[1]][1], "n", false, 4)
@@ -1095,8 +1098,10 @@ end
 
 function match_prio(type)
     if type == "ANY" then
-        return 2
+        return 3
     elseif type == mach_prefix.."MEMORY" or type == mach_prefix.."COND" then
+        return 2
+    elseif type:starts_with(mach_prefix) then
         return 1
     else
         return 0
@@ -1183,20 +1188,25 @@ function gen_c_inner(depth, stack, can_bail, operands)
             for str,v in cases:iter() do
                 local cond = get_pattern_at(v[1], pos)
                 if cond ~= "ANY" then
+                    local is_first_mach = get_pattern_at(v[1], pos):starts_with(mach_prefix)
+                    for i=2,#v do
+                        local is_mach = get_pattern_at(v[i], pos):starts_with(mach_prefix)
+                        assert(is_first_mach == is_mach)
+                    end
+
+                    local old_name = nil
+                    if is_first_mach then
+                        old_name = "n__"..var_counter
+                        var_counter = var_counter + 1
+                    end
+
                     local preds = {}
                     local has = {}
-                    local can_match_operand = false
                     local log_expr = {}
                     for i=1,#v do
                         local cond = get_pattern_at(v[i], pos)
                         has[cond] = true
-
-                        if cond == mach_prefix.."MEMORY" or cond == mach_prefix.."COND" then
-                            add_if_new(preds, string.format("TRY_OPERAND(%s, %s, depth+%d)", new_name, cond, stack[4]))
-                            can_match_operand = true
-                        else
-                            add_if_new(preds, string.format("%s->type == %s", new_name, cond))
-                        end
+                        add_if_new(preds, string.format("%s->type == %s", new_name, cond))
                         add_if_new(log_expr, cond)
                     end
                     local expr = table.concat(preds, " || ")
@@ -1215,35 +1225,34 @@ function gen_c_inner(depth, stack, can_bail, operands)
                         end
                     end
 
-                    local next_stack = { stack, new_name, 0, stack[4]+1, then_active }
+                    local next_stack   = { stack, new_name, 0, stack[4]+1, then_active }
                     local new_operands = operands
 
-                    add_line(depth, string.format("DFA_LOG2(depth+1, \"TRY '%s'\");", table.concat(log_expr, " || ")))
-                    if can_match_operand then
-                        add_line(depth, string.format("do { if (k = NULL, %s) {", expr))
+                    add_line(depth, string.format("DFA_LOG2(depth+%d, \"TRY '%s'\");", stack[4]+1, table.concat(log_expr, ",")))
+                    if is_first_mach then
+                        add_line(depth, string.format("TB_Node* %s = %s;", old_name, new_name))
+                        add_line(depth, string.format("%s = node_isel_try_operand(ctx, f, %s, depth+%d, depth == 0);", new_name, old_name, stack[4]))
+                        add_line(depth, string.format("do { if (%s) {", expr))
+                        add_line(depth+1, string.format("DFA_LOG(depth+%d, %s, \"Accept\");", stack[4]+1, new_name))
 
-                        local new_name_2 = "n__"..var_counter
-                        var_counter = var_counter + 1
-
-                        next_stack[2] = new_name_2
-                        add_line(depth+1, string.format("TB_Node* %s = k ? k : %s;", new_name_2, new_name))
-
+                        next_stack[2] = new_name
                         new_operands = {}
                         for i=1,#operands do
                             new_operands[i] = operands[i]
                         end
 
                         -- this will be assigned once we reach the accept state
-                        new_operands[#new_operands + 1] = {
-                            string.format("set_input(f, %s, %s, %d);", stack[2], new_name_2, stack[3] - 1),
-                            string.format("set_input(f, %s, %s, %d);", stack[2], new_name, stack[3] - 1)
-                        }
+                        --new_operands[#new_operands + 1] = {
+                        --    string.format("set_input(f, %s, %s, %d);", stack[2], new_name_2, stack[3] - 1),
+                        --    string.format("set_input(f, %s, %s, %d);", stack[2], new_name, stack[3] - 1)
+                        --}
+                        gen_c_inner(depth+1, next_stack, true, new_operands)
+                        add_line(depth, string.format("} else { DFA_LOG(depth+%d, %s, \"Reject\"); } } while (0);", stack[4]+1, new_name))
                     else
                         add_line(depth, string.format("do { if (%s) {", expr))
+                        gen_c_inner(depth+1, next_stack, true, new_operands)
+                        add_line(depth, "} } while (0);")
                     end
-                    gen_c_inner(depth+1, next_stack, true, new_operands)
-
-                    add_line(depth, "} } while (0);")
                     lines[#lines + 1] = ""
                 end
             end
@@ -1417,12 +1426,9 @@ if true then
     lines[#lines + 1] = "#define DFA_LOG2(depth, fmt, ...)"
     lines[#lines + 1] = "#endif"
     lines[#lines + 1] = ""
-    lines[#lines + 1] = "#define ACCEPT(x) mach_dfa_accept_ ## x(ctx, f, n)"
-    lines[#lines + 1] = "#define TRY_OPERAND(in, expected, indent_depth) (k = node_isel_try_operand(ctx, f, in, indent_depth, expected, depth == 0), k)"
-    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, int expected, bool at_base);"
+    lines[#lines + 1] = "#define ACCEPT(x) mach_dfa_accept_ ## x(ctx, f, n, depth)"
+    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, bool at_base);"
     lines[#lines + 1] = "static TB_Node* node_isel_raw(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {"
-    lines[#lines + 1] = "    if (depth == 0 && mach_is_subpat(n->type)) { return NULL; }"
-    lines[#lines + 1] = ""
     lines[#lines + 1] = "    TB_Node* k;"
 
     local all = {}
@@ -1436,30 +1442,18 @@ if true then
     lines[#lines + 1] = "    return NULL;"
     lines[#lines + 1] = "}"
     lines[#lines + 1] = ""
-    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, int expected, bool at_base) {"
-    lines[#lines + 1] = "    if (n->type == expected) {"
-    lines[#lines + 1] = "        return n;"
-    lines[#lines + 1] = "    }"
-    lines[#lines + 1] = ""
-    lines[#lines + 1] = "    if (!at_base || mach_is_operand(n->type) != expected) {"
-    lines[#lines + 1] = "        return NULL;"
-    lines[#lines + 1] = "    }"
-    lines[#lines + 1] = ""
-    lines[#lines + 1] = "    TB_Node* k = node_isel_raw(ctx, f, n, depth);"
-    lines[#lines + 1] = "    if (k) {"
-    lines[#lines + 1] = "        if (k->type == expected) {"
-    lines[#lines + 1] = "            DFA_LOG(depth+1, k, \"Accept\");"
+    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, bool at_base) {"
+    lines[#lines + 1] = "    if (true) {"
+    lines[#lines + 1] = "        TB_Node* k = node_isel_raw(ctx, f, n, depth);"
+    lines[#lines + 1] = "        if (k) {"
+    lines[#lines + 1] = "            subsume_node2(f, n, k);"
+    lines[#lines + 1] = "            worklist_push(f->worklist, k);"
     lines[#lines + 1] = "            return k;"
-    lines[#lines + 1] = "        } else if (k->user_count == 0) {"
-    lines[#lines + 1] = "            tb_violent_kill(f, k);"
     lines[#lines + 1] = "        }"
-    lines[#lines + 1] = "        worklist_push(f->worklist, k);"
     lines[#lines + 1] = "    }"
-    lines[#lines + 1] = "    DFA_LOG2(depth+1, \"Reject\");"
-    lines[#lines + 1] = "    return NULL;"
+    lines[#lines + 1] = "    return n;"
     lines[#lines + 1] = "}"
     lines[#lines + 1] = "#undef ACCEPT"
-    lines[#lines + 1] = "#undef TRY_OPERAND"
     lines[#lines + 1] = ""
 end
 

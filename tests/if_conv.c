@@ -1,5 +1,5 @@
 
-int foo(int* x) {
+/*int foo(int* x) {
     return *x > 4 && *x < 10;
 }
 
@@ -19,5 +19,28 @@ int bar3(const char* regex) {
     }
 
     return 0;
+}*/
+
+#include <stdint.h>
+
+typedef struct {
+    uint64_t raw;
+} Ref;
+
+typedef struct {
+    int tag;
+    int x, y;
+} Obj;
+
+static uint64_t global_nmt;
+
+void mark(uint64_t r);
+void obj_set_x(Ref r) {
+    // load barrier
+    uint64_t x = r.raw ^ global_nmt;
+    if ((x >> 63ull) & 1) {
+        mark(x);
+    }
+    ((Obj*) x)->x = 16;
 }
 
