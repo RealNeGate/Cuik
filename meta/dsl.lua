@@ -58,6 +58,11 @@ local all_patterns = {}
 local subpat_map = OrderedSet()
 local operand_map = OrderedSet()
 
+local node_groups = Partitions()
+local node2group = {}
+
+local rules_in_groups = {}
+
 function skip_ws(j, def)
     while j < #def and def:byte(j) == 32 do
         j = j + 1
@@ -164,6 +169,12 @@ while true do
                 lines[#lines + 1] = "    "..n[2].."_NONE = -1,"
                 lines[#lines + 1] = "} "..n[2]..";"
                 lines[#lines + 1] = ""
+            end
+        elseif n[1] == "op_group" then
+            local name = n[2]
+            for i=3,#n do
+                node_groups:put(name, n[i])
+                node2group[n[i]] = name
             end
         elseif n[1] == "node" then
             -- define node types
@@ -437,8 +448,8 @@ function get_pattern_inner(n, shape)
     end
 
     if shape then
-        if n[1]:starts_with(mach_prefix) then
-            str = str.."MACH_OP"
+        if node2group[n[1]] then
+            str = str..node2group[n[1]]
         else
             str = str.."ANY_OP"
         end
@@ -643,6 +654,10 @@ node_extra_desc = {
 }
 
 function extra_node_type_name(t)
+    if node_groups.entries[t] then
+        t = node_groups.entries[t][1]
+    end
+
     local extra_type = ""
     if  t == "TB_CMP_ULE" or
         t == "TB_CMP_ULT" or
@@ -677,6 +692,7 @@ function extra_node_type_name(t)
         extra_type = node_types[t].extra
         assert(extra_type)
     end
+
     return extra_type
 end
 
@@ -755,7 +771,7 @@ function write_node(ids, set, hashes)
         end
     end
 
-    local depth = 4
+    local depth = 1
     if not node_type then
         node_type = "k"..ids[n].."_type"
         add_line(depth, string.format("int %s = 0;", node_type))
@@ -832,32 +848,34 @@ node_basic_fields = {
   ["dt"] = true,
 }
 
-function find_captures(n, expr, shared, depth)
-    if n.name then
-        if n[1] == "x86_MEMORY" then
-            if mem_capture then
-                print("Can't capture 2 memory operands in one pattern?!?")
-                os.exit(1)
-            end
+local rule_lines = {}
+local accept_count = 0
 
+function add_rline(line)
+    rule_lines[#rule_lines + 1] = line
+end
+
+function find_captures(lines, n, expr, shared, indent)
+    if n.name then
+        if n[1] == "MEMORY" then
             mem_capture = n
         end
 
         if shared then
-            add_line(depth, string.format("TB_Node* %s = %s;", n.name, expr))
+            lines[#lines + 1] = string.format("%sTB_Node* %s = %s;", indent, n.name, expr)
         end
     end
 
     for i=2,#n do
         local v = n[i]
         if type(v) == "table" then
-            find_captures(v, expr.."->inputs["..(i-2).."]", shared, depth)
+            find_captures(lines, v, expr.."->inputs["..(i-2).."]", shared, indent)
         elseif shared then
             if v == "$REST" then
-                add_line(depth, string.format("size_t %s_LEN = %s->input_count - %d;", v, expr, i-2))
-                add_line(depth, string.format("TB_Node** %s  = &%s->inputs[%d];", v, expr, i-2))
+                lines[#lines + 1] = string.format("%ssize_t %s_LEN = %s->input_count - %d;", indent, v, expr, i-2)
+                lines[#lines + 1] = string.format("%sTB_Node** %s  = &%s->inputs[%d];", indent, v, expr, i-2)
             elseif type(v) == "string" and v:byte(1) == string.byte("$") then
-                add_line(depth, string.format("TB_Node* %s = %s->inputs[%d];", v, expr, i-2))
+                lines[#lines + 1] = string.format("%sTB_Node* %s = %s->inputs[%d];", indent, v, expr, i-2)
             end
         end
     end
@@ -867,7 +885,7 @@ function find_captures(n, expr, shared, depth)
         for k,v in pairs(n) do
             if type(k) == "string" and type(v) == "string" and k ~= "name" and v ~= "$REST" then
                 if node_basic_fields[k] then
-                    add_line(depth, string.format("TB_DataType %s = %s->%s;", v, expr, k))
+                    lines[#lines + 1] = string.format("%sTB_DataType %s = %s->%s;", indent, v, expr, k)
                 else
                     local t = node_extra_desc[extra_type]
                     if t then
@@ -876,7 +894,7 @@ function find_captures(n, expr, shared, depth)
                         t = "uint64_t"
                     end
 
-                    add_line(depth, string.format("%s %s = TB_NODE_GET_EXTRA_T(%s, %s)->%s;", t, v, expr, extra_type, k))
+                    lines[#lines + 1] = string.format("%s%s %s = TB_NODE_GET_EXTRA_T(%s, %s)->%s;", indent, t, v, expr, extra_type, k)
                 end
             end
         end
@@ -890,11 +908,10 @@ if true then
         local set = partitions[name]
         -- if id ~= 12 then goto skip2 end
 
-        add_line(0, string.format("static TB_Node* mach_dfa_accept_%d(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {", id))
+        add_rline(string.format("static MatchRuleID mach_dfa_rule_%d(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {", id))
 
         -- All the captures are the same across the sets
-        mem_capture = nil
-        find_captures(set[1][1], "n", true, 1)
+        find_captures(rule_lines, set[1][1], "n", true, "    ")
         lines[#lines+1] = ""
 
         local hashes = {}
@@ -906,11 +923,16 @@ if true then
 
         -- Compute hashes based on information which differs between the
         -- nodes.
-        lines[#lines + 1] = "    uint64_t hash = 0;"
-        compute_pattern_hash(lines, "n", pat, hashes)
-        lines[#lines + 1] = ""
-        lines[#lines + 1] = "    // "..inspect(hashes)
-        lines[#lines + 1] = "    switch (hash) {"
+        add_rline("    uint64_t hash = 0;")
+        local hash_start = #rule_lines
+        compute_pattern_hash(rule_lines, "n", pat, hashes)
+        local hash_end = #rule_lines
+        rule_lines[#rule_lines + 1] = ""
+
+        add_rline("    // "..inspect(hashes))
+        if #hashes > 1 then
+            add_rline("    switch (hash) {")
+        end
 
         -- group based on matching hash, these must be placed together
         local hash_groups = Partitions()
@@ -940,9 +962,12 @@ if true then
             end
         end
 
+        if #hashes > 1 then
+            add_rline("        default:")
+            add_rline("        return 0;")
+        end
         for shape,inner in cases:iter() do
             local keys = OrderedSet()
-            add_line(2, string.format("// %s", shape))
             for j=1,#inner do
                 local rule = set[inner[j]]
 
@@ -956,8 +981,16 @@ if true then
                 keys:put(hash)
             end
 
-            for k in keys:iter() do
-                add_line(2, string.format("case %d:", k))
+            local indent = "    "
+            if #hashes > 1 then
+                indent = "            "
+
+                local cases = {}
+                for k in keys:iter() do
+                    cases[#cases + 1] = string.format("case %d: ", k)
+                end
+                add_rline(string.format("        // %s", shape))
+                add_rline(string.format("        %s{", table.concat(cases)))
             end
 
             local packs = Partitions()
@@ -970,29 +1003,44 @@ if true then
                 end
             end
 
+            local has_default = false
             for j=1,#inner do
                 local rule = set[inner[j]]
                 if not rule[2] then
                     packs:put("true", inner[j])
+
+                    local is_subpat = set[inner[j]][3]
+                    if not is_subpat then has_default = true end
                 end
             end
 
-            add_line(2, "{")
             for where,list in packs:iter() do
-                add_line(3, "do {")
-
                 local is_subpat = set[list[1]][3]
                 if is_subpat then
-                    add_line(4, string.format("if (depth == 0) { break; }"))
+                    if where == "true" then
+                        where = "depth == 0"
+                    else
+                        where = "depth == 0 && "..where
+                    end
                 end
 
-                mem_capture = nil
-                find_captures(set[list[1]][1], "n", false, 4)
+                accept_count = accept_count + 1
+                local accept_id = accept_count
 
-                if where ~= "true" then
-                    add_line(4, string.format("if (!(%s)) { break; }", where))
-                    lines[#lines + 1] = ""
+                local rep = set[list[1]][4]
+                if type(rep) == "table" and node2group[rep[1]] then
+                    rules_in_groups[#rules_in_groups + 1] = { accept_id, node2group[rep[1]] }
                 end
+
+                add_rline(string.format("%s{", indent))
+                find_captures(rule_lines, set[list[1]][1], "n", false, indent.."    ")
+
+                if where == "true" then
+                    add_rline(string.format("%s    return %d;", indent, accept_id))
+                else
+                    add_rline(string.format("%s    if (%s) { return %d; }", indent, where, accept_id))
+                end
+                add_rline(string.format("%s}", indent))
 
                 local pat = {}
                 local rep = {}
@@ -1003,28 +1051,47 @@ if true then
                     local_hashes[j] = hashes[i]
                 end
 
+                add_line(0, string.format("static TB_Node* mach_dfa_accept_%d(Ctx* ctx, TB_Function* f, TB_Node* n) {", accept_id))
+
+                for j=hash_start,hash_end do
+                    add_line(0, rule_lines[j])
+                end
+                add_line(0, "")
+                find_captures(lines, set[list[1]][1], "n", true, "    ")
+                find_captures(lines, set[list[1]][1], "n", false, "    ")
+                add_line(0, "")
+
                 if type(rep[1]) == "string" then
-                    add_line(4, "return "..rep[1]..";")
+                    add_line(1, "return "..rep[1]..";")
                 else
                     -- Every replacement has the same shape, just different opcodes
                     local ids = {}
                     node_cnt = 0
                     write_node(ids, rep, local_hashes)
 
-                    add_line(4, "return k"..ids[rep[1]]..";")
+                    add_line(1, "return k"..ids[rep[1]]..";")
                 end
-                add_line(3, "} while (0);")
+                add_line(0, "}")
             end
-            add_line(3, "return NULL;")
-            add_line(2, "}")
-            lines[#lines + 1] = ""
-        end
-        lines[#lines + 1] = "    }"
-        add_line(1, "return NULL;")
-        add_line(0, "}")
-        lines[#lines+1] = ""
 
+            if not has_default then
+                add_rline(indent.."return 0;")
+            end
+
+            if #hashes > 1 then
+                add_rline("        }")
+            end
+        end
+        if #hashes > 1 then
+            add_rline("    }")
+        end
+        add_rline("}")
+        add_rline("")
         ::skip2::
+    end
+
+    for i=1,#rule_lines do
+        lines[#lines + 1] = rule_lines[i]
     end
 end
 
@@ -1079,13 +1146,10 @@ function get_pattern_at(pat, i)
     return canonicalize_type(pat[i])
 end
 
-label_count = 0
-needs_bail = {}
-
 function get_active_limit(active)
     local limit = 0
     for i=1,#active do
-        local len = #active[i] - 1
+        local len  = #active[i] - 1
         local last = active[i][#active[i]]
 
         if last == "..." or last == "$REST" then
@@ -1098,10 +1162,8 @@ end
 
 function match_prio(type)
     if type == "ANY" then
-        return 3
-    elseif type == mach_prefix.."MEMORY" or type == mach_prefix.."COND" then
         return 2
-    elseif type:starts_with(mach_prefix) then
+    elseif node_groups.entries[type] then
         return 1
     else
         return 0
@@ -1167,8 +1229,10 @@ function gen_c_inner(depth, stack, can_bail, operands)
             add_line(depth, string.format("DFA_LOG(depth+%d, %s, \"Step\");", stack[4], in_str))
             add_line(depth, string.format("if (%s != NULL) { break; }", in_str))
         elseif case_count == 1 and bail_out then
-            add_line(depth, string.format("DFA_LOG(depth+%d, %s, \"Step\");", stack[4], in_str))
-            add_line(depth, "// MATCH ANY "..in_str)
+            if stack[3]-1 < limit then
+                add_line(depth, string.format("DFA_LOG(depth+%d, %s, \"Step\");", stack[4], in_str))
+                add_line(depth, "// MATCH ANY "..in_str)
+            end
         elseif case_count == 0 then
             add_line(depth, "break;")
             return active
@@ -1188,28 +1252,38 @@ function gen_c_inner(depth, stack, can_bail, operands)
             for str,v in cases:iter() do
                 local cond = get_pattern_at(v[1], pos)
                 if cond ~= "ANY" then
-                    local is_first_mach = get_pattern_at(v[1], pos):starts_with(mach_prefix)
-                    for i=2,#v do
-                        local is_mach = get_pattern_at(v[i], pos):starts_with(mach_prefix)
-                        assert(is_first_mach == is_mach)
+                    local match_op_group = get_pattern_at(v[1], pos)
+                    if not node_groups.entries[match_op_group] then
+                        match_op_group = nil
                     end
 
                     local old_name = nil
-                    if is_first_mach then
-                        old_name = "n__"..var_counter
-                        var_counter = var_counter + 1
-                    end
-
-                    local preds = {}
                     local has = {}
                     local log_expr = {}
-                    for i=1,#v do
-                        local cond = get_pattern_at(v[i], pos)
-                        has[cond] = true
-                        add_if_new(preds, string.format("%s->type == %s", new_name, cond))
-                        add_if_new(log_expr, cond)
+                    local expr = ""
+                    if match_op_group then
+                        old_name = "n__"..var_counter
+                        var_counter = var_counter + 1
+
+                        expr = string.format("node_isel_op_group(%s_final) == RULE_%s", new_name, match_op_group)
+                        add_if_new(log_expr, match_op_group)
+
+                        for i=1,#v do
+                            local cond = get_pattern_at(v[i], pos)
+                            if match_op_group == cond or match_op_group == node_groups.entries[cond] then
+                                has[cond] = true
+                            end
+                        end
+                    else
+                        local preds = {}
+                        for i=1,#v do
+                            local cond = get_pattern_at(v[i], pos)
+                            has[cond] = true
+                            add_if_new(preds, string.format("%s->type == %s", new_name, cond))
+                            add_if_new(log_expr, cond)
+                        end
+                        expr = new_name.." && "..table.concat(preds, " || ")
                     end
-                    local expr = table.concat(preds, " || ")
 
                     -- compute our active set and while we're doing that, prune the
                     -- active set from the final ANY case. the only way to reach the
@@ -1229,11 +1303,12 @@ function gen_c_inner(depth, stack, can_bail, operands)
                     local new_operands = operands
 
                     add_line(depth, string.format("DFA_LOG2(depth+%d, \"TRY '%s'\");", stack[4]+1, table.concat(log_expr, ",")))
-                    if is_first_mach then
-                        add_line(depth, string.format("TB_Node* %s = %s;", old_name, new_name))
-                        add_line(depth, string.format("%s = node_isel_try_operand(ctx, f, %s, depth+%d, depth == 0);", new_name, old_name, stack[4]))
+                    if match_op_group then
+                        add_line(depth, string.format("int %s_mark = ctx->dsl.top;", new_name))
+                        add_line(depth, string.format("int %s_final = !set_get(shared, %s->gvn) ? node_isel_raw(ctx, f, shared, %s, depth+%d) : 0;", new_name, new_name, new_name, stack[4]))
                         add_line(depth, string.format("do { if (%s) {", expr))
-                        add_line(depth+1, string.format("DFA_LOG(depth+%d, %s, \"Accept\");", stack[4]+1, new_name))
+                        add_line(depth+1, string.format("DFA_LOG(depth+%d, %s, \"Accept as %s\");", stack[4]+1, new_name, match_op_group))
+                        add_line(depth+1, string.format("ctx->dsl.accept[ctx->dsl.top++] = (TB_SubMatch){ %s_final, %s, %d };", new_name, stack[2], stack[3]-1))
 
                         next_stack[2] = new_name
                         new_operands = {}
@@ -1248,6 +1323,7 @@ function gen_c_inner(depth, stack, can_bail, operands)
                         --}
                         gen_c_inner(depth+1, next_stack, true, new_operands)
                         add_line(depth, string.format("} else { DFA_LOG(depth+%d, %s, \"Reject\"); } } while (0);", stack[4]+1, new_name))
+                        add_line(depth, string.format("ctx->dsl.top = %s_mark;", new_name))
                     else
                         add_line(depth, string.format("do { if (%s) {", expr))
                         gen_c_inner(depth+1, next_stack, true, new_operands)
@@ -1331,18 +1407,18 @@ function gen_c_inner(depth, stack, can_bail, operands)
         add_line(depth, operands[i][1])
     end
 
-    local expr = "NULL"
+    local expr = "0"
     if var_final and var_final ~= "JOVER" then
-        expr = "ACCEPT("..var_final..")"
+        expr = "RULE("..var_final..")"
     end
 
     if non_var_final and non_var_final ~= "JOVER" then
-        expr = string.format("(%s->input_count == %d ? ACCEPT(%d) : %s)", stack[2], limit, non_var_final, expr)
+        expr = string.format("(%s->input_count == %d ? RULE(%d) : %s)", stack[2], limit, non_var_final, expr)
     end
 
     if not can_bail then
         add_line(depth, string.format("return %s;", expr))
-    elseif expr ~= "NULL" then
+    elseif expr ~= "0" then
         add_line(depth, string.format("k = %s;", expr))
         add_line(depth, "if (k) { return k; }")
         if #operands > 0 then
@@ -1414,6 +1490,13 @@ if true then
     lines[#lines + 1] = "    }"
     lines[#lines + 1] = "}"
     lines[#lines + 1] = ""
+    lines[#lines + 1] = "enum {"
+    lines[#lines + 1] = "    RULE_NONE,"
+    for k,v in node_groups:iter() do
+        lines[#lines + 1] = "    RULE_"..k..","
+    end
+    lines[#lines + 1] = "};"
+    lines[#lines + 1] = ""
     lines[#lines + 1] = "static void mach_indent(int depth) {"
     lines[#lines + 1] = "    while (depth--) { printf(\"  \"); }"
     lines[#lines + 1] = "}"
@@ -1426,10 +1509,18 @@ if true then
     lines[#lines + 1] = "#define DFA_LOG2(depth, fmt, ...)"
     lines[#lines + 1] = "#endif"
     lines[#lines + 1] = ""
-    lines[#lines + 1] = "#define ACCEPT(x) mach_dfa_accept_ ## x(ctx, f, n, depth)"
-    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, bool at_base);"
-    lines[#lines + 1] = "static TB_Node* node_isel_raw(Ctx* ctx, TB_Function* f, TB_Node* n, int depth) {"
-    lines[#lines + 1] = "    TB_Node* k;"
+    lines[#lines + 1] = "static int node_isel_op_group(MatchRuleID id) {"
+    lines[#lines + 1] = "    switch (id) {"
+    for i=1,#rules_in_groups do
+        lines[#lines + 1] = string.format("        case %d: return RULE_%s; ", rules_in_groups[i][1], rules_in_groups[i][2])
+    end
+    lines[#lines + 1] = "        default: return RULE_NONE;"
+    lines[#lines + 1] = "    }"
+    lines[#lines + 1] = "}"
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "#define RULE(x) mach_dfa_rule_ ## x(ctx, f, n, depth)"
+    lines[#lines + 1] = "static MatchRuleID node_isel_raw(Ctx* ctx, TB_Function* f, Set* shared, TB_Node* n, int depth) {"
+    lines[#lines + 1] = "    MatchRuleID k;"
 
     local all = {}
     for i=1,#all_patterns do
@@ -1439,20 +1530,15 @@ if true then
     local stack = { nil, "n", nil, 0, all }
     gen_c(all, 1, stack, 1)
 
-    lines[#lines + 1] = "    return NULL;"
+    lines[#lines + 1] = "    return 0;"
     lines[#lines + 1] = "}"
     lines[#lines + 1] = ""
-    lines[#lines + 1] = "static TB_Node* node_isel_try_operand(Ctx* ctx, TB_Function* f, TB_Node* n, int depth, bool at_base) {"
-    lines[#lines + 1] = "    if (true) {"
-    lines[#lines + 1] = "        TB_Node* k = node_isel_raw(ctx, f, n, depth);"
-    lines[#lines + 1] = "        if (k) {"
-    lines[#lines + 1] = "            subsume_node2(f, n, k);"
-    lines[#lines + 1] = "            worklist_push(f->worklist, k);"
-    lines[#lines + 1] = "            return k;"
-    lines[#lines + 1] = "        }"
-    lines[#lines + 1] = "    }"
-    lines[#lines + 1] = "    return n;"
-    lines[#lines + 1] = "}"
+    lines[#lines + 1] = "static MatchRule match_rules[] = {"
+    lines[#lines + 1] = "    NULL,"
+    for i=1,accept_count do
+        lines[#lines + 1] = string.format("    mach_dfa_accept_%d,", i)
+    end
+    lines[#lines + 1] = "};"
     lines[#lines + 1] = "#undef ACCEPT"
     lines[#lines + 1] = ""
 end
@@ -1465,3 +1551,4 @@ if true then
     f:write(final_src)
     f:close()
 end
+

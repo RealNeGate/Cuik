@@ -275,6 +275,100 @@ function compile(src, optimize, decl_mappings)
     return result
 end
 
+function LineBuffer()
+    local t = { type="LineBuffer", indent=0, indent_str="", lines={} }
+
+    function t:indent()
+        self.indent = self.indent + 1
+        self.indent_str = string.rep("    ", self.indent)
+    end
+
+    function t:undent()
+        self.indent = self.indent - 1
+        self.indent_str = string.rep("    ", self.indent)
+    end
+
+    function t:empty()
+        self.lines[#self.lines + 1] = ""
+    end
+
+    function t:puts(str)
+        self.lines[#self.lines + 1] = self.indent_str..str
+    end
+
+    function t:putf(fmt, ...)
+        self.lines[#self.lines + 1] = self.indent_str..string.format(fmt, ...)
+    end
+
+    function t:to_str()
+        return table.concat(self.lines, "\n")
+    end
+    return t
+end
+
+C_ELEM_TYPES = {
+    ["i8"]  = "int8_t",
+    ["i16"] = "int16_t",
+    ["i32"] = "int32_t",
+    ["i64"] = "int64_t",
+    ["f32"] = "float",
+    ["f64"] = "double",
+}
+
+-- description of matrix multiply op
+function Op_Matmul(dt, N)
+    local t = { dt=dt, N=N, block_size=4 }
+
+    -- unique string for the matmul's properties
+    function t:key()
+        return string.format("NNN_matmul_%d_%d", self.N, self.block_size)
+    end
+
+    -- generate bare function
+    function t:compile(L)
+        assert(L.type == "LineBuffer")
+
+        local key = self:key()
+        local c_elem = C_ELEM_TYPES[self.dt]
+
+        L:putf("void %s(Dope* dst, Dope* a, Dope* b) {", key)
+        L:indent()
+        do
+            L:putf("%s* a_arr = (%s*) a->data;", c_elem, c_elem)
+            L:putf("%s* b_arr = (%s*) b->data;", c_elem, c_elem)
+            L:putf("%s* restrict dst_arr = (%s*) dst->data;", c_elem, c_elem)
+            L:empty()
+
+            L:indent()
+            L:undent()
+
+            L:puts("}")
+        end
+        L:undent()
+        L:puts("}")
+    end
+
+    return t
+end
+
+local L = LineBuffer()
+
+-- Introduce prelude
+L:puts("#include <stdint.h>")
+L:empty()
+L:puts("typedef struct Dope {")
+L:puts("    int offset;")
+L:puts("    int limit;")
+L:puts("    char* data;")
+L:puts("} Dope;")
+L:empty()
+
+local mmm = Op_Matmul("f32", 300)
+mmm:compile(L)
+
+print(L:to_str())
+os.exit()
+
 function matmul_blocked(N)
     local src = buffer.new(1000)
     src:put("#include <stddef.h>\n")

@@ -13,6 +13,7 @@
 //
 #include "passes.h"
 #include <log.h>
+#include <math.h>
 
 #include "../sandbird/sandbird.h"
 
@@ -192,7 +193,7 @@ static void mark_users(TB_Function* f, TB_Node* n) {
 
         // tuples changing means their projections did too.
         if (type == TB_PROJ || type == TB_PTR_OFFSET) {
-            mark_users(f, USERN(u));
+            mark_users_raw(f, USERN(u));
         }
 
         // (br (cmp a b)) => ...

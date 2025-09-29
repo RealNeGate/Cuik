@@ -185,7 +185,7 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
-    if (0 && strcmp(name, "matmul") != 0) {
+    if (0 && strcmp(name, "pcg32_pie") != 0) {
         return;
     }
 
@@ -428,6 +428,11 @@ static void ld_invoke(TPool* tp, void** arg) {
     // generate object file
     ////////////////////////////////
     if (args->based && args->flavor != TB_FLAVOR_OBJECT) {
+        #ifndef CONFIG_HAS_LINKER
+        fprintf(stderr, "unsupported platform to link with... sorry (contact NeGate)\n");
+        tb_module_destroy(mod);
+        goto done;
+        #else
         TB_ExecutableType exe;
         switch (sys) {
             case CUIK_SYSTEM_WINDOWS: exe = TB_EXECUTABLE_PE;  break;
@@ -468,6 +473,7 @@ static void ld_invoke(TPool* tp, void** arg) {
 
         step_error(s);
         tb_module_destroy(mod);
+        #endif
     } else {
         Cuik_Path obj_path;
         if (args->output_name == NULL) {

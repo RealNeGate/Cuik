@@ -37,10 +37,10 @@ static uint64_t global_nmt;
 void mark(uint64_t r);
 void obj_set_x(Ref r) {
     // load barrier
-    uint64_t x = r.raw ^ global_nmt;
-    if ((x >> 63ull) & 1) {
-        mark(x);
+    uint64_t addr = r.raw ^ global_nmt;
+    if ((addr >> 63ull) & 1) {
+        mark(addr);
     }
-    ((Obj*) x)->x = 16;
+    ((Obj*) addr)->x = 16;
 }
 

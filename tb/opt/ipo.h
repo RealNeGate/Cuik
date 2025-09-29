@@ -336,7 +336,7 @@ void tb_dump_stats(void) {
             int frac_p = fmodf(percent * 10.0, 10.0);
             int int_p  = floorf(percent);
 
-            printf("  %.4f (%3d.%1d%%)   %s\n", tb_stats[i] / 1000000.0, int_p, frac_p, stats_get_name(i));
+            printf("  %10.4f (%3d.%1d%%)   %s\n", tb_stats[i] / 1000000.0, int_p, frac_p, stats_get_name(i));
         }
         printf("\n");
     }

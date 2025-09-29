@@ -102,7 +102,7 @@ void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, OutStream* s) {
         s_writef(s, "%.10f ", f->value);
     } else if (n->type >= 0x100) {
         int family = n->type / 0x100;
-        assert(family >= 1 && family < TB_ARCH_MAX);
+        TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
         tb_codegen_families[family].print_extra(s, n);
         s_writef(s, " ");
     }

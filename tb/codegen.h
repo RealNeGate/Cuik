@@ -161,6 +161,16 @@ typedef struct {
     uint8_t rets[8][2];
 } CallingConv;
 
+// Relevant to the DSL
+typedef int MatchRuleID;
+typedef TB_Node* (*MatchRule)(Ctx* ctx, TB_Function* f, TB_Node* n);
+
+typedef struct {
+    MatchRuleID id;
+    TB_Node* n;
+    int index;
+} TB_SubMatch;
+
 struct Ctx {
     TB_CGEmitter emit;
     TB_FeatureSet features;
@@ -190,6 +200,11 @@ struct Ctx {
     uint8_t prologue_length;
     uint8_t epilogue_length;
     uint8_t nop_pads;
+
+    struct {
+        int top;
+        TB_SubMatch accept[16];
+    } dsl;
 
     // Basic blocks
     int bb_count;

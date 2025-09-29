@@ -627,7 +627,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     #endif
 
     size_t len = 0;
-    dyn_array_for(i, schedule) {
+    FOR_N(i, 0, dyn_array_length(schedule)) {
         VectorOp* op = schedule[i];
         TB_Node* first = op->ops[0];
 
@@ -673,17 +673,6 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
                     bad = true;
                 }
             }
-
-            // all uses must also point to a pack... for now
-            FOR_N(i, 0, op->width) {
-                FOR_USERS(u, op->ops[i]) {
-                    VectorOp* use_op = nl_table_get(&ops, USERN(u));
-                    if (use_op == NULL) {
-                        bad = true;
-                        goto done;
-                    }
-                }
-            }
         }
 
         // prune out
@@ -698,17 +687,40 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     }
     dyn_array_set_length(schedule, len);
 
+    size_t bad = 0;
+    FOR_REV_N(i, 0, len) {
+        // all uses must also point to a pack... for now
+        VectorOp* op = schedule[i];
+        FOR_N(j, 0, op->width) {
+            FOR_USERS(u, op->ops[j]) {
+                VectorOp* use_op = nl_table_get(&ops, USERN(u));
+                if (use_op == NULL) {
+                    FOR_N(k, 0, op->width) {
+                        nl_table_remove(&ops, op->ops[k]);
+                    }
+                    schedule[i] = NULL;
+                    bad++;
+                    goto done2;
+                }
+            }
+        }
+        done2:;
+    }
+
     // nothing left which is valid, bail out
-    if (len == 0) {
+    if (len == bad) {
         return false;
     }
 
     TB_OPTDEBUG(SLP)(printf("=== COMPILED ===\n"));
     dyn_array_for(i, schedule) {
         VectorOp* op = schedule[i];
-        TB_Node* first = op->ops[0];
+        if (op == NULL) {
+            continue;
+        }
 
         // convert these ops into a packed op
+        TB_Node* first = op->ops[0];
         TB_DataType v_dt = op->v_dt;
         if (first->type == TB_LOAD) {
             int align = TB_NODE_GET_EXTRA_T(first, TB_NodeMemAccess)->align;

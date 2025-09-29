@@ -18,10 +18,13 @@ static TB_Node* prune_region(TB_Function* f, TB_Node* n) {
             changes = true;
             remove_input(f, n, i);
 
-            FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
-                    remove_input(f, USERN(u), i + 1);
+            for (size_t j = 0; j < n->user_count;) {
+                TB_User* use = &n->users[j];
+                if (USERN(use)->type == TB_PHI && USERI(use) == 0) {
+                    remove_input(f, USERN(use), i + 1);
+                    if (n->input_count == 0) { tb_kill_node(f, USERN(use)); continue; }
                 }
+                j++;
             }
         } else {
             i += 1;

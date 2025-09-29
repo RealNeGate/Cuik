@@ -226,12 +226,12 @@ do
 
             eq_classes[ch] = class
         end
-        print(#list, hash, class)
+        -- print(#list, hash, class)
     end
 
     for i=1,#spares do
         local str = string.char(spares[i])
-        print("New class", str)
+        -- print("New class", str)
         eq_classes[spares[i]] = dfa_gen_class(str)
     end
 
@@ -279,14 +279,14 @@ do
             local found = false
             for k=1,#active do
                 if array_match(key, active[k]) then
-                    print(string.format("%-8s %-8s %s (CACHED)", str, pat, inspect(key)))
+                    -- print(string.format("%-8s %-8s %s (CACHED)", str, pat, inspect(key)))
                     found = true
                     break
                 end
             end
 
             if not found then
-                print(string.format("%-8s %-8s %s", str, pat, inspect(key)))
+                -- print(string.format("%-8s %-8s %s", str, pat, inspect(key)))
                 active[#active + 1] = key
             end
         end
@@ -294,7 +294,6 @@ do
 
     local dfa_cache = {}
     function dfa_compile(state, q, pos, first)
-        print("A")
         for input=1,eq_count do
             -- step forward
             local q_prime = {}
@@ -310,7 +309,7 @@ do
                 for k=1,#dfa_cache do
                     if array_match(q_prime, dfa_cache[k][1]) then
                         next = dfa_cache[k][2]
-                        print("CACHED", inspect(q_prime), next)
+                        -- print("CACHED", inspect(q_prime), next)
                         break
                     end
                 end
@@ -318,10 +317,10 @@ do
                 if not next then
                     next = dfa_gen_state()
                     dfa_cache[#dfa_cache + 1] = { q_prime, next }
-                    print("ADD", inspect(q_prime), next)
+                    -- print("ADD", inspect(q_prime), next)
                 end
 
-                print("IN", input, eq_names[input], pos, next)
+                -- print("IN", input, eq_names[input], pos, next)
                 DFA[state][input] = next
 
                 dfa_compile(next, q_prime, pos+1)
@@ -362,18 +361,20 @@ do
 
     DFA[1][Q_class] = 2
 
-    print("Ident", (state-1)*6)
-    print("Number", (num_state-1)*6)
+    -- print("Ident", (state-1)*6)
+    -- print("Number", (num_state-1)*6)
 end
 
 -- Dump DFA
-for i=1,state_count do
-    print("State", i)
+if false then
+    for i=1,state_count do
+        print("State", i)
 
-    for input,next in pairs(DFA[i]) do
-        print("", input, eq_names[input], "=>", next)
+        for input,next in pairs(DFA[i]) do
+            print("", input, eq_names[input], "=>", next)
+        end
+        print()
     end
-    print()
 end
 
 function imul32(a, b)
@@ -402,11 +403,6 @@ end
 function hash_function(a, str)
     local x = hash(read32(str, 1, 4), a)
     local y = hash(read32(str, 5, 8), a)
-    if false and str == "typedef" then
-        local z = read32(str, 1, 4)
-        print(string.format("%#x * %#x = %#x", z, a, imul32(a, z)))
-        print(string.format("%s: %d %#x %#x %#x %#x\n", str, a, x, y, read32(str, 1, 4), read32(str, 5, 8)))
-    end
     return (x + y) % 179
 end
 
@@ -429,7 +425,7 @@ while true do
             -- print(string.format("Trial %3d/0x%s: %.1f%%: collision %#x ('%s' %#x vs '%s' %#x)", trial, bit.tohex(a), (j / #keywords) * 100, i-1, keywords[j], h, slots[i], hash_function(a, slots[i])))
             local prob = (j-1) / #keywords
             if prob > highest then
-                print(string.format("Trial %3d/0x%s: %.1f%%", trial, bit.tohex(a), prob*100))
+                -- print(string.format("Trial %3d/0x%s: %.1f%%", trial, bit.tohex(a), prob*100))
             end
             highest = math.max(highest, prob)
             bad = true

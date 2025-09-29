@@ -730,7 +730,9 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                     int old = val->user_count;
                     subsume_node(f, use_n, val);
                     if (val->user_count != old) {
-                        mark_node_n_users(f, val);
+                        CUIK_TIMED_BLOCK("mark") {
+                            mark_node_n_users(f, val);
+                        }
                     }
                 }
             } else {
