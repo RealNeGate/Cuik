@@ -498,9 +498,6 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     Set visited = set_create_in_arena(&f->tmp_arena, pairs->count);
     ICodeGen* codegen = f->super.module->codegen;
     for (Pair* p = pairs->first; p; p = p->next) {
-        if (set_get(&visited, p->id)) { continue; }
-        set_put(&visited, p->id);
-
         // early out: operation cannot vectorize at all
         TB_DataType elem_dt = slp_node_data_type(p->lhs);
         int pack_limit = codegen->max_pack_width_for_op(f, elem_dt, p->lhs);
@@ -523,6 +520,11 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
                 break;
             }
         }
+
+        if (set_get(&visited, curr->id)) {
+            continue;
+        }
+        set_put(&visited, curr->id);
 
         if (cycle) {
             break;
@@ -693,8 +695,14 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         VectorOp* op = schedule[i];
         FOR_N(j, 0, op->width) {
             FOR_USERS(u, op->ops[j]) {
+                if (USERN(u)->dt.type == TB_TAG_MEMORY) {
+                    continue;
+                }
+
                 VectorOp* use_op = nl_table_get(&ops, USERN(u));
                 if (use_op == NULL) {
+                    TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize %%%u, user %%%u isn't vector.\n", op->ops[j]->gvn, USERN(u)->gvn));
+
                     FOR_N(k, 0, op->width) {
                         nl_table_remove(&ops, op->ops[k]);
                     }
@@ -775,10 +783,11 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     // vaporization time, replace any effectful nodes tho
     FOR_REV_N(i, 0, dyn_array_length(schedule)) {
         VectorOp* op = schedule[i];
-
-        // most ops can just have all their nodes killed
-        FOR_N(j, 0, op->width) {
-            tb_kill_node(f, op->ops[j]);
+        if (op != NULL) {
+            // most ops can just have all their nodes killed
+            FOR_N(j, 0, op->width) {
+                tb_kill_node(f, op->ops[j]);
+            }
         }
     }
 

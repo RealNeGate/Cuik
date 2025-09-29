@@ -435,21 +435,30 @@ static bool is_vreg_match(Ctx* ctx, TB_Node* a, TB_Node* b) {
     return aa->class == bb->class && aa->assigned == bb->assigned;
 }
 
-static void postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node* n, size_t old_node_count) {
+static bool postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node* n, size_t old_node_count) {
     // walk into old nodes so long as they're not
     if (n == NULL || set_get(shared, n->gvn) || worklist_test_n_set(ws, n)) {
-        return;
+        return false;
     }
 
-    if (n->gvn >= old_node_count) {
+    // not shared? try to traverse to inputs and mark them as roots, if we
+    // couldn't then we'll consider ourselves next on the chopping block.
+    if (n->user_count <= 1) {
+        bool added = false;
         FOR_N(i, 0, n->input_count) {
-            postorder_isel_walk(ctx, ws, shared, n->inputs[i], old_node_count);
+            added |= postorder_isel_walk(ctx, ws, shared, n->inputs[i], old_node_count);
+        }
+
+        if (added) {
+            return false;
         }
     } else {
-        TB_OPTDEBUG(ISEL)(printf("  PUSH "), tb_print_dumb_node(NULL, n), printf("\n"));
-        dyn_array_put(ws->items, n);
         set_put(shared, n->gvn);
     }
+
+    TB_OPTDEBUG(ISEL)(printf("  PUSH "), tb_print_dumb_node(NULL, n), printf("\n"));
+    dyn_array_put(ws->items, n);
+    return true;
 }
 
 static void print_tree(Set* shared, TB_Node* n) {
@@ -493,6 +502,22 @@ static void print_tree(Set* shared, TB_Node* n) {
         }
     }
     printf(")");
+}
+
+static bool safe_to_dup(TB_Node* n) {
+    // certain nodes can be duplicated safely
+    if (n->type == TB_PHI) {
+        return false;
+    } else if (n->type == TB_ROOT || (cfg_flags(n) & (NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT))) {
+        return false;
+    } else if (n->user_count > 3) {
+        // at some point we'd rather just dedup... unless it's a constant
+        // those can always fold in
+        if (n->type != TB_ICONST && n->type != TB_F32CONST && n->type != TB_F64CONST && n->type != TB_SYMBOL && n->type != TB_LOCAL) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
@@ -583,21 +608,15 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 set_put(&visited, n->gvn);
             }
 
-            if (n->user_count > 1 || n->type == TB_PHI) {
-                // certain nodes can be duplicated safely
-                switch (n->type) {
-                    case TB_ICONST:
-                    case TB_F32CONST:
-                    case TB_F64CONST:
-                    case TB_LOCAL:
-                    case TB_SYMBOL:
-                    case TB_PTR_OFFSET:
-                    break;
-
-                    default:
-                    set_put(&shared, n->gvn);
-                    break;
+            // certain nodes can be duplicated safely
+            if (safe_to_dup(n)) {
+                FOR_N(j, 1, n->input_count) {
+                    if (n->inputs[j]) {
+                        set_put(&shared, n->inputs[j]->gvn);
+                    }
                 }
+            } else {
+                set_put(&shared, n->gvn);
             }
 
             FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
@@ -607,7 +626,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         CUIK_TIMED_BLOCK("dead node elim") {
             for (TB_Node* n; n = worklist_pop(ws), n;) {
                 if (n->user_count == 0 && !is_proj(n) && n != ctx.frame_ptr) {
-                    TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
+                    // TB_OPTDEBUG(ISEL)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
                     tb_kill_node(f, n);
                 }
             }
@@ -660,14 +679,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         while (worklist_count(ws)) {
             int start = worklist_count(ws);
             TB_Node* n = ws->items[start - 1];
-            if (n->type == TB_PHI) {
-                worklist_pop(ws);
-
-                FOR_N(i, 0, n->input_count) {
-                    postorder_isel_walk(&ctx, ws, &shared, n->inputs[i], old_node_count);
-                }
-                continue;
-            } else if (n->user_count == 0 && !is_proj(n)) {
+            if (n->user_count == 0 && !is_proj(n)) {
                 worklist_pop(ws);
 
                 tb__gvn_remove(f, n);
@@ -739,8 +751,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             // kill any nodes on the right side of the node, preserve the rest and reprocess them
             size_t read_head  = start;
             size_t write_head = start-1;
-            size_t read_tail = worklist_count(ws);
-            while (read_head < read_tail) {
+            while (read_head < worklist_count(ws)) {
                 TB_Node* k = ws->items[read_head];
                 if (k->user_count == 0 && !is_proj(k)) {
                     // technically the visited bit stays on in this path but i don't care, it's dead
@@ -782,7 +793,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         STATS_ENTER(MACH_GCM);
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
-        #if !TB_OPTDEBUG_ISEL && !TB_OPTDEBUG_ISEL2 && !TB_OPTDEBUG_ISEL3
+        #if !TB_OPTDEBUG_ISEL
         tb_renumber_nodes(f, ws);
         #endif
 

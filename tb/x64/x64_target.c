@@ -486,6 +486,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
             TB_Node* sym = tb_alloc_node(f, TB_SYMBOL, TB_TYPE_PTR, 1, sizeof(TB_NodeSymbol));
             set_input(f, sym, f->root_node, 0);
             TB_NODE_SET_EXTRA(sym, TB_NodeSymbol, .sym = &table->super);
+            sym = tb_opt_gvn_node(f, sym);
 
             // key check
             TB_Node* prev_ctrl = n->inputs[0];

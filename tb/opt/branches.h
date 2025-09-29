@@ -198,7 +198,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         // if the latch and the loop header are attached to each other that means
         // there's no CFG effects in this loop
         TB_Node* latch = affine_loop_latch(n);
-        if (latch->inputs[0] == n) {
+        if (latch && latch->inputs[0] == n) {
             bool closed = true;
             FOR_USERS(u, n) {
                 TB_Node* phi = USERN(u);
