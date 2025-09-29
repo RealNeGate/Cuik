@@ -48,7 +48,7 @@ local timestamp = os.clock()
 local function timer(string)
 	if options.timer then
 		local stamp = string.format('%08.4f', os.clock() - timestamp)
-		print(string .. ' ' .. stamp .. 's')
+		print(string..' '..stamp..'s')
 	end
 	timestamp = os.clock()
 end
@@ -155,9 +155,9 @@ local function encoding(item)
 		for _, enc in ipairs(item.encoding.values) do
 			local bit = enc.range.start
 			local len = enc.range.width
-			local val = enc.value.value
+			local val = enc.value.value:reverse()
 			for i = 1, len do
-				pattern[bit + i] = val:sub(i + 1, i + 1) -- note: starts with quote
+				pattern[bit + i] = val:sub(i + 1, i + 1) -- surrounded by quotes
 			end
 		end
 	end
@@ -177,18 +177,33 @@ local function path(item)
 	end
 	return table.concat(out, '$')
 end
--- local filtered_branches = {'sve', 'sme', 'simd_dp'}
--- for _, v in ipairs(filtered_branches) do filtered_branches[v] = true end
+local filtered_branches = {'sve', 'sme', 'reserved', 'dpimm', 'control', 'ldst', 'simd_dp',
+-- DPREG
+-- 'dp_2src',
+'dp_1src',
+'log_shift',
+'addsub_shift',
+'addsub_ext',
+-- 'addsub_carry',
+'addsub_pt',
+'rmif',
+'setf',
+'condcmp_reg',
+'condcmp_imm',
+'condsel',
+-- 'dp_3src',
+}
+for _, v in ipairs(filtered_branches) do filtered_branches[v] = true end
 local function walk(item, list)
 	table.insert(list, item)
 	item.path = path(item)
 	item.pattern, item.mask = encoding(item)
 	if item.children then
 		for index, child in ipairs(item.children) do
-			-- if not filtered_branches[child.name] then
+			if not filtered_branches[child.name] then
 				child.parent = item
 				walk(child, list)
-			-- end
+			end
 		end
 	end
 end
@@ -203,8 +218,41 @@ end
 local instructions = lume.filter(items, is_inst)
 timer('parse')
 
+
+
 --------------------------------
--- decision tree
+-- mnemonic opcodes
+--------------------------------
+local mnems = {}
+for _, i in ipairs(instructions) do
+	local mnem = i.assembly.symbols[1].value
+	if not mnems[mnem] then
+		table.insert(mnems, mnem)
+		mnems[mnem] = {}
+	end
+	table.insert(mnems[mnem], i)
+	mnems[i.name] = mnem
+end
+local ops = {}
+for i, m in ipairs(mnems) do
+	table.insert(ops, '\tA64_'..m..' = '..i)
+end
+writefile('a64ops.h', [[
+#pragma once
+enum A64_Opcode {
+]]..table.concat(ops, ',\n')..'\n'..[[
+} typedef A64_Opcode;
+char* a64_mnemonic[] = {
+	"UNDEFINED",
+]]..table.concat(lume.map(mnems, function(m)return'\t"'..m..'"'end), ',\n')..'\n'..[[
+};
+char a64_reg_sizes[] = { 'W', 'X' };
+]])
+
+
+
+--------------------------------
+-- decoder decision tree
 --------------------------------
 -- disassembler numero uno, absolute ass version
 -- local chain = {}
@@ -256,7 +304,7 @@ timer('parse')
 -- writefile('a64disassembler2.h', disassembler2)
 
 
--- disassembler 3, all the set bits
+-- decoder 3, all the set bits
 local function getsetmask(list)
 	local mask = {} for i=1,32 do mask[i] = '1' end
 	for _, inst in ipairs(list) do
@@ -282,23 +330,24 @@ local function walk(list)
 	local out = {} -- { ['mask'] = { inst, ... } }
 	local mask = getsetmask(list)
 	for _, l in ipairs(list) do
-		local pat = table.concat(applymask(l.pattern, mask)):reverse()
+		local pat = table.concat(applymask(l.pattern, mask))
 		if not out[pat] then
 			out[pat] = {}
 		end
 		table.insert(out[pat], l)
 	end
 	if tablesize(out) == 1 then -- no differentiating patterns
-		for k, v in pairs(out) do
-			out = lume.map(v, function(x) return x.name end)
-		end
+		out = next(out)
+		-- for k, v in pairs(out) do
+		-- 	out = lume.map(v, function(x) return x.name end)
+		-- end
 	else -- walk each new sublist
 		for k, v in pairs(out) do
 			if #v > 1 and not seen[k] then
 				seen[k] = true
 				out[k] = walk(v)
-			else
-				out[k] = lume.map(v, function(x) return x.name end)
+			-- else
+			-- 	out[k] = lume.map(v, function(x) return x.name end)
 			end
 		end
 	end
@@ -307,34 +356,76 @@ end
 local tree3 = walk(instructions)
 
 -- generate the C code
-local disassembler3 = {}
+local decoder = {}
 local function walk(tree, depth)
 	local indent = string.rep('\t', depth)
-	if #tree > 0 then -- list
-		local name = table.concat(tree, ', ')
-		table.insert(disassembler3, indent..string.format('return "%s";', name))
+	if #tree > 0 then -- list of instructions
+		local name
+		if #tree > 1 then -- need more differentiation
+			name = table.concat(lume.map(tree, function(x) return x.name end), '$')
+			table.insert(decoder, indent..'tb_todo();')
+		else
+			local inst = tree[1]
+			local fields = lume.filter(inst.encoding.values, function(x)
+				return is_field(x) and x.value.value:find('x')
+			end)
+			name = 'A64_'..mnems[inst.name]
+			table.insert(decoder, indent..string.format('out->opcode = %s;', name))
+			for _, f in ipairs(fields) do
+				if f.name:match('^R[dnma]') then
+					local mask = string.rep('1', f.range.width)
+					local bit = f.range.start
+					local reg = f.name:sub(2, 2)
+					local fmt = indent..'out->%s = (inst >> %d) & 0b%s;'
+					table.insert(decoder, string.format(fmt, reg, bit, mask))
+				end
+			end
+			local regs = { d = 0, m = 1, n = 2, a = 3 }
+			local sizes = {}
+			for _, s in ipairs(inst.assembly.symbols) do
+				if s.rule_id and s.rule_id:match('^[WX][dnma]') then
+					local reg = s.rule_id:sub(2, 2)
+					local is64 = s.rule_id:sub(1, 1) == 'X'
+					if is64 then
+						table.insert(sizes, '(1 << '..regs[reg]..')')
+					end
+				end
+			end
+			if #sizes > 0 then
+				local fmt = indent..'out->sz = %s;'
+				table.insert(decoder, string.format(fmt, table.concat(sizes, ' | ')))
+			end
+		end
 	else -- table
 		local mask, _ = next(tree)
-		mask = mask:gsub('0', '1'):gsub('x', '0'):reverse()
-		table.insert(disassembler3, indent..string.format('switch (inst & 0b%s) {', mask))
+		mask = mask:gsub('0', '1'):gsub('x', '0')
+		table.insert(decoder, indent..string.format('switch (inst & 0b%s) {', mask:reverse()))
 		for k, v in pairs(tree) do
-			local bits = k:gsub('x', '0'):reverse()
-			table.insert(disassembler3, indent..string.format('case 0b%s: {', bits))
+			local bits = k:gsub('x', '0')
+			table.insert(decoder, indent..string.format('case 0b%s: {', bits:reverse()))
 			walk(v, depth + 1)
-			table.insert(disassembler3, indent..'} break;')
+			table.insert(decoder, indent..'} break;')
 		end
-		table.insert(disassembler3, indent..'default: return 0;')
-		table.insert(disassembler3, indent..'}')
+		table.insert(decoder, indent..'default: out->opcode = 0; return false;')
+		table.insert(decoder, indent..'}')
 	end
 end
 walk(tree3, 1)
-disassembler3 = [[#include <stddef.h>
+writefile('a64decoder.h', [[
+#pragma once
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
-char* disassemble(uint32_t inst) {
-]]..table.concat(disassembler3, '\n')..'\n}\n'
-writefile('a64disassembler3.h', disassembler3)
+#include "../include/tb_a64.h"
+#include "a64ops.h"
+bool decode(TB_A64_Inst* restrict out, const uint8_t* data) {
+	uint32_t inst = *((uint32_t*)data);
+]]..table.concat(decoder, '\n')..'\n'..[[
+	return true;
+}
+]])
 
-timer('decision tree')
+timer('decoder')
 
 -- wot it look like
 -- local depths = {}
@@ -354,65 +445,155 @@ timer('decision tree')
 
 
 --------------------------------
--- operands
+-- disassembler
 --------------------------------
-local function addfield(pat, field)
-	local bit = field.range.start
-	local len = field.range.width
-	for i = 1, len do
+local disassembler = {}
+for _, m in ipairs(mnems) do
+	table.insert(disassembler, '\tcase A64_'..m..': {')
+
+	local insts = mnems[m]
+	--todo: differentiate operand forms
+	local inst = insts[1]
+	--todo: aliases
+	local args = { 'a64_mnemonic[inst->opcode]' }
+	local regs = { d = 0, m = 1, n = 2, a = 3 }
+	local fmt = {'%s'}
+	for _, s in ipairs(inst.assembly.symbols) do
+		if s.rule_id and s.rule_id:match('[WX][dnma]') then
+			local reg = s.rule_id:match('[WX]([dnma])')
+			local size = string.format('(inst->sz >> %d) & 0b1', regs[reg])
+			table.insert(args, 'a64_reg_sizes['..size..']')
+			table.insert(args, string.format('inst->%s', reg))
+			table.insert(fmt, ' %c%d')
+		end
 	end
-end
-local decoders = {}
-local encoders = {}
-for _, i in ipairs(instructions) do
-	-- if not i.path:find('sve') and not i.path:find('sme') then
-	table.insert(decoders, string.format('void* %s_decode(uint32_t inst) {', i.name))
-	table.insert(encoders, string.format('uint32_t %s_encode(%s) {\n\treturn 0b%s', i.name, table.concat(lume.map(lume.filter(i.encoding.values, function(x) return is_field(x) and x.value.value:find('x') end), function(x) return 'uint32_t '..x.name end), ', '), table.concat(i.pattern):gsub('x', '0'):reverse()))
-		local pat = copy(i.pattern)
-		for _, e in ipairs(i.encoding.values) do
-			if is_field(e) then
-				table.insert(decoders, string.format('\tuint32_t %s = (inst >> %d) & 0b%s;', e.name, e.range.start, string.rep('1', e.range.width)))
-				if e.value.value:find('x') then
-					table.insert(encoders, string.format('\t\t| ((%s & 0b%s) << %d)', e.name, string.rep('1', e.range.width), e.range.start))
-				end
-				local bit = e.range.start
-				local len = e.range.width
-				for b = 1, len do
-					local c = e.value.value:sub(b + 1, b + 1)
-					if c == 'x' and pat[bit + b] == 'x' then
-						pat[bit + b] = '_'
-					end
-				end
-			end
-		end
-		table.insert(decoders, '}')
-		table.insert(encoders, '\t;\n}')
-		if table.concat(pat):find('x') then
-			print(i.path, table.concat(pat):reverse())
-			error('unsaturated pattern')
-		end
-	-- end
+	args = table.concat(args, ', ')
+	fmt = table.concat(fmt)
+	table.insert(disassembler, '\t\tprintf("'..fmt..'\\n", '..args..');')
+
+	table.insert(disassembler, '\t} break;')
 end
 
-decoders = [[#include <stddef.h>
+disassembler = [[
+#pragma once
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
-]]..table.concat(decoders, '\n')..'\n'
-writefile('a64decoders.h', decoders)
+#include <stdio.h>
+#include "../include/tb_a64.h"
+#include "a64ops.h"
 
-encoders = [[#include <stddef.h>
-#include <stdint.h>
-]]..table.concat(encoders, '\n')..'\n'
-writefile('a64encoders.h', encoders)
+void disassemble(TB_A64_Inst* inst) {
+	switch (inst->opcode) {
+	case 0: {
+		printf("%s\n", a64_mnemonic[inst->opcode]);
+	} break;
+]]..table.concat(disassembler, '\n')..'\n'..[[
+	}
+}
+]]
+writefile('a64disassembler.h', disassembler)
 
-timer('encoders and decoders')
+timer('disassembler')
+
+
+
+local counts = {}
+local bits = {}
+local names = {}
+local bitsnranges = {}
+for _, inst in ipairs(instructions) do
+	local fields = lume.filter(inst.encoding.values, function(x) return is_field(x) and x.value.value:find('x') end)
+	local fieldcount = #fields
+	local fieldbits = lume.reduce(fields, function(a, f) return a + f.range.width end, 0)
+	-- print(fieldcount..' fields', fieldbits..' bits', inst.name)
+	table.insert(counts, fieldcount)
+	table.insert(bits, fieldbits)
+	lume.each(fields, function(x) table.insert(names, x.name) end)
+	lume.each(fields, function(x) table.insert(bitsnranges, string.format('%s:%d:%d', x.name, x.range.start, x.range.width)) end)
+end
+-- print('counts', inspect(histogram(counts)))
+-- print('bits', inspect(histogram(bits)))
+-- print('names', inspect(histogram(names)))
+-- print('bits n ranges', inspect(histogram(bitsnranges)))
 
 
 
 --------------------------------
 -- assembly syntax
 --------------------------------
-local function rules_pp()
+local function rules_pp(rule)
+	local types = {
+		['Instruction.Assembly']              = function(a)
+			local out = {}
+			for _, sym in ipairs(a.symbols) do
+				local str = rules_pp(sym)
+				if str ~= nil then
+					table.insert(out, str)
+				end
+			end
+			if #out > 0 then
+				return out
+			else
+				return nil
+			end
+		end,
+		['Instruction.Symbols.Literal']       = function(l)
+			return nil
+		end,
+		['Instruction.Symbols.RuleReference'] = function(r)
+			return r.rule_id -- rules_pp(data.assembly_rules[r.rule_id])
+		end,
+		['Instruction.Rules.Token']           = function(t)
+			return nil
+		end,
+		['Instruction.Rules.Rule']            = function(r)
+			if r.symbols then
+				return rules_pp(r.symbols)
+			end
+			return nil
+		end,
+		['Instruction.Rules.Choice']          = function(c)
+			local out = {}
+			for _, choice in ipairs(c.choices) do
+				local str = rules_pp(choice)
+				if str ~= nil then
+					table.insert(out, str)
+				end
+			end
+			if #out > 0 then
+				return out
+			else
+				return nil
+			end
+		end,
+	}
+	local syms = {}
+	if types[rule._type] then
+		return types[rule._type](rule)
+	else
+		error('invalid type:', rule._type)
+	end
 end
+-- local strings = {'digraph G {', '\trankdir=LR', '\tnode [style=filled]'}
+-- for k, v in pairs(data.assembly_rules) do
+-- 	local rule = rules_pp(v)
+-- 	local function pp(tbl, parent)
+-- 		if type(tbl) == 'table' then
+-- 			for _, v in ipairs(tbl) do
+-- 				pp(v, parent)
+-- 			end
+-- 		else
+-- 			table.insert(strings, '\t'..parent..' -> '..tbl)
+-- 		end
+-- 	end
+-- 	if rule ~= nil then
+-- 		pp(rule, k)
+-- 	end
+-- end
+-- table.insert(strings, '}')
+-- print(table.concat(strings, '\n'))
+
 local function asm_pp(asm)
 	local function todo(a)
 		error(inspect(a))
@@ -462,23 +643,10 @@ local function asm_pp(asm)
 		error('invalid type:', asm._type)
 	end
 end
-local unique = {}
 for _, i in ipairs(instructions) do
 	local ops = asm_pp(i.assembly)
-	print(ops)
-	ops = ops:match('%s*%S*%s*(.*)')
-	if not unique[ops] then
-		unique[ops] = {}
-	end
-	table.insert(unique[ops], i.name)
+	-- print(ops)
 end
-local list = {}
-for k, v in pairs(unique) do
-	table.insert(list, k)
-end
-table.sort(list)
--- for _, l in ipairs(list) do print(l) end
--- print(inspect(unique))
 
 
 
@@ -584,7 +752,7 @@ end
 --------------------------------
 if options.timer then
 	local stamp = string.format('%08.4f', os.clock() - total_time)
-	print('total time ' .. stamp .. 's')
+	print('total time '..stamp..'s')
 end
 
 if true then return end
@@ -856,7 +1024,7 @@ if options.graph then
 			if not labels[b] then
 				labels[b] = i
 			else
-				labels[b] = labels[b] .. ',' .. i
+				labels[b] = labels[b]..','..i
 			end
 		end
 		for b, l in pairs(labels) do

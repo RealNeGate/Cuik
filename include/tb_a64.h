@@ -2,6 +2,7 @@
 #define TB_A64_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 
 #ifndef TB_API
@@ -23,10 +24,13 @@
 
 typedef struct {
     uint16_t opcode;
-    uint8_t length;
 
     // reg operands
-    uint8_t regs[4];
+    uint32_t sz : 4;
+    uint32_t d : 5;
+    uint32_t n : 5;
+    uint32_t m : 5;
+    uint32_t a : 5;
 } TB_A64_Inst;
 
 TB_API bool tb_a64_disasm(TB_A64_Inst* restrict inst, size_t length, const uint8_t* data);
