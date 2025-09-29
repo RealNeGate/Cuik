@@ -441,23 +441,20 @@ static bool postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node*
         return false;
     }
 
-    // not shared? try to traverse to inputs and mark them as roots, if we
-    // couldn't then we'll consider ourselves next on the chopping block.
-    if (n->user_count <= 1) {
-        bool added = false;
-        FOR_N(i, 0, n->input_count) {
-            added |= postorder_isel_walk(ctx, ws, shared, n->inputs[i], old_node_count);
-        }
+    if (n->user_count > 1 || n->gvn < old_node_count) {
+        // old node? push to process
+        TB_OPTDEBUG(ISEL)(printf("  PUSH "), tb_print_dumb_node(NULL, n), printf("\n"));
+        dyn_array_put(ws->items, n);
 
-        if (added) {
-            return false;
+        if (n->user_count > 1) {
+            set_put(shared, n->gvn);
         }
     } else {
-        set_put(shared, n->gvn);
+        FOR_N(i, 0, n->input_count) {
+            postorder_isel_walk(ctx, ws, shared, n->inputs[i], old_node_count);
+        }
     }
 
-    TB_OPTDEBUG(ISEL)(printf("  PUSH "), tb_print_dumb_node(NULL, n), printf("\n"));
-    dyn_array_put(ws->items, n);
     return true;
 }
 
@@ -609,13 +606,13 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             }
 
             // certain nodes can be duplicated safely
-            if (safe_to_dup(n)) {
+            if (n->type == TB_PHI) {
                 FOR_N(j, 1, n->input_count) {
                     if (n->inputs[j]) {
                         set_put(&shared, n->inputs[j]->gvn);
                     }
                 }
-            } else {
+            } else if (!safe_to_dup(n)) {
                 set_put(&shared, n->gvn);
             }
 

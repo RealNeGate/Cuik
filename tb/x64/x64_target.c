@@ -162,6 +162,26 @@ typedef struct {
 
 static bool try_for_imm32_2(TB_DataType dt, uint64_t src, int32_t* out_x);
 
+static TB_Node* binop_imm(TB_Function* f, int type, TB_Node* lhs, int64_t imm) {
+    TB_Node* op = tb_alloc_node(f, type, lhs->dt, 3, sizeof(X86MemOp));
+    set_input(f, op, lhs, 2);
+    TB_NODE_SET_EXTRA(op, X86MemOp, .flags = OP_IMMEDIATE, .imm = imm);
+    return tb_opt_gvn_node(f, op);
+}
+
+static TB_Node* unary_reg(TB_Function* f, int type, TB_DataType dt, TB_Node* src) {
+    TB_Node* op = tb_alloc_node(f, type, dt, 4, sizeof(X86MemOp));
+    set_input(f, op, src, 2);
+    return tb_opt_gvn_node(f, op);
+}
+
+static TB_Node* binop_reg(TB_Function* f, int type, TB_Node* lhs, TB_Node* rhs) {
+    TB_Node* op = tb_alloc_node(f, type, lhs->dt, 4, sizeof(X86MemOp));
+    set_input(f, op, rhs, 2);
+    set_input(f, op, lhs, 3);
+    return tb_opt_gvn_node(f, op);
+}
+
 static TB_Node* redundant_and_63(TB_Node* n) {
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
     if ((op->flags & OP_IMMEDIATE) && op->imm == 63) {
@@ -259,18 +279,6 @@ static uint32_t phash_fn(uint32_t h, uint32_t k, uint32_t mod) {
     return h >> (32 - mod);
 }
 
-/* static uint64_t phash_fn(uint64_t h, uint64_t k, uint64_t mod) {
-    uint64_t x = h * k;
-    // splittable64
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9U;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebU;
-    x ^= x >> 31;
-    // grab the top bits
-    return x >> (64 - mod);
-} */
-
 static int phash_bucket_cmp(const void* a, const void* b) {
     ArenaArray(uint64_t) aa = *(ArenaArray(uint64_t)*) a;
     ArenaArray(uint64_t) bb = *(ArenaArray(uint64_t)*) b;
@@ -353,28 +361,23 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
     }
 
     TB_Node* src = n->inputs[1];
-    if (src->dt.type != TB_TAG_I64) {
-        TB_Node* ext = tb_alloc_node(f, TB_ZERO_EXT, TB_TYPE_I64, 2, 0);
-        set_input(f, ext, src, 1);
-        src = ext;
-    }
 
     int32_t limit;
     TB_ASSERT(try_for_imm32_2(TB_TYPE_I64, (max - min) + 1, &limit));
 
     double density = ((double)br->succ_count) / ((double) (max - min));
     if (density > 0.25f) {
+        if (src->dt.type == TB_TAG_I32) {
+            src = unary_reg(f, x86_mov, TB_TYPE_I64, src);
+        } else if (src->dt.type == TB_TAG_I16) {
+            src = unary_reg(f, x86_movzx16, TB_TYPE_I64, src);
+        } else if (src->dt.type == TB_TAG_I8) {
+            src = unary_reg(f, x86_movzx8, TB_TYPE_I64, src);
+        }
+
         // normalize range, x' = x - range_start
         if (min != 0) {
-            TB_Node* con = tb_alloc_node(f, TB_ICONST, TB_TYPE_I64, 1, sizeof(TB_NodeInt));
-            set_input(f, con, f->root_node, 0);
-            TB_NODE_SET_EXTRA(con, TB_NodeInt, .value = min);
-            con = tb_opt_gvn_node(f, con);
-
-            TB_Node* sub = tb_alloc_node(f, TB_SUB, TB_TYPE_I64, 3, sizeof(TB_NodeBinopInt));
-            set_input(f, sub, src, 1);
-            set_input(f, sub, con, 2);
-            src = sub;
+            src = binop_imm(f, x86_sub, src, min);
         }
 
         // TODO(NeGate): technically if the default case leads
@@ -463,22 +466,24 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
             // k = rol(k, 15) * 0x1b873593
             // h = rol(h ^ k, 13) * 5
             // h = (h + 0xe6546b64) >> (32 - shift)
-            if (src->dt.type != TB_TAG_I32) {
-                TB_Node* trunc = tb_alloc_node(f, src->dt.type < TB_TAG_I32 ? TB_ZERO_EXT : TB_TRUNCATE, TB_TYPE_I32, 2, 0);
-                set_input(f, trunc, src, 1);
-                src = trunc;
+            if (src->dt.type < TB_TAG_I32) {
+                // zero extend
+                src = unary_reg(f, src->dt.type == TB_TAG_I16 ? x86_movzx16 : x86_movzx8, TB_TYPE_I32, src);
+            } else if (src->dt.type > TB_TAG_I32) {
+                // truncate
+                src = unary_reg(f, x86_mov, TB_TYPE_I32, src);
             }
 
             TB_Node* k = src;
-            k = int_binop(f, TB_ROL, k, make_int_node(f, TB_TYPE_I32, 15));
-            k = int_binop(f, TB_MUL, k, make_int_node(f, TB_TYPE_I32, 0x1b873593));
+            k = binop_imm(f, x86_rol,  k, 15);
+            k = binop_imm(f, x86_imul, k, 0x1b873593);
 
             TB_Node* h = make_int_node(f, TB_TYPE_I32, hash);
-            h = int_binop(f, TB_XOR, k, h);
-            h = int_binop(f, TB_ROL, h, make_int_node(f, TB_TYPE_I32, 13));
-            h = int_binop(f, TB_MUL, h, make_int_node(f, TB_TYPE_I32, 5));
-            h = int_binop(f, TB_ADD, h, make_int_node(f, TB_TYPE_I32, 0xe6546b64));
-            h = int_binop(f, TB_SHR, h, make_int_node(f, TB_TYPE_I32, 32 - shift));
+            h = binop_reg(f, x86_xor,  k, h);
+            h = binop_imm(f, x86_rol,  h, 13);
+            h = binop_imm(f, x86_imul, h, 5);
+            h = binop_imm(f, x86_add,  h, 0xe6546b64);
+            h = binop_imm(f, x86_shr,  h, 32 - shift);
 
             TB_Global* table = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
             tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), table, cap * sizeof(uint64_t[2]), sizeof(uint64_t), 2 + cap);
@@ -2853,19 +2858,30 @@ int is_pack_op_supported(TB_Function* f, TB_DataType dt, TB_Node* n, int width) 
     // consider any ops which have no vector forms as 0
     int elem_bits = tb_data_type_bit_size(f->super.module, dt.type);
     switch (n->type) {
-        case TB_LOAD:
-        case TB_STORE:
         case TB_AND:
         case TB_OR:
         case TB_XOR:
         case TB_ADD:
         case TB_SUB:
+        case TB_MUL:
         case TB_FADD:
         case TB_FSUB:
         case TB_FMUL:
         case TB_FDIV:
         case TB_FMIN:
         case TB_FMAX: {
+            int bits = elem_bits * width;
+            return bits == 128 || bits == 256 || bits == 512;
+        }
+
+        case TB_LOAD:
+        case TB_STORE: {
+            int bits = elem_bits * width;
+            return bits == 32 || bits == 64 || bits == 128 || bits == 256 || bits == 512;
+        }
+
+        case TB_ZERO_EXT:
+        case TB_SIGN_EXT: {
             int bits = elem_bits * width;
             return bits == 128 || bits == 256 || bits == 512;
         }

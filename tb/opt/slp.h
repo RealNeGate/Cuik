@@ -652,7 +652,11 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         int vector_bits = elem_bits * op->width;
         TB_DataType v_dt = TB_TYPE_VOID;
         switch (vector_bits) {
-            case 64:  v_dt = (TB_DataType){ { TB_TAG_V64,  .elem_or_addrspace = elem_dt.type } }; break;
+            // case 64:  v_dt = (TB_DataType){ { TB_TAG_V64,  .elem_or_addrspace = elem_dt.type } }; break;
+
+            case 32:  v_dt = TB_TYPE_I32; break;
+            case 64:  v_dt = TB_TYPE_I64; break;
+
             case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
             case 256: v_dt = (TB_DataType){ { TB_TAG_V256, .elem_or_addrspace = elem_dt.type } }; break;
             case 512: v_dt = (TB_DataType){ { TB_TAG_V512, .elem_or_addrspace = elem_dt.type } }; break;
@@ -663,15 +667,18 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         // check if the vector ops can legally be connected up
         if (first->type == TB_STORE) {
             if (!viable_vector(f, &ops, v_dt, op, 3)) {
+                TB_OPTDEBUG(SLP)(printf("    SLP failed: Store value of %%%u isn't a viable vector\n", first->gvn));
                 bad = true;
             }
         } else {
             if (first->type != TB_LOAD) {
                 if (!viable_vector(f, &ops, v_dt, op, 1)) {
+                    TB_OPTDEBUG(SLP)(printf("    SLP failed: LHS of %%%u isn't a viable vector\n", first->gvn));
                     bad = true;
                 }
 
-                if (!viable_vector(f, &ops, v_dt, op, 2)) {
+                if (first->input_count > 2 && !viable_vector(f, &ops, v_dt, op, 2)) {
+                    TB_OPTDEBUG(SLP)(printf("    SLP failed: RHS of %%%u isn't a viable vector\n", first->gvn));
                     bad = true;
                 }
             }
@@ -716,6 +723,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     }
 
     // nothing left which is valid, bail out
+    tb_print(f);
     if (len == bad) {
         return false;
     }
@@ -791,6 +799,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         }
     }
 
+    tb_print(f);
     return true;
 }
 

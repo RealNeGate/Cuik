@@ -1248,7 +1248,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             for (size_t i = 0; i < count; i++) {
                 if (kids[i]->op == STMT_DECL) {
                     Cuik_Type* decl_type = cuik_canonical_type(kids[i]->decl.type);
-                    if (decl_type->kind == KIND_PTR && (decl_type->ptr_to.raw & CUIK_QUAL_RESTRICT)) {
+                    if (decl_type->kind == KIND_PTR && (kids[i]->decl.type.raw & CUIK_QUAL_RESTRICT)) {
                         split_count += 1;
                     }
                 }
@@ -1261,7 +1261,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                 for (size_t i = 0; i < count; i++) {
                     if (kids[i]->op == STMT_DECL) {
                         Cuik_Type* decl_type = cuik_canonical_type(kids[i]->decl.type);
-                        if (decl_type->kind == KIND_PTR && (decl_type->ptr_to.raw & CUIK_QUAL_RESTRICT)) {
+                        if (decl_type->kind == KIND_PTR && (kids[i]->decl.type.raw & CUIK_QUAL_RESTRICT)) {
                             kids[i]->decl.local_ordinal = split_i + split_count;
                             split_count += 1;
                         }
