@@ -467,7 +467,8 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
                 TB_Node* un = USERN(&old_phi->users[j]);
                 int ui = USERI(&old_phi->users[j]);
 
-                if (cloned[un->gvn] && un != old_phi && un->inputs[ui] != old_phi) {
+                if (cloned[un->gvn] && un != old_phi) { // (un->inputs[ui]->type != TB_PHI || un->inputs[ui]->inputs[0] != header)) {
+                    // &&  != old_phi) {
                     #if TB_OPTDEBUG_LOOP
                     printf("   USER(");
                     tb_print_dumb_node(NULL, un);
@@ -492,22 +493,22 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
         }
     }
 
-    // if the "pre_latch_ctrl" is not cloned that means there's at least
-    // one control node in the body of the loop and we're now hooking the
-    // rotated control nodes to it.
     TB_Node* pre_latch_ctrl = latch->inputs[0];
-    if (!cloned[pre_latch_ctrl->gvn]) {
+    if (pre_latch_ctrl != header) {
+        TB_Node* next_ctrl = header->inputs[1];
         for (size_t j = 0; j < header->user_count;) {
             TB_Node* un = USERN(&header->users[j]);
+            int ui = USERI(&header->users[j]);
 
             if (cloned[un->gvn] && un->type != TB_PHI) {
                 #if TB_OPTDEBUG_LOOP
                 printf("   USER(");
                 tb_print_dumb_node(NULL, un);
-                printf(", %d, %%%u)\n", USERI(&header->users[j]), pre_latch_ctrl->gvn);
+                printf(", %d, %%%u)\n", ui, pre_latch_ctrl->gvn);
                 #endif
 
-                set_input(f, un, pre_latch_ctrl, USERI(&header->users[j]));
+                // set_input(f, un, next_ctrl, ui);
+                j++;
             } else {
                 j++;
             }
@@ -581,7 +582,7 @@ static const char* ind_pred_names[] = { "ne", "slt", "sle", "ult", "ule" };
 //   i = phi(init, i2)
 //   n = i + step where step is constant
 static TB_Node* affine_indvar(TB_Node* n, TB_Node* header) {
-    if (n->type == TB_PHI) {
+    if (n->type == TB_PHI && n->inputs[0] == header) {
         n = n->inputs[2];
     }
 
@@ -1335,6 +1336,10 @@ static bool loop_opt_remove_safepoints(TB_Function* f, LoopOpt* ctx) {
 // canonicalize regions into natural loop headers (or affine loops) and
 // join all backedges into one pred path on the header
 static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp_ws) {
+    size_t cloned_cap = (f->node_count * 3) / 2;
+    TB_Node** cloned  = cuik_malloc(cloned_cap * sizeof(TB_Node*));
+    log_debug("allocating clone array %zu (%zu)", cloned_cap, f->node_count);
+
     bool progress = false;
     DynArray(ptrdiff_t) backedges = NULL;
     aarray_for(i, ctx->cfg.loops) {
@@ -1480,13 +1485,18 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
 
                 latch = header_end;
                 int exit_loop_i = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeProj)->index;
-                TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
+                // TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
 
-                TB_Node** cloned;
                 size_t cloned_n = f->node_count;
-                CUIK_TIMED_BLOCK("alloc cloned table") {
-                    cloned = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(TB_Node*));
-                    memset(cloned, 0, f->node_count * sizeof(TB_Node*));
+                CUIK_TIMED_BLOCK("clone array init") {
+                    if (cloned_cap < cloned_n) {
+                        size_t old_cap = cloned_cap;
+                        cloned_cap = (cloned_n * 3) / 2;
+                        cloned = cuik_realloc(cloned, cloned_cap * sizeof(TB_Node*));
+
+                        log_debug("resizing clone array %zu -> %zu", old_cap, cloned_cap);
+                    }
+                    memset(cloned, 0, cloned_n * sizeof(TB_Node*));
                 }
 
                 // let's rotate the loop:
@@ -1501,6 +1511,7 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 //     exit:                      exit:
                 //
                 TB_Node* ztc_start = header->inputs[0];
+                TB_Node* header_succ = cfg_next_control(header);
                 // construct the ZTC's version of the branch (same as the original latch but
                 // uses the phi's inputs[1] edge instead of the phis directly)
                 ArenaArray(TB_Node*) cloned_list = loop_clone_ztc(ctx, tmp_ws, cloned_n, cloned, header, latch);
@@ -1541,12 +1552,12 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 TB_Node* into_loop2 = USERN(proj_with_index(latch, 1 - exit_loop_i));
                 {
                     // latch no longer connected to the top
-                    TB_User* after_into_loop2 = cfg_next_user(into_loop2);
-                    mark_node_n_users(f, USERN(after_into_loop2));
-                    set_input(f, USERN(after_into_loop2), latch->inputs[0], USERI(after_into_loop2));
+                    TB_User after_into_loop2 = *cfg_next_user(into_loop2);
+                    mark_node_n_users(f, USERN(&after_into_loop2));
                     // backedge has a lovely "new" latch
-                    set_input(f, latch,  header->inputs[1], 0);
-                    set_input(f, header, into_loop2,        1);
+                    set_input(f, USERN(&after_into_loop2), header, USERI(&after_into_loop2));
+                    set_input(f, header_succ, header->inputs[1], 0);
+                    set_input(f, header, into_loop2, 1);
 
                     mark_node_n_users(f, latch);
                     mark_node_n_users(f, header);
@@ -1650,7 +1661,9 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 }
 
                 progress = true;
-                tb_arena_restore(&f->tmp_arena, sp2);
+
+                // the ctrl array is stored in the tmp arena... we can't free here
+                // tb_arena_restore(&f->tmp_arena, sp2);
 
                 TB_OPTDEBUG(PASSES)(printf("        * Added extra latch %%%u\n", latch->gvn));
                 TB_OPTDEBUG(PASSES)(printf("        * Added extra join %%%u\n", join->gvn));

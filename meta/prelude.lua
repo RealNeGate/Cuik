@@ -59,6 +59,10 @@ function Partitions()
         return is_new
     end
 
+    function t:at(i)
+        return self.ord[i]
+    end
+
     function t:count()
         return #self.ord
     end

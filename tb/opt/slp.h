@@ -723,7 +723,6 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     }
 
     // nothing left which is valid, bail out
-    tb_print(f);
     if (len == bad) {
         return false;
     }
@@ -799,7 +798,6 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         }
     }
 
-    tb_print(f);
     return true;
 }
 

@@ -2857,6 +2857,7 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
 int is_pack_op_supported(TB_Function* f, TB_DataType dt, TB_Node* n, int width) {
     // consider any ops which have no vector forms as 0
     int elem_bits = tb_data_type_bit_size(f->super.module, dt.type);
+    int bits = elem_bits * width;
     switch (n->type) {
         case TB_AND:
         case TB_OR:
@@ -2870,19 +2871,17 @@ int is_pack_op_supported(TB_Function* f, TB_DataType dt, TB_Node* n, int width) 
         case TB_FDIV:
         case TB_FMIN:
         case TB_FMAX: {
-            int bits = elem_bits * width;
             return bits == 128 || bits == 256 || bits == 512;
         }
 
         case TB_LOAD:
         case TB_STORE: {
-            int bits = elem_bits * width;
-            return bits == 32 || bits == 64 || bits == 128 || bits == 256 || bits == 512;
+            // return bits == 32 || bits == 64 || bits == 128 || bits == 256 || bits == 512;
+            return bits == 128 || bits == 256 || bits == 512;
         }
 
         case TB_ZERO_EXT:
         case TB_SIGN_EXT: {
-            int bits = elem_bits * width;
             return bits == 128 || bits == 256 || bits == 512;
         }
 

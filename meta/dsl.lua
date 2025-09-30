@@ -825,13 +825,37 @@ function write_node(ids, set, hashes)
     end
 
     add_line(depth, string.format("%s* k%d_extra = TB_NODE_GET_EXTRA(k%d);", extra_type, ids[n], ids[n]))
-    for k,v in pairs(n) do
-        if type(k) == "string" and k ~= "dt" then
-            -- replace all uses of captures with their real name
-            add_line(depth, string.format("k%d_extra->%s = %s;", ids[n], k, v))
-        elseif mem_capture and v == mem_capture.name then
-            add_line(depth, string.format("memcpy(k%d_extra, %s->extra, sizeof("..extra_type.."));", ids[n], v))
+
+    local extras = Partitions()
+    for i=1,#set do
+        local line = {}
+        for k,v in pairs(set[i]) do
+            if type(k) == "string" and k ~= "dt" then
+                -- replace all uses of captures with their real name
+                line[#line + 1] = string.format("k%d_extra->%s = %s", ids[n], k, v)
+            elseif mem_capture and v == mem_capture.name then
+                line[#line + 1] = string.format("memcpy(k%d_extra, %s->extra, sizeof("..extra_type.."))", ids[n], v)
+            end
         end
+        if #line > 0 then
+            line = table.concat(line, ", ")..";"
+            print(hashes[i], line)
+            extras:put(line, hashes[i])
+        end
+    end
+
+    if extras:count() == 1 then
+        add_line(depth, extras:at(1))
+    else
+        add_line(depth, "switch (hash) {")
+        for line,list in extras:iter() do
+            local cases = ""
+            for i=1,#list do
+                cases = cases..string.format("case %d: ", list[i])
+            end
+            add_line(depth+1, string.format("%s%s break;", cases, line))
+        end
+        add_line(depth, "}")
     end
 
     -- trim size
