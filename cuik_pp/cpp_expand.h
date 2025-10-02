@@ -289,7 +289,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
             // expect comma
             if (aarray_length(args)) {
                 if (param_t.type != TOKEN_COMMA) {
-                    __debugbreak();
+                    assert(0);
                 }
                 param_t = lexer_read(&param_lexer);
             }
@@ -364,7 +364,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
             // expect comma
             if (arg_c > 0) {
                 if (arg_t.type != TOKEN_COMMA) {
-                    __debugbreak();
+                    assert(0);
                 }
                 arg_t = tokens[arg_head++];
             }

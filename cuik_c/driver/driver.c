@@ -674,7 +674,7 @@ void cuikpp_dump_tokens(TokenStream* s) {
             // initial indentation for the new line
             int spaces = 0;
             const char* line = r.line_str;
-            while (line[spaces] && isspace(line[spaces])) {
+            while (line[spaces] && (line[spaces] == ' ' || line[spaces] == '\t')) {
                 spaces++;
             }
 

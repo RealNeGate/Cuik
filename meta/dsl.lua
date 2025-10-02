@@ -561,7 +561,7 @@ for i,name in ipairs(ordered) do
         walk_into(set[i][1], partition_count, pattern_count)
         pattern_count = pattern_count + 1
     end
-    print(i, name, #set)
+    -- print(i, name, #set)
 end
 
 -- Generate C code for the matcher
@@ -839,7 +839,7 @@ function write_node(ids, set, hashes)
         end
         if #line > 0 then
             line = table.concat(line, ", ")..";"
-            print(hashes[i], line)
+            -- print(hashes[i], line)
             extras:put(line, hashes[i])
         end
     end
