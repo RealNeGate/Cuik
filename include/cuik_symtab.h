@@ -5,7 +5,7 @@
 
 #include "cuik_prelude.h"
 
-// interned string, generated with atoms_put (or it's sisters)
+// interned string, generated with atoms_put (or its sisters)
 typedef char* Cuik_Atom;
 
 // in C, there's two symbol tables used (one for tags, another for proper symbols)

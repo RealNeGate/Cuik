@@ -489,7 +489,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                 memset(&out[a.length + b.length], 0, 16);
 
                 // generate a new token and see what happens
-                Lexer scratch = { 0, out, out };
+                Lexer scratch = { 0, 0, out, out };
                 Token joined = lexer_read(&scratch);
                 joined.location = ctx->tokens.list.tokens[i].location;
 

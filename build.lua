@@ -46,6 +46,11 @@ local modules = {
             "cuik_c/targets/mips_desc.c", "cuik_c/targets/wasm_desc.c",
         }, flags="-DCONFIG_HAS_CUIKC", deps={"common", "cuik_pp"}
     },
+    --   Go frontend
+    cuik_go = { srcs={
+            "cuik_go/parser.c"
+        }, flags="-DCONFIG_HAS_CUIKGO", deps={"common", "cuik_pp"}
+    },
     --   TildeBackend
     tb = { srcs={
             "tb/libtb.c",
@@ -209,6 +214,7 @@ function walk(name)
 end
 
 walk("mimalloc")
+walk("cuik_go")
 
 if options.cuik then
     walk("cuik_c")

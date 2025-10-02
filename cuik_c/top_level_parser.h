@@ -35,7 +35,7 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
         out[out_i++] = '\0';
     }
 
-    Lexer pragma_lex = { 0, out, out };
+    Lexer pragma_lex = { 0, 0, out, out };
     String pragma_name = lexer_read(&pragma_lex).content;
     if (string_equals_cstr(&pragma_name, "comment")) {
         // https://learn.microsoft.com/en-us/cpp/preprocessor/comment-c-cpp?view=msvc-170

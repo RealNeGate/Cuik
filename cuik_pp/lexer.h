@@ -101,6 +101,7 @@ enum {
 
 typedef struct {
     uint32_t file_id;
+    uint32_t flags;
     unsigned char* start;
     unsigned char* current;
 } Lexer;
