@@ -9,6 +9,16 @@
 #include <cuik_lex.h>
 #include <cuik_symtab.h>
 
+#include <tb.h>
+
+#ifndef NDEBUG
+#define TB_ASSERT_MSG(cond, ...) ((cond) ? 0 : (printf("\n" __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), printf(__VA_ARGS__), __builtin_trap(), 0))
+#define TB_ASSERT(cond)          ((cond) ? 0 : (printf("\n" __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), __builtin_trap(), 0))
+#else
+#define TB_ASSERT_MSG(cond, ...) ((cond) ? 0 : (__builtin_unreachable(), 0))
+#define TB_ASSERT(cond)          ((cond) ? 0 : (__builtin_unreachable(), 0))
+#endif
+
 #define __debugbreak() __builtin_debugtrap()
 
 enum {
@@ -80,7 +90,7 @@ static Token cuikgo_lex(Lexer* l) {
     if (t.type == 0) {
         // add chars together (max of 3)
         int length = current - start;
-        assert(length <= 3);
+        TB_ASSERT(length <= 3);
 
         uint32_t mask = UINT32_MAX >> ((4 - length) * 8);
 
@@ -136,30 +146,35 @@ static void cuikgo_eat(Lexer* l, int type) {
 typedef struct CuikGo_Type CuikGo_Type;
 struct CuikGo_Type {
     enum {
-        CUIK_GO_VOID,
+        CUIKGO_VOID,
 
         // scalars
-        CUIK_GO_FLOAT64,
+        CUIKGO_INT,
+        CUIKGO_FLOAT64,
 
         // aggregates
-        CUIK_GO_MAP,
-        CUIK_GO_STRUCT,
+        CUIKGO_MAP,
+        CUIKGO_STRUCT,
     } tag;
 
     uint32_t size, align;
 
-    // Arrays are maps with a NULL key_type
+    // Slices are maps with a NULL key_type:
+    //   Slices have a layout of ptr, len, cap.
     CuikGo_Type* key_type;
     CuikGo_Type* val_type;
 };
 
-static CuikGo_Type FLOAT64_TYPE = { CUIK_GO_FLOAT64, 8, 8 };
+static CuikGo_Type INT_TYPE     = { CUIKGO_INT, 8, 8 };
+static CuikGo_Type FLOAT64_TYPE = { CUIKGO_FLOAT64, 8, 8 };
 
 typedef struct {
     enum {
         ////////////////////////////////
         // Expressions
         ////////////////////////////////
+        // immediately define and push to stack
+        WORD_DECL_REF,
         // reference a defined DECL
         WORD_REF,
         // reference an undefined DECL
@@ -167,7 +182,6 @@ typedef struct {
         // map/array ops
         WORD_INDEX,
         // binary ops
-        WORD_CONSUME,
         WORD_ASSIGN,
         WORD_PLUS,
         WORD_MINUS,
@@ -190,10 +204,19 @@ typedef struct {
         ////////////////////////////////
         // Declarations & Statements
         ////////////////////////////////
+        // these words don't push values to the stack
+        WORD_STMTS_PAST_THIS,
+
+        WORD_CONSUME,
+
+        WORD_FUNC,
+        WORD_PARAM,
         WORD_DECL,
         WORD_FOR_RANGE,
         // if false, we skip to the word "ref"
         WORD_IF,
+        // marks where the false case starts, and where it ends
+        WORD_ELSE,
     } tag;
 
     Cuik_Atom name;
@@ -203,6 +226,12 @@ typedef struct {
 
     // reference to another word
     int ref;
+
+    // IR backing
+    union {
+        TB_Function* f;
+        TB_Node* n;
+    } ir;
 } CuikGo_Word;
 
 typedef struct {
@@ -216,12 +245,20 @@ static Cuik_SymbolTable* syms;
 static void dump_words(void) {
     for (int i = 0; i < word_cnt; i++) {
         switch (words[i].tag) {
+            case WORD_PARAM:
+            printf("%d:PARAM(%s) ", i, words[i].name);
+            break;
+
+            case WORD_DECL_REF:
+            printf("%d:DECL_REF(%s) ", i, words[i].name);
+            break;
+
             case WORD_DECL:
             printf("%d:DECL(%s) ", i, words[i].name);
             break;
 
             case WORD_FOR_RANGE:
-            printf("FOR-RANGE ");
+            printf("FOR-RANGE(%d) ", words[i].ref);
             break;
 
             case WORD_REF:
@@ -234,6 +271,14 @@ static void dump_words(void) {
 
             case WORD_IF:
             printf("IF(%d) ", words[i].ref);
+            break;
+
+            case WORD_ELSE:
+            printf("ELSE(%d) ", words[i].ref);
+            break;
+
+            case WORD_FUNC:
+            printf("\nFUNC(%d) ", words[i].ref);
             break;
 
             case WORD_INDEX: printf("INDEX "); break;
@@ -249,17 +294,17 @@ static void dump_words(void) {
 }
 
 static CuikGo_Word* submit_word(int tag) {
-    assert(word_cnt + 1 < 1024);
+    TB_ASSERT(word_cnt + 1 < 1024);
     CuikGo_Word* w = &words[word_cnt++];
     *w = (CuikGo_Word){ tag };
     return w;
 }
 
-static CuikGo_Symbol* def_name(String str, CuikGo_Type* type) {
+static CuikGo_Symbol* def_name(int tag, String str, CuikGo_Type* type) {
     printf("VAR '%.*s'\n", (int)str.length, str.data);
 
     Cuik_Atom name = atoms_put(str.length, str.data);
-    CuikGo_Word* w = submit_word(WORD_DECL);
+    CuikGo_Word* w = submit_word(tag);
     w->name = name;
     w->type = type;
 
@@ -313,7 +358,7 @@ CuikGo_Type* cuikgo_type(CuikGo_Parser* ctx, Lexer* l) {
             cuikgo_eat(l, ']');
 
             CuikGo_Type* new_type = calloc(1, sizeof(CuikGo_Type));
-            new_type->tag = CUIK_GO_MAP;
+            new_type->tag = CUIKGO_MAP;
             new_type->size = 24;
             new_type->align = 8;
 
@@ -331,13 +376,13 @@ CuikGo_Type* cuikgo_type(CuikGo_Parser* ctx, Lexer* l) {
     return type;
 }
 
-void cuikgo_name_list(CuikGo_Parser* ctx, Lexer* l) {
+void cuikgo_name_list(CuikGo_Parser* ctx, Lexer* l, int tag) {
     // Name list
     Token t;
     do {
         t = cuikgo_lex(l);
-        assert(t.type == TOKEN_IDENTIFIER);
-        def_name(t.content, NULL);
+        TB_ASSERT(t.type == TOKEN_IDENTIFIER);
+        def_name(tag, t.content, NULL);
     } while (cuikgo_try_eat(l, ','));
 }
 
@@ -456,33 +501,41 @@ void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l) {
 
         // else case
         w->ref = word_cnt;
+        w = submit_word(WORD_ELSE);
+        w->arity = 1;
+
         if (cuikgo_try_eat_str(l, "else")) {
             // TODO(NeGate): should be a block or if
             cuikgo_block(ctx, l);
         }
 
-        dump_words();
+        w->ref = word_cnt;
     } else if (token_isa(t, "for")) {
         cuik_scope_open(syms);
 
         int top = word_cnt;
-        cuikgo_name_list(ctx, l);
+        cuikgo_name_list(ctx, l, WORD_DECL_REF);
         int bot = word_cnt;
+        TB_ASSERT(bot - top == 2);
 
         t = cuikgo_lex(l);
         if (t.type == 0x3D3A) {
+            // HACK(NeGate): this should be part of type checking
+            words[top+0].type = &INT_TYPE;
+            words[top+1].type = &FLOAT64_TYPE;
+
             // := range EXPR
             cuikgo_eat_str(l, "range");
             cuikgo_expr(ctx, l);
 
             CuikGo_Word* w = submit_word(WORD_FOR_RANGE);
-            w->arity = (bot - top) + 1;
-
-            dump_words();
+            w->arity = 3;
             cuikgo_block(ctx, l);
+            w->ref = word_cnt;
         } else {
             __debugbreak();
         }
+
         cuik_scope_close(syms);
     } else {
         *l = saved;
@@ -493,14 +546,228 @@ void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l) {
     }
 }
 
-void cuikgo_var_decl(CuikGo_Parser* ctx, Lexer* l) {
+void cuikgo_var_decl(CuikGo_Parser* ctx, Lexer* l, bool is_param) {
     // Name list
     int top = word_cnt;
-    cuikgo_name_list(ctx, l);
+    cuikgo_name_list(ctx, l, is_param ? WORD_PARAM : WORD_DECL);
 
     CuikGo_Type* type = cuikgo_type(ctx, l);
     for (int i = top; i < word_cnt; i++) {
         words[i].type = type;
+    }
+}
+
+typedef struct {
+    enum {
+        CUIKGO_RVALUE,
+
+        // L-values
+        CUIKGO_LVALUE,
+        CUIKGO_LVALUE_SYM,
+    } tag;
+    CuikGo_Type* type;
+    TB_Node* n;
+} CuikGo_Val;
+
+static TB_Symbol* expected_nmt_lut;
+
+// when we load a reference, we must unpack it into a pointer
+static TB_Node* insert_lvb(CuikGo_Parser* ctx, TB_GraphBuilder* g, TB_Node* base, int64_t offset) {
+    TB_Node* a = tb_builder_uint(g, TB_TYPE_I32, 69);
+
+    TB_Node* ptr = tb_builder_ptr_member(g, base, offset);
+    TB_Node* ld  = tb_builder_load(g, 0, true, TB_TYPE_I64, ptr, 8, false);
+
+    // either a GC-trap or null segv
+    tb_builder_safepoint(g, 0, ld, NULL, 1, &a);
+
+    // bit test for NMT mismatch
+    TB_Node* expected_ld = tb_builder_load(g, 0, false, TB_TYPE_I64, tb_builder_symbol(g, expected_nmt_lut), 8, false);
+    expected_ld = tb_builder_binop_int(g, TB_AND, expected_ld, tb_builder_uint(g, TB_TYPE_I64, 63), 0);
+
+    TB_Node* bit = tb_builder_binop_int(g, TB_SHR, expected_ld, ld, 0);
+    bit = tb_builder_binop_int(g, TB_AND, bit, tb_builder_uint(g, TB_TYPE_I64, 1), 0);
+
+    // unpack pointer, shift down by 3
+    TB_Node* addr = tb_builder_binop_int(g, TB_SHR, ld, tb_builder_uint(g, TB_TYPE_I64, 3), 0);
+    return tb_builder_cast(g, TB_TYPE_PTR, TB_BITCAST, addr);
+}
+
+static TB_Node* to_rval(CuikGo_Parser* ctx, TB_GraphBuilder* g, CuikGo_Val* v) {
+    if (v->tag == CUIKGO_LVALUE) {
+        TB_DataType dt = TB_TYPE_VOID;
+        switch (v->type->tag) {
+            case CUIKGO_INT:     dt = TB_TYPE_I64; break;
+            case CUIKGO_FLOAT64: dt = TB_TYPE_F64; break;
+            // this is a structure, we can only directly refer to it via pointer
+            case CUIKGO_MAP:     return insert_lvb(ctx, g, v->n, 0);
+            default: TB_ASSERT(0);
+        }
+        return tb_builder_load(g, 0, true, dt, v->n, v->type->align, false);
+    } else if (v->tag == CUIKGO_RVALUE) {
+        return v->n;
+    } else {
+        TB_ASSERT(0);
+    }
+}
+
+void cuikgo_ir_gen(CuikGo_Parser* ctx, TB_GraphBuilder* g, int start, int end);
+int cuikgo_ir_gen_word(CuikGo_Parser* ctx, TB_GraphBuilder* g, CuikGo_Word* w, int word_pos, int arity, CuikGo_Val* args) {
+    switch (w->tag) {
+        case WORD_CONSUME: break;
+
+        case WORD_DECL:
+        case WORD_DECL_REF: {
+            CuikGo_Type* type = w->type;
+            w->ir.n = tb_builder_local(g, type->size, type->align);
+
+            if (w->tag == WORD_DECL_REF) {
+                args[0] = (CuikGo_Val){ CUIKGO_LVALUE, .type = w->type, .n = w->ir.n };
+            }
+            break;
+        }
+
+        case WORD_REF: {
+            args[0] = (CuikGo_Val){ CUIKGO_LVALUE, .type = words[w->ref].type, .n = words[w->ref].ir.n };
+            break;
+        }
+
+        case WORD_CMPGT: {
+            TB_Node* lhs = to_rval(ctx, g, &args[0]);
+            TB_Node* rhs = to_rval(ctx, g, &args[1]);
+
+            args[0] = (CuikGo_Val){ CUIKGO_RVALUE, .type = &INT_TYPE, .n = tb_builder_cmp(g, TB_CMP_ULT, rhs, lhs) };
+            break;
+        }
+
+        case WORD_ASSIGN: {
+            TB_Node* rhs = to_rval(ctx, g, &args[1]);
+            TB_ASSERT(args[0].tag == CUIKGO_LVALUE);
+
+            tb_builder_store(g, 0, true, args[0].n, rhs, 8, false);
+            args[0] = (CuikGo_Val){ CUIKGO_RVALUE, .type = args[1].type, .n = rhs };
+            break;
+        }
+
+        case WORD_INDEX: {
+            TB_Node* base  = to_rval(ctx, g, &args[0]);
+            TB_Node* index = to_rval(ctx, g, &args[1]);
+
+            // array indexing
+            TB_ASSERT(args[0].type->tag == CUIKGO_MAP);
+            CuikGo_Type* val_type = args[0].type->val_type;
+            if (args[0].type->key_type != NULL) {
+                TB_ASSERT(0);
+            } else {
+                TB_Node* add = tb_builder_ptr_array(g, base, index, val_type->size);
+                args[0] = (CuikGo_Val){ CUIKGO_LVALUE, .type = val_type, .n = add };
+                break;
+            }
+        }
+
+        case WORD_FOR_RANGE: {
+            // (key, value, map/array)
+            TB_ASSERT(args[0].tag == CUIKGO_LVALUE && args[1].tag == CUIKGO_LVALUE);
+            TB_Node* key = args[0].n;
+            TB_Node* val = args[1].n;
+
+            TB_Node* iter  = to_rval(ctx, g, &args[2]);
+
+            TB_Node* base  = insert_lvb(ctx, g, iter, 0);
+            TB_Node* limit = tb_builder_load(g, 0, false, TB_TYPE_I64, tb_builder_ptr_member(g, iter, 8), 8, false);
+            CuikGo_Type* val_type = &FLOAT64_TYPE;
+            TB_Node* exit = tb_builder_label_make(g);
+
+            int index_var = tb_builder_decl(g, tb_builder_label_get(g));
+            tb_builder_set_var(g, index_var, tb_builder_sint(g, TB_TYPE_I64, 0));
+
+            TB_Node* header = tb_builder_loop(g);
+            TB_Node* loop   = tb_builder_label_clone(g, header);
+            {
+                TB_Node* paths[2];
+                // while (has_next()) {
+                TB_Node* index  = tb_builder_get_var(g, index_var);
+                TB_Node* cond   = tb_builder_cmp(g, TB_CMP_ULT, index, limit);
+                tb_builder_if(g, cond, paths);
+
+
+                // exit path
+                tb_builder_label_set(g, paths[1]);
+                tb_builder_br(g, exit);
+                tb_builder_label_kill(g, paths[1]);
+
+
+                // in body
+                tb_builder_label_set(g, paths[0]);
+                // fetch val
+                index = tb_builder_get_var(g, index_var);
+                TB_Node* val_ld = tb_builder_load(g, 0, true, TB_TYPE_F64, tb_builder_ptr_array(g, base, index, val_type->size), 8, false);
+                tb_builder_store(g, 0, true, key, index,  val_type->align, false);
+                tb_builder_store(g, 0, true, val, val_ld, val_type->align, false);
+                cuikgo_ir_gen(ctx, g, word_pos+1, w->ref);
+                // advance
+                index = tb_builder_get_var(g, index_var);
+                tb_builder_set_var(g, index_var, tb_builder_binop_int(g, TB_ADD, index, tb_builder_uint(g, TB_TYPE_I64, 1), 0));
+                tb_builder_br(g, loop);
+                tb_builder_label_kill(g, paths[0]);
+            }
+            tb_builder_label_kill(g, loop);
+            tb_builder_label_kill(g, header);
+
+            tb_builder_label_set(g, exit);
+            return w->ref;
+        }
+        case WORD_IF: {
+            TB_Node* paths[2];
+            TB_Node* cond = to_rval(ctx, g, &args[0]);
+
+            TB_Node* merge = tb_builder_label_make(g);
+            tb_builder_if(g, cond, paths);
+            { // then
+                tb_builder_label_set(g, paths[0]);
+                cuikgo_ir_gen(ctx, g, word_pos+1, w->ref);
+                tb_builder_br(g, merge);
+                tb_builder_label_kill(g, paths[0]);
+            }
+            TB_ASSERT(words[w->ref].tag == WORD_ELSE);
+            int merge_pos = words[w->ref].ref;
+            { // else
+                tb_builder_label_set(g, paths[1]);
+                if (w->ref+1 != merge_pos) {
+                    cuikgo_ir_gen(ctx, g, w->ref+1, merge_pos);
+                }
+                tb_builder_br(g, merge);
+                tb_builder_label_kill(g, paths[1]);
+            }
+
+            tb_builder_label_set(g, merge);
+
+            // for whatever reason, neither path on the if joined back so this is just a dead label.
+            if (merge->inputs[1]->input_count == 0) {
+                tb_builder_label_kill(g, merge);
+            }
+            return merge_pos;
+        }
+
+        default: TB_ASSERT(0);
+    }
+    return word_pos+1;
+}
+
+void cuikgo_ir_gen(CuikGo_Parser* ctx, TB_GraphBuilder* g, int start, int end) {
+    CuikGo_Val stack[64];
+    size_t i = start, top = 0;
+    while (i < end) {
+        CuikGo_Word* w = &words[i];
+
+        // once we know this we can organize the top slice of the stack as the inputs
+        top -= w->arity;
+        CuikGo_Val* args = &stack[top];
+        i = cuikgo_ir_gen_word(ctx, g, w, i, w->arity, args);
+        // push to stack
+        if (w->tag < WORD_STMTS_PAST_THIS) {
+            top += 1;
+        }
     }
 }
 
@@ -519,7 +786,7 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
     };
 
     ////////////////////////////////
-    // Package
+    // Parsing
     ////////////////////////////////
     cuikgo_eat_str(&l, "package");
     Token package = cuikgo_lex(&l);
@@ -535,20 +802,85 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
         if (token_isa(t, "func")) {
             String name = cuikgo_lex(&l).content;
 
+            def_name(WORD_FUNC, name, NULL);
+            CuikGo_Word* w = &words[word_cnt - 1];
+
             // Params
             cuikgo_eat(&l, '(');
             if (!cuikgo_try_eat(&l, ')')) {
                 do {
-                    cuikgo_var_decl(ctx, &l);
+                    cuikgo_var_decl(ctx, &l, true);
                 } while (cuikgo_try_eat(&l, ','));
                 cuikgo_eat(&l, ')');
             }
 
             // Body
             cuikgo_block(ctx, &l);
+            w->ref = word_cnt;
             continue;
         }
     }
 
+    dump_words();
+
+    ////////////////////////////////
+    // Type checking
+    ////////////////////////////////
+
+    ////////////////////////////////
+    // IR generation
+    ////////////////////////////////
+    TB_Module* ir_mod = tb_module_create_for_host(true);
+    expected_nmt_lut = tb_extern_create(ir_mod, -1, "expected_nmt", TB_EXTERNAL_SO_LOCAL);
+
+    // IR alloc
+    for (int i = 0; i < word_cnt;) {
+        if (words[i].tag == WORD_FUNC) {
+            words[i].ir.f = tb_function_create(ir_mod, -1, words[i].name, TB_LINKAGE_PUBLIC);
+        } else if (words[i].tag == WORD_DECL) {
+            __debugbreak();
+        }
+        i = words[i].ref;
+    }
+
+    // IR gen
+    TB_Worklist* ws = tb_worklist_alloc();
+    for (int i = 0; i < word_cnt;) {
+        TB_ASSERT(words[i].tag == WORD_FUNC || words[i].tag == WORD_DECL);
+
+        int next = words[i].ref;
+        if (words[i].tag == WORD_FUNC) {
+            TB_FunctionPrototype* proto = tb_prototype_create(ir_mod, TB_STDCALL, 2, (TB_PrototypeParam[2]){ { TB_TYPE_PTR }, { TB_TYPE_PTR } }, 0, NULL, false);
+
+            TB_Function* func = words[i].ir.f;
+            TB_GraphBuilder* g = tb_builder_enter(func, tb_module_get_text(ir_mod), proto, NULL);
+            // TB_GraphBuilder* g = tb_builder_enter_from_dbg(func, tb_module_get_text(ir_mod), dbg_type, NULL);
+
+            // fill params
+            i++;
+            for (int j = 0; i < next && words[i].tag == WORD_PARAM; j++) {
+                words[i++].ir.n = tb_builder_get_var(g, j+1);
+            }
+
+            cuikgo_ir_gen(ctx, g, i, next);
+            if (tb_builder_label_get(g) != NULL) {
+                tb_builder_ret(g, 0, 0, NULL);
+            }
+
+            tb_builder_exit(g);
+            tb_print(func);
+            tb_opt(func, ws, false);
+
+            tb_print(func);
+
+            TB_FunctionOutput* out = tb_codegen(func, TB_RA_ROGERS, ws, NULL, true);
+            tb_output_print_asm(out, NULL);
+        } else {
+            __debugbreak();
+        }
+        i = next;
+    }
+
     __debugbreak();
 }
+

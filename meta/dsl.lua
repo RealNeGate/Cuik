@@ -829,7 +829,25 @@ function write_node(ids, set, hashes)
     local extras = Partitions()
     for i=1,#set do
         local line = {}
+        local sorted = {}
         for k,v in pairs(set[i]) do
+            if type(k) == "string" and k ~= "dt" then
+                sorted[#sorted + 1] = k
+            elseif mem_capture and v == mem_capture.name then
+                sorted[#sorted + 1] = k
+            end
+        end
+
+        table.sort(sorted, function(a, b)
+            -- put numbers on the left
+            if type(a) == "number" then return true  end
+            if type(b) == "number" then return false end
+            return a < b end
+        )
+
+        for j=1,#sorted do
+            local k = sorted[j]
+            local v = set[i][k]
             if type(k) == "string" and k ~= "dt" then
                 -- replace all uses of captures with their real name
                 line[#line + 1] = string.format("k%d_extra->%s = %s", ids[n], k, v)
@@ -837,6 +855,7 @@ function write_node(ids, set, hashes)
                 line[#line + 1] = string.format("memcpy(k%d_extra, %s->extra, sizeof("..extra_type.."))", ids[n], v)
             end
         end
+
         if #line > 0 then
             line = table.concat(line, ", ")..";"
             -- print(hashes[i], line)

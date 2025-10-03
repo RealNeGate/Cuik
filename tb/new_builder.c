@@ -415,37 +415,20 @@ void tb_builder_merge_mem(TB_GraphBuilder* g, int out_mem, int split_count, int 
     set_input(f, g->curr, n, 2 + out_mem);
 }
 
-void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args, TB_Node* paths[2]) {
+void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args) {
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_TUPLE, 3 + arg_count, sizeof(TB_NodeBranch));
-    set_input(f, n, xfer_ctrl(g, n), 0);
-    set_input(f, n, peek_mem(g, mem_var), 1);
     set_input(f, n, mem_op, 2);
     FOR_N(i, 0, arg_count) {
         set_input(f, n, args[i], i+3);
     }
 
-    TB_Node* cproj[2];
-    cproj[0] = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
-    cproj[1] = tb__make_proj(f, TB_TYPE_CONTROL, n, 1);
+    TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+    set_input(f, n, xfer_ctrl(g, cproj), 0);
 
-    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 2);
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
+    set_input(f, n, xfer_mem(g, mproj, mem_var), 1);
 
-    TB_Node* curr = g->curr;
-    g->curr = NULL;
-
-    FOR_N(i, 0, 2) {
-        TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, curr->input_count, sizeof(TB_NodeSymbolTable));
-        set_input(f, syms, cproj[i], 0);
-        set_input(f, syms, cproj[i], 1);
-        TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = true);
-
-        FOR_N(j, 2, curr->input_count) {
-            set_input(f, syms, curr->inputs[j], j);
-        }
-        set_input(f, syms, mproj, 2+mem_var);
-        paths[i] = syms;
-    }
     TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, .userdata = userdata, .saved_val_count = arg_count);
 }
 

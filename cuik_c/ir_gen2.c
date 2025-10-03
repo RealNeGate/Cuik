@@ -1691,41 +1691,6 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
             function_type = 0;
         }
 
-        #if 0
-        if (tu->has_tb_debug_info) {
-            emit_location(tu, func, s->decl.initial_as_stmt->loc.start);
-
-            // mark where the return site is
-            SourceLoc loc = s->decl.initial_as_stmt->loc.end;
-            ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
-            if (rloc.file->filename[0] != '<') {
-                TB_SourceFile* f = tb_get_source_file(tu->ir_mod, -1, rloc.file->filename);
-                tb_inst_set_exit_location(func, f, rloc.line, 0); // rloc.column);
-            }
-        }
-
-        // compile body
-        {
-            function_type = type;
-            function_name = s->decl.name;
-
-            irgen_stmt(tu, g, s->decl.initial_as_stmt);
-
-            function_name = NULL;
-            function_type = 0;
-        }
-
-        // append return if none exists
-        if (tb_inst_get_control(func) != NULL) {
-            if (strcmp(s->decl.name, "main") == 0) {
-                TB_Node* exit_status = tb_inst_uint(func, TB_TYPE_I32, 0);
-                tb_inst_ret(func, 1, &exit_status);
-            } else {
-                tb_inst_ret(func, 0, NULL);
-            }
-        }
-        #endif
-
         return (TB_Symbol*) func;
     } else if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) && s->backing.s) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);

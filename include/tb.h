@@ -742,7 +742,6 @@ typedef struct TB_Safepoint {
     TB_Node* node; // type == TB_SAFEPOINT
     void* userdata;
 
-    uint32_t target;// relative to the function body.
     uint32_t ip;    // relative to the function body.
     uint32_t count; // same as node->input_count
     uint32_t values[];
@@ -1464,10 +1463,7 @@ TB_API void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file,
 // function call
 TB_API TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
 TB_API TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
-
-// paths[0] has the normal path's symbol table written in it.
-// paths[1] has the "hit" path's symbol table written in it.
-TB_API void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args, TB_Node* paths[2]);
+TB_API void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args);
 
 // locals (variables but as stack vars)
 TB_API TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align);

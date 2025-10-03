@@ -481,7 +481,7 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
             if (sp) {
                 // continue at this new safepoint
                 printf("PAUSE RIP=%p\n", cpu->pc);
-                e->ContextRecord->Rip += sp->target - sp->ip;
+                // e->ContextRecord->Rip += sp->target - sp->ip;
                 return EXCEPTION_CONTINUE_EXECUTION;
             }
             break;
