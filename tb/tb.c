@@ -126,6 +126,10 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     return info;
 }
 
+void tb_module_use_cc_gc(TB_Module* m, TB_Symbol* phase_control_sym) {
+    m->ccgc.phase_control = phase_control_sym;
+}
+
 TB_DataType tb_data_type_ptr_int(TB_Module* m) {
     switch (m->codegen->pointer_size) {
         case 16: return TB_TYPE_I16;

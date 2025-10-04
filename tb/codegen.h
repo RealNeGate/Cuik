@@ -171,6 +171,13 @@ typedef struct {
     int index;
 } TB_SubMatch;
 
+// inserted at the bottom of the function to handle whatever little runtime support
+typedef struct TB_CodeStub {
+    struct TB_CodeStub* prev;
+    uint32_t tag;
+    uint32_t pos;
+} TB_CodeStub;
+
 struct Ctx {
     TB_CGEmitter emit;
     TB_FeatureSet features;
@@ -217,6 +224,7 @@ struct Ctx {
     // clobbered by function calls so i figured keeping a copy of them around
     // would be nice.
     RegMask* cached_arg_list_mask;
+    TB_CodeStub* stubs;
 
     // Values
     ArenaArray(VReg) vregs;   // [vid]
@@ -280,6 +288,15 @@ static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {
 
 static VReg* vreg_at(Ctx* ctx, int id)       { return id > 0 ? &ctx->vregs[id] : NULL; }
 static VReg* node_vreg(Ctx* ctx, TB_Node* n) { return n && ctx->vreg_map[n->gvn] > 0 ? &ctx->vregs[ctx->vreg_map[n->gvn]] : NULL; }
+
+static void* add_code_stub(Ctx* restrict ctx, uint32_t tag, size_t size) {
+    TB_CodeStub* stub = tb_arena_alloc(&ctx->f->arena, size);
+    stub->tag = tag;
+    stub->pos = 0;
+    stub->prev = ctx->stubs;
+    ctx->stubs = stub;
+    return stub;
+}
 
 static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
     switch (n->type) {

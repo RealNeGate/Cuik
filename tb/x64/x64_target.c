@@ -527,6 +527,18 @@ static bool can_gvn(TB_Node* n) {
     return true;
 }
 
+static float edge_prob(TB_Node* n) {
+    TB_Node* tup = n->inputs[0];
+    int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+    if (tup->type == x86_jcc) {
+        X86MemOp* op = TB_NODE_GET_EXTRA(n);
+        return index ? 1.0 - op->prob : op->prob;
+    } else {
+        return 0.0f;
+    }
+}
+
 static uint32_t node_flags(TB_Node* n) {
     if (n->type == x86_jcc) {
         return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_IF | NODE_MEMORY_IN;
@@ -584,7 +596,10 @@ static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
-    if (n->type == TB_MACH_FRAME_PTR) {
+    if (n->type == TB_MACH_JIT_THREAD_PTR) {
+        printf("  threadptr ");
+        print_pretty_edge(ctx, n);
+    } else if (n->type == TB_MACH_FRAME_PTR) {
         printf("  frameptr ");
         print_pretty_edge(ctx, n);
     } else if (n->type == TB_PROJ) {
@@ -907,6 +922,10 @@ static CallingConv CC_SYSCALL = {
     .rets[REG_CLASS_GPR] = { RAX, RDX },
 };
 
+static bool is_gcref_dt(TB_DataType dt) {
+    return dt.type == TB_TAG_PTR && dt.elem_or_addrspace > 0;
+}
+
 static TB_X86_DataType legalize_int(TB_DataType dt) {
     switch (dt.type) {
         case TB_TAG_BOOL: return TB_X86_BYTE;
@@ -1017,6 +1036,10 @@ static int node_2addr(TB_Node* n) {
 static bool node_remat(TB_Node* n) {
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
     if ((n->type == x86_mov || n->type == x86_vmov) && op->mode == MODE_LD && n->inputs[1] == NULL) {
+        return true;
+    }
+
+    if (n->type == TB_MACH_JIT_THREAD_PTR) {
         return true;
     }
 
@@ -1308,7 +1331,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[1] = &TB_REG_EMPTY;
                 FOR_N(i, 2, n->input_count) {
                     TB_Node* in = n->inputs[i];
-                    if (in->dt.type == TB_TAG_MEMORY) {
+                    if (in == NULL || in->dt.type == TB_TAG_MEMORY) {
                         ins[i] = &TB_REG_EMPTY;
                     } else {
                         ins[i] = ctx->normie_mask[TB_IS_VECTOR_TYPE(in->dt) || TB_IS_FLOAT_TYPE(in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
@@ -1779,6 +1802,17 @@ static bool node_peephole(Ctx* restrict ctx, TB_Node* n, TB_BasicBlock* bb, int 
     }
 
     return false;
+}
+
+typedef struct {
+    TB_CodeStub header;
+} Stub_LVB;
+
+static void stub_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_CodeStub* stub) {
+    // PATCH call site
+    int32_t disp = e->count - (stub->pos + 4);
+    PATCH4(e, stub->pos, disp);
+    EMIT1(e, 0xCC);
 }
 
 static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
@@ -2274,6 +2308,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 case x86_cmovcc: op_type = CMOVO+op->cond; break;
                 case x86_adc: op_type = ADC; break;
             }
+
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
             if (op->mode == MODE_ST) {
                 __(op_type, dt, &rm, &rx);
@@ -2291,7 +2326,31 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                         __(MOV, dt, &dst, &rx);
                     }
                 }
+
+                if (n->type == x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
+                    if (rm.index >= 0) {
+                        COMMENT("LVB %s, [%s + %s*%d + %d]", GPR_NAMES[dst.reg], GPR_NAMES[rm.reg], GPR_NAMES[rm.index], rm.imm);
+                    } else {
+                        COMMENT("LVB %s, [%s+%d]", GPR_NAMES[dst.reg], GPR_NAMES[rm.reg], rm.imm);
+                    }
+                }
+
                 __(op_type, dt, &dst, &rm);
+
+                if (n->type == x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
+                    Stub_LVB* stub = add_code_stub(ctx, 0, sizeof(Stub_LVB));
+
+                    // LOADED VALUE BARRIER (LVB)
+                    Val dst = op_at(ctx, n);
+                    TB_Symbol* sym = ctx->module->ccgc.phase_control;
+                    __(BT,  TB_X86_QWORD, Vsym(sym,0), &dst);
+
+                    //   jb gc_trap_stub
+                    EMIT1(e, 0x0F); EMIT1(e, 0x82); EMIT4(e, 0);
+                    stub->header.pos = e->count-4;
+
+                    __(AND, TB_X86_QWORD, &dst, Vimm(-4));
+                }
             }
             break;
         }
@@ -2570,7 +2629,11 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
     return 0b11101111;
 }
 
-static int get_pipe_latency(TB_Node* n, int i) {
+static int node_latency(TB_Function* f, TB_Node* n, int i) {
+    if (is_proj(n)) {
+        return 0;
+    }
+
     // fixed latency, regardless of who's asking it's gonna
     // take a while.
     if (n->type == x86_call) {
@@ -2619,15 +2682,12 @@ static int get_pipe_latency(TB_Node* n, int i) {
         }
     }
 
-    return lat;
-}
-
-static int node_latency(TB_Function* f, TB_Node* n, int i) {
-    if (is_proj(n)) {
-        return 0;
+    // has load barrier?
+    if (n->type == x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
+        lat += 1;
     }
 
-    return get_pipe_latency(n, i);
+    return lat;
 }
 
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
@@ -2919,6 +2979,7 @@ ICodeGen tb__x64_codegen = {
     .pointer_size = 64,
     .global_init = global_init,
     .can_gvn = can_gvn,
+    .edge_prob = edge_prob,
     .node_name = node_name,
     .print_extra = print_extra,
     .flags = node_flags,

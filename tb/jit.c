@@ -29,6 +29,8 @@ void* tb_jit_wasm_obj(TB_Arena* arena, TB_Function* f) {
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <ucontext.h>
 #endif
 
 enum {
@@ -389,7 +391,7 @@ void* tb_jit_get_code_ptr(TB_Function* f) {
 ////////////////////////////////
 // Debugger
 ////////////////////////////////
-#if defined(CUIK__IS_X64) && defined(_WIN32)
+#ifdef CUIK__IS_X64
 static char* poll_site_pages;
 
 struct TB_CPUContext {
@@ -406,8 +408,14 @@ struct TB_CPUContext {
     volatile bool interrupted;
     volatile bool running;
 
+    volatile bool checkpoint;
+
+    #ifdef _WIN32
     CONTEXT cont;
     CONTEXT state;
+    #else
+    ucontext_t cont, state;
+    #endif
 
     // safepoint page
     volatile char* poll_site;
@@ -424,7 +432,11 @@ typedef struct {
 typedef uint64_t (*JIT_Trampoline)(void* sp, void* pc, X64Params* params, TB_CPUContext* cpu);
 
 // win64/sysv trampoline ( sp pc params ctx -- rax )
+#ifdef _WIN32
 __declspec(allocate(".text")) __declspec(align(16))
+#else
+__attribute__((section (".text")))
+#endif
 static const uint8_t tb_jit__trampoline[] = {
     #if _WIN32
     // save old SP, we'll come back for it later
@@ -462,6 +474,10 @@ static const uint8_t tb_jit__trampoline[] = {
     0xC3,                                     // ret
 };
 
+size_t tb_jit_thread_pollsite(void) { return offsetof(TB_CPUContext, poll_site); }
+size_t tb_jit_thread_checkpoint(void) { return offsetof(TB_CPUContext, checkpoint); }
+
+#ifdef _WIN32
 static LONG except_handler(EXCEPTION_POINTERS* e) {
     TB_CPUContext* cpu = (TB_CPUContext*) (e->ContextRecord->Rsp & -STACK_SIZE);
     switch (e->ExceptionRecord->ExceptionCode) {
@@ -506,6 +522,7 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
     *e->ContextRecord = cpu->cont;
     return EXCEPTION_CONTINUE_EXECUTION;
 }
+#endif
 
 static void init_poll_pages(void) {
     poll_site_pages = tb_platform_valloc(8192);
@@ -516,7 +533,9 @@ TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size) {
     TB_CPUContext* cpu = tb_jit_stack_create();
     cpu->ud_size = ud_size;
     cpu->jit = jit;
+    #ifdef _WIN32
     cpu->except = AddVectoredExceptionHandler(1, except_handler);
+    #endif
     memset(cpu->user_data, 0, ud_size);
 
     #ifndef TB_NO_THREADS
@@ -532,8 +551,6 @@ TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size) {
 
 void* tb_jit_thread_pc(TB_CPUContext* cpu) { return cpu->pc; }
 void* tb_jit_thread_sp(TB_CPUContext* cpu) { return cpu->sp; }
-
-size_t tb_jit_thread_pollsite(void) { return offsetof(TB_CPUContext, poll_site); }
 
 void tb_jit_thread_pause(TB_CPUContext* cpu) {
     cpu->poll_site = &poll_site_pages[4096];
@@ -556,12 +573,12 @@ void tb_jit_breakpoint(TB_JIT* jit, void* addr) {
 }
 
 bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end) {
+    #ifdef _WIN32
     // step until we're out of the current PC region
     DynArray(TB_Breakpoint) bp = cpu->jit->breakpoints;
     uintptr_t rip = cpu->state.Rip;
     while (rip >= pc_start && rip < pc_end) {
         // printf("step %#"PRIxPTR" [%#"PRIxPTR" %#"PRIxPTR"]\n", rip, pc_start, pc_end);
-
         // install breakpoints
         dyn_array_for(i, bp) {
             uint8_t* code = bp[i].pos;
@@ -599,9 +616,14 @@ bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, u
     } else {
         return false;
     }
+    #else
+    tb_todo();
+    return false;
+    #endif
 }
 
 bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args) {
+    #ifdef _WIN32
     // save our precious restore point
     cpu->interrupted = false;
     cpu->running = true;
@@ -657,7 +679,11 @@ bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_
     }
 
     return cpu->interrupted;
+    #else
+    tb_todo();
+    return false;
+    #endif
 }
-#endif
-#endif
+#endif // CUIK__IS_X64
+#endif // EMSCRIPTEN
 

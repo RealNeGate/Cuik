@@ -127,6 +127,7 @@ pat (TB_AFFINE_LATCH ...) => "isel_if_branch(ctx, f, n)"
 /* standard two-way branches */
 pat (TB_IF dt=$dt $ctrl (COND $cmp cond=$cond) prob=$prob) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond prob=$prob)
 pat (TB_IF dt=$dt $ctrl $x prob=$prob) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE prob=$prob)
+pat (TB_IF dt=$dt $ctrl (TB_LOAD $ctrl2 $mem ($x: MEMORY ... flags=$flags)) prob=$prob) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_cmp dt=TB_TYPE_I64 ___ ___ $x mode="MODE_LD" flags="$flags | OP_IMMEDIATE" extra_dt="n->inputs[1]->dt") cond=NE prob=$prob)
 pat (TB_IF dt=$dt $ctrl (TB_AND ___ $x $y) prob=$prob) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $y extra_dt="n->inputs[1]->dt") cond=NE prob=$prob)
 /* multi-way branches */ \
 pat (TB_BRANCH dt=$dt $ctrl $x) => "isel_multi_way_branch(ctx, f, n)"
@@ -187,7 +188,7 @@ pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: MEMORY ...)) where "TB_IS_INT_OR_PTR($dt)"
 
 pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_INT_OR_PTR($val->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $addr $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
 pat (TB_STORE $ctrl $mem ($lhs: MEMORY ...) $val) where "TB_IS_INT_OR_PTR($val->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
-pat (TB_STORE $ctrl $mem ($lhs: MEMORY ...) ($val: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($val->dt) && fits_into_int32($val->dt, $val)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs flags="OP_IMMEDIATE" mode=MODE_ST extra_dt="n->inputs[3]->dt" imm="as_int32($val)")
+pat (TB_STORE $ctrl $mem ($lhs: MEMORY ... flags=$flags) ($val: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($val->dt) && fits_into_int32($val->dt, $val)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs flags="$flags | OP_IMMEDIATE" mode=MODE_ST extra_dt="n->inputs[3]->dt" imm="as_int32($val)")
 
 #define NORMIE_OP(op_name, mnemonic) \
 (node mnemonic X86MemOp) \

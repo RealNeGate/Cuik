@@ -76,64 +76,18 @@ static void trace_join(TraceScheduler* traces, int a, int b) {
     traces->block_to_trace[head]->last_bb = last;
 }
 
-static TB_BasicBlock* best_successor_of(TB_CFG* cfg, TB_Node* n) {
-    if (cfg_is_endpoint(n)) {
-        return NULL;
-    } else if (!cfg_is_fork(n)) {
-        // straightline and always trying to combine
-        TB_Node* succ = cfg_next_control(n);
-        return nl_map_get_checked(cfg->node_to_block, succ);
-    } else if (cfg_is_if(n)) {
-        uint32_t half = UINT32_MAX >> 1;
-
-        // pick best successor
-        TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
-        int best = br->prob >= half ? 0 : 1;
-
-        // pick CProj is there's no other info
-        TB_Node* succ = USERN(proj_with_index(n, best));
-        return nl_map_get_checked(cfg->node_to_block, succ);
-    } else {
-        if (cfg_is_branch(n)) {
-            // find highest prob successor (it might make sense to search in a consistent order?)
-            TB_BasicBlock* best = NULL;
-            uint64_t most_hits = 0;
-
-            FOR_USERS(u, n) {
-                TB_Node* succ = USERN(u);
-                if (cfg_is_cproj(succ)) {
-                    TB_ASSERT(succ->type == TB_BRANCH_PROJ);
-
-                    uint64_t hits = TB_NODE_GET_EXTRA_T(succ, TB_NodeBranchProj)->taken;
-                    if (hits > most_hits) {
-                        best = nl_map_get_checked(cfg->node_to_block, succ);
-                        most_hits = hits;
-                    }
-                }
-            }
-
-            /* uint64_t total = TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->total_hits;
-            double prob = most_hits / total;
-            if (prob < 0.1f) {
-                return NULL;
-            } */
-
-            return best;
-        } else {
-            // pick CProj0 is there's no other info
-            TB_Node* succ = USERN(proj_with_index(n, 0));
-            return nl_map_get_checked(cfg->node_to_block, succ);
-        }
-    }
-}
-
 static int edge_cmp(const void* a, const void* b) {
     const Edge* aa = (const Edge*) a;
     const Edge* bb = (const Edge*) b;
     if (aa->freq != bb->freq) {
         return aa->freq > bb->freq ? -1 : 1;
     }
-    return 0;
+
+    if (aa->start_bb != bb->start_bb) {
+        return aa->start_bb > bb->start_bb ? -1 : 1;
+    }
+
+    return aa->end_bb - bb->end_bb;
 }
 
 static int trace_cmp(const void* a, const void* b) {
@@ -145,33 +99,12 @@ static int trace_cmp(const void* a, const void* b) {
         // it's not unsurprising to get the exact same
         // frequency, synthetic frequencies do it all the
         // time and it which case we'll order by the RPO.
-        if (aa->freq != bb->freq) {
+        if (fabsf(aa->freq - bb->freq) > 0.04f) {
             return aa->freq > bb->freq ? -1 : 1;
         }
     }
 
     return aa->first_bb - bb->first_bb;
-}
-
-static float edge_prob(TB_Node* n) {
-    TB_ASSERT(!cfg_is_endpoint(n));
-    TB_Node* tup = n->inputs[0];
-    int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-
-    if (cfg_is_if(tup)) {
-        TB_NodeIf* br = TB_NODE_GET_EXTRA(tup);
-        return index ? 1.0 - br->prob : br->prob;
-    } else if (cfg_is_branch(tup)) {
-        uint64_t total = TB_NODE_GET_EXTRA_T(tup, TB_NodeBranch)->total_hits;
-        uint64_t hits  = TB_NODE_GET_EXTRA_T(n, TB_NodeBranchProj)->taken;
-        return (float)hits / (float)total;
-    } else {
-        int succ_count = 0;
-        FOR_USERS(u, tup) {
-            succ_count += cfg_is_cproj(USERN(u));
-        }
-        return 1.0f / succ_count;
-    }
 }
 
 int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
@@ -210,7 +143,7 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
                     Edge edge;
                     edge.start_bb = i;
                     edge.end_bb   = succ_bb->fwd;
-                    edge.freq     = freq * edge_prob(it.succ);
+                    edge.freq     = freq * tb_edge_prob(it.succ);
                     aarray_push(traces.edges, edge);
                 }
             } else if (!cfg_is_endpoint(bb->end)) {
@@ -253,6 +186,8 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
         if (curr->last_bb != e.start_bb || next->first_bb != e.end_bb) {
             continue;
         }
+
+        printf("JOIN BB%d BB%d\n", curr->last_bb, next->first_bb);
 
         // try to join these two traces
         TB_BasicBlock* start_bb = &cfg->blocks[curr->last_bb];

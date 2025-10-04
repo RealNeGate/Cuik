@@ -431,6 +431,7 @@ void push_ipsccp_job(TB_Module* m, TB_Function* f);
 void tb_integrated_dbg(TB_Function* f, TB_Node* n);
 
 Lattice* latuni_get(TB_Function* f, TB_Node* n);
+float tb_edge_prob(TB_Node* n);
 
 void tb__print_regmask(RegMask* mask);
 

@@ -145,6 +145,37 @@ static TB_Node* next_mem_user(TB_Node* n) {
     return NULL;
 }
 
+float tb_edge_prob(TB_Node* n) {
+    TB_ASSERT(!cfg_is_endpoint(n));
+
+    // not even a branch? then it's getting 100%
+    if (!cfg_is_cproj(n)) {
+        return 1.0f;
+    }
+
+    TB_Node* tup = n->inputs[0];
+    int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+    if (cfg_is_if(tup)) {
+        TB_NodeIf* br = TB_NODE_GET_EXTRA(tup);
+        return index ? 1.0 - br->prob : br->prob;
+    } else if (cfg_is_branch(tup)) {
+        uint64_t total = TB_NODE_GET_EXTRA_T(tup, TB_NodeBranch)->total_hits;
+        uint64_t hits  = TB_NODE_GET_EXTRA_T(n, TB_NodeBranchProj)->taken;
+        return (float)hits / (float)total;
+    } else if (n->type >= 0x100) {
+        int family = n->type / 0x100;
+        TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
+        return tb_codegen_families[family].edge_prob(n);
+    } else {
+        int succ_count = 0;
+        FOR_USERS(u, tup) {
+            succ_count += cfg_is_cproj(USERN(u));
+        }
+        return 1.0f / succ_count;
+    }
+}
+
 // incremental dominators, plays nice with peepholes and has
 // a limited walk of 20 steps.
 static TB_Node* fast_idom(TB_Node* bb) {

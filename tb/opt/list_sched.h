@@ -30,6 +30,7 @@ typedef struct {
     TB_Function* f;
     TB_GetLatency get_lat;
 
+    Set has_sfpt;
     Set ready_set;
     ArenaArray(ReadyNode) ready;
 
@@ -171,6 +172,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
     ListSched sched = {
         .f = f, .get_lat = get_lat
     };
+    sched.has_sfpt  = set_create_in_arena(&f->tmp_arena, f->node_count);
     sched.ready_set = set_create_in_arena(&f->tmp_arena, f->node_count);
     sched.ready     = aarray_create(&f->tmp_arena, ReadyNode, 32);
     sched.latency   = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
@@ -412,10 +414,23 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
 
             // make sure to place all projections directly after their tuple node
             if (!cfg_is_fork(n)) {
-                FOR_USERS(u, n) if (is_proj(USERN(u))) {
-                    TB_ASSERT(USERI(u) == 0);
-                    TB_ASSERT(!worklist_test(ws, USERN(u)));
-                    worklist_push(ws, USERN(u));
+                TB_Node* sfpt = NULL;
+                FOR_USERS(u, n) {
+                    if (is_proj(USERN(u))) {
+                        TB_ASSERT(USERI(u) == 0);
+                        TB_ASSERT(!worklist_test(ws, USERN(u)));
+                        worklist_push(ws, USERN(u));
+                    } else if (USERN(u)->type == TB_SAFEPOINT && USERI(u) == 2) {
+                        sfpt = USERN(u);
+                    }
+                }
+
+                if (sfpt != NULL) {
+                    TB_OPTDEBUG(SCHED1)(printf("  Safepoint? "), tb_print_dumb_node(NULL, sfpt), printf("\n"));
+
+                    TB_ASSERT(!worklist_test(ws, sfpt));
+                    TB_ASSERT(can_ready_user(f, ws, bb, &sched.ready_set, sfpt));
+                    worklist_push(ws, sfpt);
                 }
             }
 

@@ -356,7 +356,7 @@ TB_Node* tb_builder_ptr_array(TB_GraphBuilder* g, TB_Node* base, TB_Node* index,
         scl = tb_builder_binop_int(g, TB_MUL, index, con, 0);
     }
 
-    TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
+    TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, base->dt, 3, 0);
     set_input(f, n, base, 1);
     set_input(f, n, scl,  2);
     return g->peep(f, n);
@@ -381,7 +381,7 @@ TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t offset
 
     TB_Function* f = g->f;
     TB_Node* con = g->peep(f, tb_inst_sint(f, TB_TYPE_I64, offset));
-    TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
+    TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, base->dt, 3, 0);
     set_input(f, n, base, 1);
     set_input(f, n, con,  2);
     return g->peep(f, n);
@@ -694,7 +694,7 @@ TB_Node* tb_builder_label_clone(TB_GraphBuilder* g, TB_Node* label) {
     return syms;
 }
 
-void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]) {
+TB_Node* tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]) {
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, TB_IF, TB_TYPE_TUPLE, 2, sizeof(TB_NodeIf));
     set_input(f, n, xfer_ctrl(g, n), 0);
@@ -721,6 +721,7 @@ void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]) {
 
     TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
     br->prob = 0.5f;
+    return n;
 }
 
 TB_Node* tb_builder_switch(TB_GraphBuilder* g, TB_Node* cond) {

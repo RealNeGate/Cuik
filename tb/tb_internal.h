@@ -540,6 +540,11 @@ struct TB_Module {
     TB_Symbol* tls_index_extern;
     TB_Symbol* chkstk_extern;
 
+    // Concurrent collecting GC based on C4
+    struct {
+        TB_Symbol* phase_control;
+    } ccgc;
+
     // interning lattice
     NBHS lattice_elements;
 
@@ -606,6 +611,7 @@ struct ICodeGen {
     bool (*can_gvn)(TB_Node* n);
     uint32_t (*flags)(TB_Node* n);
     size_t (*extra_bytes)(TB_Node* n);
+    float (*edge_prob)(TB_Node* n);
     const char* (*node_name)(int n_type);
     void (*print_extra)(OutStream* s, TB_Node* n);
 

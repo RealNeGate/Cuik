@@ -45,6 +45,9 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n);
 //   this is called AFTER the emitting of epilogues, those are emitted as normal
 //   nodes. An example use of mine is NOP padding, idk do whatever, emitting is done.
 static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e);
+//   the architecture-side of things is responsible for code stubs, these will appear below
+//   the compiled function.
+static void stub_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_CodeStub* stub);
 //   called at the start of each BB, it's mostly for bookkeeping about where labels
 //   are placed.
 static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb);
@@ -812,8 +815,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     }
 
     size_t bb_count = aarray_length(cfg.blocks);
-    Set has_safepoints = set_create_in_arena(&f->arena, f->node_count);
-
     size_t node_count = f->node_count;
     size_t vreg_cap = 0;
     CUIK_TIMED_BLOCK("local schedule") {
@@ -855,10 +856,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     printf("\n");
                 }
                 #endif
-
-                if (n->type == TB_SAFEPOINT) {
-                    set_put(&has_safepoints, n->inputs[2]->gvn);
-                }
 
                 // temps are added as extras so they don't
                 // increase the "input_count"
@@ -1144,7 +1141,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 }
 
                 // can't have two safepoints in the same bundle
-                if (bundle.has_safepoint && set_get(&has_safepoints, n->gvn)) {
+                if (bundle.has_safepoint && n->type == TB_SAFEPOINT) {
                     legal = false;
                 }
 
@@ -1153,17 +1150,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     flush_bundle(&ctx, e, &bundle);
                 }
 
-                if (set_get(&has_safepoints, n->gvn)) {
-                    TB_Node* sfpt = NULL;
-                    FOR_USERS(u, n) {
-                        if (USERN(u)->type == TB_SAFEPOINT) {
-                            sfpt = USERN(u);
-                            break;
-                        }
-                    }
-                    TB_ASSERT(sfpt != NULL);
-
-                    NodeIPPair pair = { sfpt, GET_CODE_POS(e) };
+                if (n->type == TB_SAFEPOINT) {
+                    NodeIPPair pair = { n, GET_CODE_POS(e) };
                     aarray_push(sfpt_nodes, pair);
                 }
 
@@ -1175,6 +1163,14 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             }
         }
         TB_OPTDEBUG(EMIT)(printf("=======================================\n"));
+
+        TB_CodeStub* stub = ctx.stubs;
+        while (stub) {
+            uint32_t pos = e->count;
+            stub_emit(&ctx, e, stub);
+            stub->pos = pos;
+            stub = stub->prev;
+        }
 
         post_emit(&ctx, e);
         log_phase_end(f, og_size, "emit");
@@ -1318,6 +1314,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     }
 
     // cleanup memory
+    worklist_clear(ws);
     tb_free_cfg(&cfg);
 
     #ifndef NDEBUG

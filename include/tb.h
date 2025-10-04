@@ -845,6 +845,8 @@ TB_API TB_Module* tb_module_create_for_host(bool is_jit);
 // compiled code.
 TB_API void tb_module_destroy(TB_Module* m);
 
+TB_API void tb_module_use_cc_gc(TB_Module* m, TB_Symbol* phase_control_sym);
+
 // When targetting windows & thread local storage, you'll need to bind a tls index
 // which is usually just a global that the runtime support has initialized, if you
 // dont and the tls_index is used, it'll crash
@@ -955,6 +957,7 @@ TB_API void tb_jit_thread_pause(TB_CPUContext* cpu);
 
 // offsetof pollsite in the CPUContext
 TB_API size_t tb_jit_thread_pollsite(void);
+TB_API size_t tb_jit_thread_checkpoint(void);
 
 // Only relevant when you're pausing the thread
 TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
@@ -1498,7 +1501,7 @@ TB_API int tb_builder_label_pred_count(TB_GraphBuilder* g, TB_Node* label);
 TB_API void tb_builder_label_kill(TB_GraphBuilder* g, TB_Node* label);
 //   writes to the paths array the symbol tables for the branch.
 //   [0] is the true case and [1] is the false case.
-TB_API void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]);
+TB_API TB_Node* tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]);
 //   begins empty switch statement, we can add cases as we go.
 //   returns the symbol table we use to instatiate the cases.
 TB_API TB_Node* tb_builder_switch(TB_GraphBuilder* g, TB_Node* cond);
