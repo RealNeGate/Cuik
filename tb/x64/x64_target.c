@@ -922,6 +922,22 @@ static CallingConv CC_SYSCALL = {
     .rets[REG_CLASS_GPR] = { RAX, RDX },
 };
 
+static CallingConv CC_TRAPCALL = {
+    .reg_saves[REG_CLASS_GPR] = (char[16]){
+        [RAX ... R15] = 'c',
+    },
+
+    .reg_saves[REG_CLASS_XMM] = (char[16]){
+        [XMM0 ... XMM15] = 'c',
+    },
+
+    .param_count = { [REG_CLASS_GPR] = 6 },
+    .params[REG_CLASS_GPR] = (uint8_t[]){ RCX, RDX, R8, R9 },
+
+    .ret_count = { [REG_CLASS_GPR] = 2 },
+    .rets[REG_CLASS_GPR] = { RAX, RDX },
+};
+
 static bool is_gcref_dt(TB_DataType dt) {
     return dt.type == TB_TAG_PTR && dt.elem_or_addrspace > 0;
 }
@@ -1174,6 +1190,9 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
     } else if (n->type == x86_call) {
         X86MemOp* op = TB_NODE_GET_EXTRA(n);
         CallingConv* cc = ctx->calling_conv;
+        if (op->proto->call_conv == TB_TRAPCALL) {
+            cc = &CC_TRAPCALL;
+        }
 
         size_t base = 3;
         if (op->mode != MODE_REG && (op->flags & OP_INDEXED)) {
@@ -1219,7 +1238,11 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
 
     int kill_count = 0;
     if (n->type == x86_call) {
+        X86MemOp* op = TB_NODE_GET_EXTRA(n);
         CallingConv* cc = ctx->calling_conv;
+        if (op->proto->call_conv == TB_TRAPCALL) {
+            cc = &CC_TRAPCALL;
+        }
 
         if (ctx->call_usage > 0) {
             if (ctx->cached_arg_list_mask == NULL) {
@@ -1233,7 +1256,6 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
         RegMask** ins = tb_arena_alloc(&f->tmp_arena, n->input_count * sizeof(RegMask*));
         node_constraint(ctx, n, ins);
 
-        X86MemOp* op = TB_NODE_GET_EXTRA(n);
         size_t base = op->flags & OP_INDEXED ? 4 : 3;
         bool use_frame_ptr = ctx->f->features.gen & TB_FEATURE_FRAME_PTR;
         FOR_N(i, 1, ctx->num_classes) {
@@ -1250,7 +1272,9 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
                 }
             }
 
-            kills[kill_count++] = intern_regmask(ctx, i, false, clobbers);
+            if (clobbers) {
+                kills[kill_count++] = intern_regmask(ctx, i, false, clobbers);
+            }
         }
         tb_arena_free(&f->tmp_arena, ins, n->input_count * sizeof(RegMask*));
 
@@ -1621,8 +1645,12 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         {
             if (ins) {
                 CallingConv* cc = ctx->calling_conv;
-
                 X86MemOp* op = TB_NODE_GET_EXTRA(n);
+                TB_FunctionPrototype* proto = op->proto;
+                if (proto->call_conv == TB_TRAPCALL) {
+                    cc = &CC_TRAPCALL;
+                }
+
                 ins[1] = &TB_REG_EMPTY;
 
                 size_t base = 3;
@@ -1644,7 +1672,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 used[REG_CLASS_STK] = 1 + ctx->param_count;
 
                 int param_count = 0;
-                TB_FunctionPrototype* proto = op->proto;
                 for (size_t i = base; i < n->input_count; i++) {
                     TB_Node* in = n->inputs[i];
                     TB_ASSERT(in->type != TB_MACH_TEMP);
@@ -2869,6 +2896,18 @@ static bool sym_handler(TB_Disasm* disasm, int inst_length, uint64_t field, int 
         uint32_t target = pos + inst_length + imm;
         int bb = tb_emit_get_label(d->emit, target);
         uint32_t landed = d->emit->labels[bb] & 0x7FFFFFFF;
+
+        if (landed != target) {
+            TB_CodeStub* stub = d->stubs;
+            int i = 0;
+            while (stub) {
+                if (stub->pos == target) {
+                    tb_disasm_outf(disasm, "stub_%d", i);
+                    return true;
+                }
+                i += 1, stub = stub->prev;
+            }
+        }
 
         #if ASM_STYLE_PRINT_POS
         tb_disasm_outf(disasm, "BB%d", bb);

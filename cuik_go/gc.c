@@ -4,8 +4,11 @@ enum {
 };
 
 static void* alloc_page(void) {
-    // return VirtualAlloc(NULL, GC_PAGE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    #ifdef _WIN32
+    return VirtualAlloc(NULL, GC_PAGE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    #else
     return mmap(NULL, GC_PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    #endif
 }
 
 ////////////////////////////////
@@ -74,16 +77,25 @@ static void* gc_page_push(size_t size) {
 ////////////////////////////////
 // GC Main
 ////////////////////////////////
-static uint64_t expected_nmt;
+static atomic_word expected_nmt;
 
 static void gc_main(void* arg) {
     for (;;) {
         ////////////////////////////////
         // Mark/Remap
         ////////////////////////////////
+        bool nmt_target = false;
         {
-            // Flip NMT
-            expected_nmt = 0;
+            // Flip NMT, the LUT will trap if NMT is nmt_dir.
+            // This event might not be acknowledged immediately by
+            // mutator threads which leads to some NMT "throbbing"
+            nmt_target = !nmt_target;
+            {
+                uint64_t expected = 0b010 | !nmt_target;
+                // broadcast 8x
+                expected *= 0x0101010101010101;
+                atomic_store_explicit(&expected_nmt, expected, memory_order_release);
+            }
 
             bool progress = true;
             do {
@@ -91,7 +103,7 @@ static void gc_main(void* arg) {
                 // (2) Mark objects in dirty cards
                 // (3) Global root scan
 
-                // Mark recursively
+                // Mark & remap recursively
             } while (progress);
         }
 

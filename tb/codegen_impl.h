@@ -1242,6 +1242,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         Disasm d = {
             &ctx.emit,
             func_out->first_patch,
+            ctx.stubs,
             ctx.locations,
             &ctx.locations[dyn_array_length(ctx.locations)],
             ctx.emit.comment_head,

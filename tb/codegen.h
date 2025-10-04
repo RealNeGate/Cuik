@@ -59,9 +59,17 @@ struct RegMask {
     uint64_t mask[];
 };
 
+// inserted at the bottom of the function to handle whatever little runtime support
+typedef struct TB_CodeStub {
+    struct TB_CodeStub* prev;
+    uint32_t tag;
+    uint32_t pos;
+} TB_CodeStub;
+
 typedef struct {
     TB_CGEmitter* emit;
     TB_SymbolPatch* patch;
+    TB_CodeStub* stubs;
     TB_Location* loc;
     TB_Location* end;
     Comment* comment;
@@ -170,13 +178,6 @@ typedef struct {
     TB_Node* n;
     int index;
 } TB_SubMatch;
-
-// inserted at the bottom of the function to handle whatever little runtime support
-typedef struct TB_CodeStub {
-    struct TB_CodeStub* prev;
-    uint32_t tag;
-    uint32_t pos;
-} TB_CodeStub;
 
 struct Ctx {
     TB_CGEmitter emit;

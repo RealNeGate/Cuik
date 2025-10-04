@@ -68,7 +68,10 @@ typedef enum TB_DebugFormat {
 
 typedef enum TB_CallingConv {
     TB_CDECL,
-    TB_STDCALL
+    TB_STDCALL,
+
+    // clobbers all regs
+    TB_TRAPCALL,
 } TB_CallingConv;
 
 typedef enum TB_FeatureSet_X64 {

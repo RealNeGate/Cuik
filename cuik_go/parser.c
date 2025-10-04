@@ -849,7 +849,7 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
     tb_symbol_bind_ptr(expected_nmt_lut, &expected_nmt);
     tb_module_use_cc_gc(ir_mod, expected_nmt_lut);
 
-    checkpoint_proto = tb_prototype_create(ir_mod, TB_STDCALL, 0, NULL, 0, NULL, false);
+    checkpoint_proto = tb_prototype_create(ir_mod, TB_TRAPCALL, 0, NULL, 0, NULL, false);
     checkpoint_fn    = tb_extern_create(ir_mod, -1, "checkpoint_handler", TB_EXTERNAL_SO_LOCAL);
 
     // IR alloc
