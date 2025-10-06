@@ -1214,7 +1214,7 @@ function match_prio(type)
 end
 
 var_counter = 0
-function gen_c_inner(depth, stack, can_bail, operands)
+function gen_c_inner(depth, stack, can_bail)
     local active = stack[5]
     assert(depth < 10)
 
@@ -1255,9 +1255,8 @@ function gen_c_inner(depth, stack, can_bail, operands)
         local in_str = get_in(stack)
         stack[3] = stack[3] + 1
 
-        if false then
+        if false then -- leader == "END" then
             print("Step", stack[4], "[", pos, "]", limit, leader, bail_out, in_str)
-
             for k,v in cases:iter() do
                 for i=1,#v do
                     print("", k, get_pattern_at(v[i], pos), get_pattern_pretty(v[i]))
@@ -1343,7 +1342,6 @@ function gen_c_inner(depth, stack, can_bail, operands)
                     end
 
                     local next_stack   = { stack, new_name, 0, stack[4]+1, then_active }
-                    local new_operands = operands
 
                     add_line(depth, string.format("DFA_LOG2(depth+%d, \"TRY '%s'\");", stack[4]+1, table.concat(log_expr, ",")))
                     if match_op_group then
@@ -1354,22 +1352,18 @@ function gen_c_inner(depth, stack, can_bail, operands)
                         add_line(depth+1, string.format("ctx->dsl.accept[ctx->dsl.top++] = (TB_SubMatch){ %s_final, %s, %d };", new_name, stack[2], stack[3]-1))
 
                         next_stack[2] = new_name
-                        new_operands = {}
-                        for i=1,#operands do
-                            new_operands[i] = operands[i]
-                        end
 
                         -- this will be assigned once we reach the accept state
                         --new_operands[#new_operands + 1] = {
                         --    string.format("set_input(f, %s, %s, %d);", stack[2], new_name_2, stack[3] - 1),
                         --    string.format("set_input(f, %s, %s, %d);", stack[2], new_name, stack[3] - 1)
                         --}
-                        gen_c_inner(depth+1, next_stack, true, new_operands)
+                        gen_c_inner(depth+1, next_stack, true)
                         add_line(depth, string.format("} else { DFA_LOG(depth+%d, %s, \"Reject\"); } } while (0);", stack[4]+1, new_name))
                         add_line(depth, string.format("ctx->dsl.top = %s_mark;", new_name))
                     else
                         add_line(depth, string.format("do { if (%s) {", expr))
-                        gen_c_inner(depth+1, next_stack, true, new_operands)
+                        gen_c_inner(depth+1, next_stack, true)
                         add_line(depth, "} } while (0);")
                     end
                     lines[#lines + 1] = ""
@@ -1395,6 +1389,7 @@ function gen_c_inner(depth, stack, can_bail, operands)
 
             -- add_line(depth, "// POP "..stack[4])
             if stack[4] < 1 then
+                -- add_line(depth, "// POP "..stack[4])
                 break
             end
 
@@ -1444,11 +1439,6 @@ function gen_c_inner(depth, stack, can_bail, operands)
     end
 
     -- add_line(depth, string.format("// DONE %s %s %s", var_final, non_var_final, make_active_str(active)))
-    -- add_line(depth, "// REPLACE OPERANDS "..#operands)
-
-    for i=1,#operands do
-        add_line(depth, operands[i][1])
-    end
 
     local expr = "0"
     if var_final and var_final ~= "JOVER" then
@@ -1464,13 +1454,6 @@ function gen_c_inner(depth, stack, can_bail, operands)
     elseif expr ~= "0" then
         add_line(depth, string.format("k = %s;", expr))
         add_line(depth, "if (k) { return k; }")
-        if #operands > 0 then
-            add_line(depth, "else {")
-            for i=1,#operands do
-                add_line(depth+1, operands[i][2])
-            end
-            add_line(depth, "}")
-        end
     end
 
     return active

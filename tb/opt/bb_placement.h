@@ -187,8 +187,6 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
             continue;
         }
 
-        printf("JOIN BB%d BB%d\n", curr->last_bb, next->first_bb);
-
         // try to join these two traces
         TB_BasicBlock* start_bb = &cfg->blocks[curr->last_bb];
         TB_BasicBlock* end_bb   = &cfg->blocks[next->first_bb];

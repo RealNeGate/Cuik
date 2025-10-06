@@ -8,5 +8,3 @@ func MaxArray(x, y []float64) {
 	}
 }
 
-func main() {}
-

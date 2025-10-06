@@ -3,6 +3,7 @@
 #include "../cuik_c/atoms.h"
 
 #include <common.h>
+#include <log.h>
 #include <arena.h>
 #include <str.h>
 #include <dyn_array.h>
@@ -577,7 +578,7 @@ typedef struct {
 } CuikGo_Val;
 
 #include "gc.c"
-#define TB_TYPE_GCREF TB_TYPE_PTRN(1)
+#define TB_TYPE_GCPTR TB_TYPE_PTRN(1)
 
 static TB_Symbol* checkpoint_fn;
 static TB_FunctionPrototype* checkpoint_proto;
@@ -585,7 +586,7 @@ static TB_FunctionPrototype* checkpoint_proto;
 // Checkpoints update root set references along with the NMT
 static void insert_checkpoint(CuikGo_Parser* ctx, TB_GraphBuilder* g) {
     TB_Node* ptr = tb_builder_jit_thread_ptr(g);
-    ptr = tb_builder_ptr_member(g, ptr, tb_jit_thread_checkpoint());
+    ptr = tb_builder_ptr_member(g, ptr, tb_jit_thread_userdata());
 
     TB_Node* merge = tb_builder_label_make(g);
     TB_Node* n = tb_builder_load(g, 0, true, TB_TYPE_I8, ptr, 1, false);
@@ -611,7 +612,7 @@ static TB_Node* to_rval(CuikGo_Parser* ctx, TB_GraphBuilder* g, CuikGo_Val* v) {
             case CUIKGO_INT:     dt = TB_TYPE_I64; break;
             case CUIKGO_FLOAT64: dt = TB_TYPE_F64; break;
             // this is a structure, we can only directly refer to it via pointer
-            case CUIKGO_MAP:     dt = TB_TYPE_GCREF; break;
+            case CUIKGO_MAP:     dt = TB_TYPE_PTR; break;
             default: TB_ASSERT(0);
         }
         return tb_builder_load(g, 0, true, dt, v->n, v->type->align, false);
@@ -661,7 +662,7 @@ int cuikgo_ir_gen_word(CuikGo_Parser* ctx, TB_GraphBuilder* g, CuikGo_Word* w, i
         }
 
         case WORD_INDEX: {
-            TB_Node* base  = to_rval(ctx, g, &args[0]);
+            TB_ASSERT(args[0].tag == CUIKGO_LVALUE);
             TB_Node* index = to_rval(ctx, g, &args[1]);
 
             // array indexing
@@ -670,6 +671,8 @@ int cuikgo_ir_gen_word(CuikGo_Parser* ctx, TB_GraphBuilder* g, CuikGo_Word* w, i
             if (args[0].type->key_type != NULL) {
                 TB_ASSERT(0);
             } else {
+                TB_Node* base = tb_builder_load(g, 0, false, TB_TYPE_GCPTR, args[0].n, 8, false);
+
                 TB_Node* add = tb_builder_ptr_array(g, base, index, val_type->size);
                 args[0] = (CuikGo_Val){ CUIKGO_LVALUE, .type = val_type, .n = add };
                 break;
@@ -682,9 +685,10 @@ int cuikgo_ir_gen_word(CuikGo_Parser* ctx, TB_GraphBuilder* g, CuikGo_Word* w, i
             TB_Node* key = args[0].n;
             TB_Node* val = args[1].n;
 
-            TB_Node* iter  = to_rval(ctx, g, &args[2]);
+            TB_Node* iter = args[2].n;
+            TB_ASSERT(args[1].tag == CUIKGO_LVALUE);
 
-            TB_Node* base  = tb_builder_load(g, 0, false, TB_TYPE_GCREF, iter, 8, false);
+            TB_Node* base  = tb_builder_load(g, 0, false, TB_TYPE_GCPTR, iter, 8, false);
             TB_Node* limit = tb_builder_load(g, 0, false, TB_TYPE_I64, tb_builder_ptr_member(g, iter, 8), 8, false);
             CuikGo_Type* val_type = &FLOAT64_TYPE;
             TB_Node* exit = tb_builder_label_make(g);
@@ -844,10 +848,15 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
     // IR generation
     ////////////////////////////////
     TB_Module* ir_mod = tb_module_create_for_host(true);
+    TB_JIT* jit = tb_jit_begin(ir_mod, 2*1024*1024);
 
-    TB_Symbol* expected_nmt_lut = tb_extern_create(ir_mod, -1, "expected_nmt", TB_EXTERNAL_SO_LOCAL);
-    tb_symbol_bind_ptr(expected_nmt_lut, &expected_nmt);
-    tb_module_use_cc_gc(ir_mod, expected_nmt_lut);
+    // declaring a global big enough to hold our string
+    TB_Global* expected_nmt_lut = tb_global_create(ir_mod, -1, "expected_nmt", NULL, TB_LINKAGE_PRIVATE);
+    tb_global_set_storage(ir_mod, -1, expected_nmt_lut, sizeof(uint64_t), 1, 1);
+    tb_module_use_cc_gc(ir_mod, (TB_Symbol*) expected_nmt_lut);
+
+    expected_nmt = tb_jit_place_global(jit, expected_nmt_lut);
+    log_debug("Placing expected_nmt @ %p", expected_nmt);
 
     checkpoint_proto = tb_prototype_create(ir_mod, TB_TRAPCALL, 0, NULL, 0, NULL, false);
     checkpoint_fn    = tb_extern_create(ir_mod, -1, "checkpoint_handler", TB_EXTERNAL_SO_LOCAL);
@@ -860,6 +869,16 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
             __debugbreak();
         }
         i = words[i].ref;
+    }
+
+    Slice a = { gc_alloc(1024, 0), 1024/8, 1024/8 };
+    Slice b = { gc_alloc(1024, 0), 1024/8, 1024/8 };
+
+    double* aa = gc_rawptr(a.base);
+    double* bb = gc_rawptr(b.base);
+    FOR_N(i, 0, 1024/8) {
+        aa[i] = i*0.25;
+        bb[i] = i*0.5 - 6.0;
     }
 
     // IR gen
@@ -887,18 +906,46 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
             }
 
             tb_builder_exit(g);
-            tb_print(func);
             tb_opt(func, ws, false);
-
-            tb_print(func);
 
             TB_FunctionOutput* out = tb_codegen(func, TB_RA_ROGERS, ws, NULL, true);
             tb_output_print_asm(out, NULL);
+
+            // invoke
+            {
+                TB_Stacklet* stack = tb_jit_thread_create(jit, sizeof(uint64_t), 4*1024);
+                void (*fn)(Slice*, Slice*) = tb_jit_place_function(jit, func);
+
+                __debugbreak();
+
+                // Space+NMT
+                //    10 0 => TRAP
+                //    10 1 => TRAP
+                *expected_nmt = (2 << 0b010) * 0x0101010101010101;
+
+                void* args[2] = { &a, &b };
+                log_info("call(%p : %p, %p : %p)", &a, a.base, &b, b.base);
+
+                double* aa = gc_rawptr(a.base);
+                double* bb = gc_rawptr(b.base);
+                FOR_N(j, 0, 128) {
+                    printf("[%zu] %f, %f\n", j, aa[j], bb[j]);
+                }
+
+                tb_jit_thread_call(stack, (void*) fn, NULL, 2, args);
+
+                FOR_N(j, 0, 128) {
+                    printf("[%zu] %f, %f\n", j, aa[j], bb[j]);
+                }
+            }
         } else {
             __debugbreak();
         }
         i = next;
     }
+
+    tb_jit_dump_heap(jit);
+    tb_jit_end(jit);
 
     __debugbreak();
 }

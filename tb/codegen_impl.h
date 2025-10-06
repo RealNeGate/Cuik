@@ -1141,7 +1141,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 }
 
                 // can't have two safepoints in the same bundle
-                if (bundle.has_safepoint && n->type == TB_SAFEPOINT) {
+                bool is_sfpt = cfg_flags(n) & NODE_SAFEPOINT;
+                if (bundle.has_safepoint && is_sfpt) {
                     legal = false;
                 }
 
@@ -1150,7 +1151,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     flush_bundle(&ctx, e, &bundle);
                 }
 
-                if (n->type == TB_SAFEPOINT) {
+                if (is_sfpt) {
                     NodeIPPair pair = { n, GET_CODE_POS(e) };
                     aarray_push(sfpt_nodes, pair);
                 }
@@ -1195,13 +1196,13 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     sfpt->node = n;
                     sfpt->userdata = n_sfpt->userdata;
                     sfpt->ip = ip;
-                    FOR_N(i, 0, n_sfpt->saved_val_count) {
+                    /* FOR_N(i, 0, n_sfpt->saved_val_count) {
                         TB_Node* in = n->inputs[3 + i];
                         VReg* vreg = &ctx.vregs[ctx.vreg_map[in->gvn]];
                         TB_ASSERT(vreg->assigned >= 0);
 
                         sfpt->values[i] = (vreg->class << 24u) | vreg->assigned;
-                    }
+                    } */
                     aarray_push(safepoints, sfpt);
                 }
 
@@ -1254,21 +1255,18 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             disassemble(arch, &ctx.emit, &d, -1, 0, ctx.prologue_length);
         }
 
+        int first_stub = ctx.stubs ? ctx.stubs->pos : ctx.emit.count;
+        TB_CGEmitter* e = &ctx.emit;
         FOR_N(i, 0, final_order_count) {
             int id = final_order[i];
 
             uint32_t start = ctx.emit.labels[id] & ~0x80000000;
-            uint32_t end   = ctx.emit.count;
-
-            #if !ASM_STYLE_PRINT_NOP
-            end -= ctx.nop_pads;
-            #endif
+            uint32_t end   = first_stub;
 
             if (i + 1 < final_order_count) {
                 end = ctx.emit.labels[final_order[i + 1]] & ~0x80000000;
             }
 
-            TB_CGEmitter* e = &ctx.emit;
             {
                 #if ASM_STYLE_PRINT_POS
                 int len = tb_asm_print(e, "%-4x  BB%d: ", start, id);
@@ -1309,6 +1307,15 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 #endif
             }
             disassemble(arch, e, &d, id, start, end);
+        }
+
+        TB_CodeStub* stub = ctx.stubs;
+        int i = 0;
+        while (stub) {
+            TB_CodeStub* next = stub->prev;
+            tb_asm_print(e, "stub_%d:\n", i++);
+            disassemble(arch, e, &d, final_order_count + i, stub->pos, next ? next->pos : ctx.emit.count);
+            stub = next;
         }
 
         STATS_EXIT(MACH_ASM_PRINT);

@@ -157,9 +157,9 @@ where "as_int32($con) == 63"
 // *******************************
 // misc
 // *******************************
-(node call X86MemOp)
+(node call X86Call)
 pat (TB_CALL $ctrl $mem (TB_SYMBOL $root sym=$sym) $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem (TB_MACH_SYMBOL $root sym=$sym) $REST proto="TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto")
-pat (TB_CALL $ctrl $mem $target $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem $target $REST mode=MODE_LD proto="TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto")
+pat (TB_CALL $ctrl $mem $target $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem $target $REST proto="TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto")
 
 pat (TB_VA_START ...) => "isel_va_start(ctx, f, n)"
 
@@ -181,10 +181,20 @@ BMI2_OP(TB_SAR, sarx)
 (node mov X86MemOp)
 (node lea X86MemOp)
 
+pat (TB_VA_START ...) => "isel_va_start(ctx, f, n)"
 pat ($lhs: x86_MEMORY ...) => (x86_lea dt=TB_TYPE_PTR ___ ___ $lhs mode=MODE_LD)
 
-pat (TB_LOAD dt=$dt $ctrl $mem $addr) where "TB_IS_INT_OR_PTR($dt)" => (x86_mov dt=$dt $ctrl $mem $addr mode=MODE_LD)
-pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: MEMORY ...)) where "TB_IS_INT_OR_PTR($dt)" => (x86_mov dt=$dt $ctrl $mem $lhs mode=MODE_LD)
+pat (TB_LOAD dt=$dt $ctrl $mem $addr) where "TB_IS_INT_OR_PTR0($dt)" => (x86_mov dt=$dt $ctrl $mem $addr mode=MODE_LD)
+pat (TB_LOAD dt=$dt $ctrl $mem ($addr: MEMORY ...)) where "TB_IS_INT_OR_PTR0($dt)" => (x86_mov dt=$dt $ctrl $mem $addr mode=MODE_LD)
+
+// Load barriers
+pat (TB_LOAD dt=$dt $ctrl $mem $addr)
+where "$dt.type == TB_TAG_PTR && $dt.elem_or_addrspace != 0"
+=> (x86_mov dt=$dt $ctrl $mem $addr (x86_mov dt=TB_TYPE_PTR ___ ___ (TB_MACH_SYMBOL "f->root_node" sym="ctx->module->ccgc.phase_control") mode=MODE_LD) mode=MODE_LD)
+
+pat (TB_LOAD dt=$dt $ctrl $mem ($addr: MEMORY ...))
+where "$dt.type == TB_TAG_PTR && $dt.elem_or_addrspace != 0"
+=> (x86_mov dt=$dt $ctrl $mem $addr (x86_mov dt=TB_TYPE_PTR ___ ___ (TB_MACH_SYMBOL "f->root_node" sym="ctx->module->ccgc.phase_control") mode=MODE_LD) mode=MODE_LD)
 
 pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_INT_OR_PTR($val->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $addr $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
 pat (TB_STORE $ctrl $mem ($lhs: MEMORY ...) $val) where "TB_IS_INT_OR_PTR($val->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
@@ -231,7 +241,7 @@ pat (TB_SMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE 
 (node vzero X86MemOp)
 
 pat (TB_LOAD dt=$dt $ctrl $mem $addr) where "TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $addr mode=MODE_LD)
-pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: MEMORY ...)) where "TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $lhs mode=MODE_LD)
+pat (TB_LOAD dt=$dt $ctrl $mem ($addr: MEMORY ...)) where "TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $addr mode=MODE_LD)
 pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt) || TB_IS_VECTOR_TYPE(n->inputs[3]->dt)" => (x86_vmov dt=TB_TYPE_MEMORY $ctrl $mem $addr $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
 pat (TB_STORE $ctrl $mem ($lhs: MEMORY ...) $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt) || TB_IS_VECTOR_TYPE(n->inputs[3]->dt)" => (x86_vmov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
 

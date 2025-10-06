@@ -22,7 +22,6 @@ typedef struct {
             int32_t disp;
             int32_t imm;
         };
-        TB_FunctionPrototype* proto;
     };
 
     uint8_t mode  : 2;
@@ -32,6 +31,11 @@ typedef struct {
 
     TB_DataType extra_dt;
 } X86MemOp;
+
+typedef struct {
+    TB_NodeSafepoint super;
+    TB_FunctionPrototype* proto;
+} X86Call;
 
 typedef union {
     float f;
@@ -544,6 +548,8 @@ static uint32_t node_flags(TB_Node* n) {
         return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_IF | NODE_MEMORY_IN;
     } else if (n->type == x86_jmp_MULTI) {
         return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL;
+    } else if (n->type == x86_call) {
+        return NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT | NODE_EFFECT;
     }
 
     return n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_PINNED) : NODE_MEMORY_IN;
@@ -590,6 +596,13 @@ static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
         } else if (v->class == REG_CLASS_FLAGS) {
             printf("FLAGS");
         }
+    } else if (n->type == TB_MACH_SYMBOL) {
+        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
+        if (sym->name[0]) {
+            printf("%s", sym->name);
+        } else {
+            printf("sym%p", sym);
+        }
     } else {
         printf("%%%u", n->gvn);
     }
@@ -615,6 +628,14 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         print_pretty_edge(ctx, n->inputs[0]);
         printf(", %d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
         tb__print_regmask(TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def);
+    } else if (n->type == TB_MACH_SYMBOL) {
+        printf("  mach_symbol %%%u", n->gvn);
+        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
+        if (sym->name[0]) {
+            printf(" = %s", sym->name);
+        } else {
+            printf(" = sym%p", sym);
+        }
     } else if (n->type == TB_MACH_TEMP) {
         printf("  temp ");
         print_pretty_edge(ctx, n);
@@ -938,10 +959,6 @@ static CallingConv CC_TRAPCALL = {
     .rets[REG_CLASS_GPR] = { RAX, RDX },
 };
 
-static bool is_gcref_dt(TB_DataType dt) {
-    return dt.type == TB_TAG_PTR && dt.elem_or_addrspace > 0;
-}
-
 static TB_X86_DataType legalize_int(TB_DataType dt) {
     switch (dt.type) {
         case TB_TAG_BOOL: return TB_X86_BYTE;
@@ -1026,8 +1043,10 @@ static int node_2addr(TB_Node* n) {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             if (op->mode == MODE_ST) return -1;
             if (op->flags & OP_IMMEDIATE) return 2;
+            if (op->mode == MODE_LD) {
+                return op->flags & OP_INDEXED ? 4 : 3;
+            }
             return n->input_count - 1;
-            // return op->flags & OP_INDEXED ? 4 : 3;
         }
 
         case x86_cmovcc: case x86_adc:
@@ -1188,16 +1207,16 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
         set_input(f, proj, n, 0);
         TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = 0, .def = ctx->normie_mask[REG_CLASS_FLAGS]);
     } else if (n->type == x86_call) {
-        X86MemOp* op = TB_NODE_GET_EXTRA(n);
+        X86Call* op = TB_NODE_GET_EXTRA(n);
         CallingConv* cc = ctx->calling_conv;
         if (op->proto->call_conv == TB_TRAPCALL) {
             cc = &CC_TRAPCALL;
         }
 
         size_t base = 3;
-        if (op->mode != MODE_REG && (op->flags & OP_INDEXED)) {
+        /* if (op->mode != MODE_REG && (op->flags & OP_INDEXED)) {
             base += 1;
-        }
+        } */
 
         int param_count = n->input_count - base;
         if (param_count > ctx->call_usage) {
@@ -1238,7 +1257,7 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
 
     int kill_count = 0;
     if (n->type == x86_call) {
-        X86MemOp* op = TB_NODE_GET_EXTRA(n);
+        X86Call* op = TB_NODE_GET_EXTRA(n);
         CallingConv* cc = ctx->calling_conv;
         if (op->proto->call_conv == TB_TRAPCALL) {
             cc = &CC_TRAPCALL;
@@ -1256,7 +1275,7 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
         RegMask** ins = tb_arena_alloc(&f->tmp_arena, n->input_count * sizeof(RegMask*));
         node_constraint(ctx, n, ins);
 
-        size_t base = op->flags & OP_INDEXED ? 4 : 3;
+        size_t base = 3; // op->flags & OP_INDEXED ? 4 : 3;
         bool use_frame_ptr = ctx->f->features.gen & TB_FEATURE_FRAME_PTR;
         FOR_N(i, 1, ctx->num_classes) {
             const char* saves = cc->reg_saves[i];
@@ -1645,7 +1664,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         {
             if (ins) {
                 CallingConv* cc = ctx->calling_conv;
-                X86MemOp* op = TB_NODE_GET_EXTRA(n);
+                X86Call* op = TB_NODE_GET_EXTRA(n);
                 TB_FunctionPrototype* proto = op->proto;
                 if (proto->call_conv == TB_TRAPCALL) {
                     cc = &CC_TRAPCALL;
@@ -1653,14 +1672,20 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
                 ins[1] = &TB_REG_EMPTY;
 
-                size_t base = 3;
-                if (op->mode == MODE_REG) {
+                /*if (op->mode == MODE_REG) {
                     TB_ASSERT(n->inputs[2]->type == TB_MACH_SYMBOL);
                     ins[2] = &TB_REG_EMPTY;
                 } else if (op->flags & OP_INDEXED) {
                     ins[2] = ctx->normie_mask[REG_CLASS_GPR];
                     ins[3] = ctx->normie_mask[REG_CLASS_GPR];
                     base += 1;
+                } else {
+                    ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+                }*/
+
+                size_t base = 3;
+                if (n->inputs[2]->type == TB_MACH_SYMBOL) {
+                    ins[2] = &TB_REG_EMPTY;
                 } else {
                     ins[2] = ctx->normie_mask[REG_CLASS_GPR];
                 }
@@ -1949,7 +1974,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_MACH_JIT_THREAD_PTR: {
             GPR dst = op_gpr_at(ctx, n);
             __(MOV, TB_X86_QWORD, Vgpr(dst), Vgpr(RSP));
-            __(AND, TB_X86_QWORD, Vgpr(dst), Vimm(-0x200000));
+            // __(AND, TB_X86_QWORD, Vgpr(dst), Vimm(-0x200000));
+            __(AND, TB_X86_QWORD, Vgpr(dst), Vimm(-0x1000));
             break;
         }
 
@@ -2303,11 +2329,54 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
+        case x86_mov: {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            TB_X86_DataType dt;
+            if (n->dt.type == TB_TAG_MEMORY) {
+                dt = legalize_int(op->extra_dt);
+            } else if (n->type == x86_mov && op->mode == MODE_REG) {
+                dt = legalize_int(n->inputs[2]->dt);
+            } else {
+                dt = legalize_int(n->dt);
+            }
+
+            if (op->mode == MODE_ST) {
+                Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
+                __(MOV, dt, &rm, &rx);
+            } else {
+                Val dst = op_at(ctx, n);
+                Val rm  = parse_cisc_operand(ctx, n, NULL, op);
+
+                if (op->mode == MODE_LD && is_gcref_dt(n->dt)) {
+                    if (rm.index >= 0) {
+                        COMMENT("LVB %s, [%s + %s*%d + %d]", GPR_NAMES[dst.reg], GPR_NAMES[rm.reg], GPR_NAMES[rm.index], rm.imm);
+                    } else {
+                        COMMENT("LVB %s, [%s+%d]", GPR_NAMES[dst.reg], GPR_NAMES[rm.reg], rm.imm);
+                    }
+                }
+                __(MOV, dt, &dst, &rm);
+
+                if (n->type == x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
+                    Stub_LVB* stub = add_code_stub(ctx, 0, sizeof(Stub_LVB));
+
+                    // LOADED VALUE BARRIER (LVB)
+                    Val global_nmt = op_at(ctx, n->inputs[n->input_count - 1]);
+                    //   bt global_nmt, addr
+                    __(BT,  TB_X86_QWORD, &global_nmt, &dst);
+                    //   jb gc_trap_stub
+                    EMIT1(e, 0x0F); EMIT1(e, 0x82); EMIT4(e, 0);
+                    stub->header.pos = e->count-4;
+                    // and addr, -4
+                    __(AND, TB_X86_QWORD, &dst, Vimm(-4));
+                }
+            }
+            break;
+        }
+
         case x86_add: case x86_or:  case x86_and:
-        case x86_sub: case x86_xor: case x86_mov:
+        case x86_sub: case x86_xor: case x86_adc:
         case x86_shl: case x86_shr: case x86_rol:
         case x86_ror: case x86_sar: case x86_cmovcc:
-        case x86_adc:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt;
@@ -2321,7 +2390,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
             int op_type;
             switch (n->type) {
-                case x86_mov: op_type = MOV; break;
                 case x86_add: op_type = ADD; break;
                 case x86_and: op_type = AND; break;
                 case x86_sub: op_type = SUB; break;
@@ -2354,30 +2422,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                     }
                 }
 
-                if (n->type == x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
-                    if (rm.index >= 0) {
-                        COMMENT("LVB %s, [%s + %s*%d + %d]", GPR_NAMES[dst.reg], GPR_NAMES[rm.reg], GPR_NAMES[rm.index], rm.imm);
-                    } else {
-                        COMMENT("LVB %s, [%s+%d]", GPR_NAMES[dst.reg], GPR_NAMES[rm.reg], rm.imm);
-                    }
-                }
-
                 __(op_type, dt, &dst, &rm);
-
-                if (n->type == x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
-                    Stub_LVB* stub = add_code_stub(ctx, 0, sizeof(Stub_LVB));
-
-                    // LOADED VALUE BARRIER (LVB)
-                    Val dst = op_at(ctx, n);
-                    TB_Symbol* sym = ctx->module->ccgc.phase_control;
-                    __(BT,  TB_X86_QWORD, Vsym(sym,0), &dst);
-
-                    //   jb gc_trap_stub
-                    EMIT1(e, 0x0F); EMIT1(e, 0x82); EMIT4(e, 0);
-                    stub->header.pos = e->count-4;
-
-                    __(AND, TB_X86_QWORD, &dst, Vimm(-4));
-                }
             }
             break;
         }

@@ -601,7 +601,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
                     FOR_N(k, 1, n->input_count) {
                         TB_Node* in = n->inputs[k];
                         int spill = spill_map_get2(&splitter.spill_map, in);
-                        if (spill >= 0) {
+                        if (spill >= 0 && !((splitter.remat_all >> spill) & 1)) {
                             W |= (1ull << spill) & is_hrp;
                             TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%d: immediate use of %%%u, don't spill it\n", bb_id, spill, in->gvn));
                         }

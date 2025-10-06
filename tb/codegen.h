@@ -573,3 +573,7 @@ static bool bits64_member(uint64_t* arr, size_t x) {
     return arr[x / 64] & (1ull << (x % 64));
 }
 
+static bool is_gcref_dt(TB_DataType dt) {
+    return dt.type == TB_TAG_PTR && dt.elem_or_addrspace > 0;
+}
+

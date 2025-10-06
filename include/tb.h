@@ -179,6 +179,7 @@ static_assert(sizeof(TB_DataType) == 1, "im expecting this to be a byte");
 #define TB_IS_POINTER_TYPE(x)  ((x).type == TB_TAG_PTR)
 #define TB_IS_SCALAR_TYPE(x)   ((x).type <= TB_TAG_F64)
 #define TB_IS_INT_OR_PTR(x)    ((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_PTR)
+#define TB_IS_INT_OR_PTR0(x)   (((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_I64) || ((x).type == TB_TAG_PTR && (x).elem_or_addrspace == 0))
 #define TB_IS_BOOL_INT_PTR(x)  ((x).type >= TB_TAG_BOOL && (x).type <= TB_TAG_PTR)
 
 // accessors
@@ -697,7 +698,6 @@ typedef struct {
 
 typedef struct {
     void* userdata;
-    // all the saved values are at the end of the input list
     int saved_val_count;
 } TB_NodeSafepoint;
 
@@ -740,14 +740,23 @@ typedef struct {
     TB_Node* value;
 } TB_SwitchEntry;
 
+typedef struct {
+    // if the top bit is set, we're referring to a
+    // physical register.
+    uint32_t value;
+    // user-defined reference type data
+    void* metadata;
+} TB_StackMapEntry;
+
 typedef struct TB_Safepoint {
     TB_Function* func;
     TB_Node* node; // type == TB_SAFEPOINT
     void* userdata;
 
-    uint32_t ip;    // relative to the function body.
-    uint32_t count; // same as node->input_count
-    uint32_t values[];
+    uint32_t ip; // relative to the function body.
+
+    size_t count;
+    uint64_t has_refs[];
 } TB_Safepoint;
 
 typedef enum {
@@ -924,7 +933,7 @@ typedef struct TB_JIT TB_JIT;
 #ifdef EMSCRIPTEN
 TB_API void* tb_jit_wasm_obj(TB_Arena* arena, TB_Function* f);
 #else
-typedef struct TB_CPUContext TB_CPUContext;
+typedef struct TB_Stacklet TB_Stacklet;
 
 // passing 0 to jit_heap_capacity will default to 4MiB
 TB_API TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity);
@@ -940,6 +949,8 @@ typedef struct {
     uint32_t offset;
 } TB_ResolvedAddr;
 
+typedef void (*TB_JIT_ExceptionHandler)(TB_JIT* jit, TB_Stacklet* stack, void* sp, void* pc);
+
 TB_API void* tb_jit_resolve_addr(TB_JIT* jit, void* ptr, uint32_t* offset);
 TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 
@@ -947,29 +958,12 @@ TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 TB_API void tb_jit_tag_object(TB_JIT* jit, void* ptr, void* tag);
 
 // Debugger stuff
-//   creates a new context we can run JIT code in, you don't
-//   technically need this but it's a nice helper for writing
-//   JITs especially when it comes to breakpoints (and eventually
-//   safepoints)
-TB_API TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size);
-TB_API void* tb_jit_thread_get_userdata(TB_CPUContext* cpu);
-TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);
+TB_API TB_Stacklet* tb_jit_thread_create(TB_JIT* jit, size_t ud_size, size_t stack_limit);
 
-// changes the pollsite of the thread to fault such that the execution stops.
-TB_API void tb_jit_thread_pause(TB_CPUContext* cpu);
+// offsetof user_data in the TB_Stacklet
+TB_API size_t tb_jit_thread_userdata(void);
 
-// offsetof pollsite in the CPUContext
-TB_API size_t tb_jit_thread_pollsite(void);
-TB_API size_t tb_jit_thread_checkpoint(void);
-
-// Only relevant when you're pausing the thread
-TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
-TB_API void* tb_jit_thread_sp(TB_CPUContext* cpu);
-
-TB_API bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args);
-
-// returns true if we stepped off the end and returned through the trampoline
-TB_API bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end);
+TB_API bool tb_jit_thread_call(TB_Stacklet* stacklet, void* pc, uint64_t* ret, size_t arg_count, void** args);
 #endif
 
 ////////////////////////////////

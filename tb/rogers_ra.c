@@ -866,6 +866,72 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             }
             #endif
 
+            CUIK_TIMED_BLOCK("build stack maps") {
+                // Sparse set repr
+                TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+                ArenaArray(int) stack = aarray_create(&f->tmp_arena, int, 30);
+                int* array = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
+                FOR_REV_N(i, 0, ctx->bb_count) {
+                    TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+
+                    aarray_clear(stack);
+                    FOR_N(i, 0, f->node_count) {
+                        array[i] = -1;
+                    }
+
+                    // start intervals
+                    BITS64_FOR(j, bb->live_out.data, bb->live_out.capacity) {
+                        if (array[j] < 0 && is_gcref_dt(ra.gvn2node[j]->dt)) {
+                            array[j] = aarray_length(stack);
+                            aarray_push(stack, j);
+                        }
+                    }
+
+                    FOR_REV_N(j, 0, aarray_length(bb->items)) {
+                        TB_Node* n = bb->items[j];
+
+                        // expire
+                        if (array[n->gvn] >= 0) {
+                            int last_gvn = stack[aarray_length(stack) - 1];
+                            aarray_remove(stack, array[n->gvn]);
+                            array[last_gvn] = array[n->gvn];
+                            array[n->gvn] = -1;
+                        }
+
+                        if (cfg_flags(n) & NODE_SAFEPOINT) {
+                            printf("# ");
+                            tb_print_dumb_node(NULL, n);
+                            printf("\n  Live:\n");
+
+                            aarray_for(k, stack) {
+                                TB_ASSERT(ctx->vreg_map[stack[k]] > 0);
+                                VReg* v = &ctx->vregs[ctx->vreg_map[stack[k]]];
+
+                                printf("  ");
+                                tb_print_dumb_node(NULL, ra.gvn2node[stack[k]]);
+                                printf("\n");
+                            }
+                        }
+
+                        // start intervals
+                        if (n->type != TB_PHI) {
+                            FOR_N(k, 1, n->input_count) {
+                                TB_Node* in = n->inputs[k];
+                                if (in && is_gcref_dt(in->dt)) {
+                                    // alive
+                                    if (array[in->gvn] < 0) {
+                                        array[in->gvn] = aarray_length(stack);
+                                        aarray_push(stack, in->gvn);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                tb_arena_restore(&f->tmp_arena, sp);
+            }
+
             ctx->num_spills += ra.num_spills - starting_spills;
             // printf("ROUNDS ON %s: %d\n", f->super.name, rounds);
             return;
