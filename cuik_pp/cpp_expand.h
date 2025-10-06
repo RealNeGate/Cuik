@@ -284,6 +284,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         //   identifier
         //   identifier-list , identifier
         //
+        bool has_varargs = false;
         Token param_t = lexer_read(&param_lexer);
         while (param_t.type && param_t.type != ')') {
             // expect comma
@@ -296,6 +297,10 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
             // arg name
             MacroArg a = { .key = param_t.content };
+            if (param_t.type == TOKEN_TRIPLE_DOT) {
+                a.key = (String){ sizeof("__VA_ARGS__")-1, (const unsigned char*) "__VA_ARGS__" };
+                has_varargs = true;
+            }
             aarray_push(args, a);
             param_t = lexer_read(&param_lexer);
         }
@@ -373,6 +378,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
             args[arg_c].token_start = arg_head - 1;
             args[arg_c].val.data = arg_t.content.data;
 
+            bool is_vararg = has_varargs ? arg_c == aarray_length(args)-1 : false;
             int parens = 0;
             for (;;) {
                 if (arg_t.type == '(') { parens++; }
@@ -380,7 +386,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                     if (parens == 0) { break; }
                     parens--;
                 }
-                if (arg_t.type == ',' && parens == 0) { break; }
+                if (arg_t.type == ',' && parens == 0 && !is_vararg) { break; }
 
                 // convert token location into macro relative
                 /*if ((arg_t.location.raw & SourceLoc_IsMacro) == 0) {

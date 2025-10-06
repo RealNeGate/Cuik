@@ -5,6 +5,7 @@
 #include <common.h>
 #include <log.h>
 #include <arena.h>
+#include <threads.h>
 #include <str.h>
 #include <dyn_array.h>
 #include <cuik_lex.h>
@@ -578,6 +579,7 @@ typedef struct {
 } CuikGo_Val;
 
 #include "gc.c"
+#include "sched.c"
 #define TB_TYPE_GCPTR TB_TYPE_PTRN(1)
 
 static TB_Symbol* checkpoint_fn;
@@ -913,9 +915,10 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
 
             // invoke
             {
-                TB_Stacklet* stack = tb_jit_thread_create(jit, sizeof(uint64_t), 4*1024);
+                TB_Stacklet* stack = tb_jit_thread_create(jit, sizeof(uint64_t) + sizeof(CONTEXT), 4*1024);
                 void (*fn)(Slice*, Slice*) = tb_jit_place_function(jit, func);
 
+                CONTEXT ctx;
                 __debugbreak();
 
                 // Space+NMT

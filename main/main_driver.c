@@ -199,7 +199,7 @@ int main(int argc, const char** argv) {
     args.threads = 0;
     #endif
 
-    if (true) {
+    if (false) {
         CuikGo_Parser parser = {
             .locate = cuikpp_locate_file,
             .fs     = cuikpp_default_fs,
