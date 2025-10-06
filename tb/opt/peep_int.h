@@ -213,6 +213,7 @@ static bool will_add_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattic
 }
 
 static void known_bits_add(uint64_t a_zeros, uint64_t a_ones, uint64_t b_zeros, uint64_t b_ones, uint64_t mask, bool sub, uint64_t* out_known) {
+    #if 0
     uint64_t possible_sum_zeros = ~a_zeros + ~b_zeros;
     uint64_t possible_sum_ones  =  a_ones  +  b_ones;
     if (sub) {
@@ -232,6 +233,21 @@ static void known_bits_add(uint64_t a_zeros, uint64_t a_ones, uint64_t b_zeros, 
 
     out_known[0] = ~possible_sum_zeros & known;
     out_known[1] =  possible_sum_ones  & known;
+    #endif
+
+    uint64_t a_unknown = ~(a_ones | a_zeros);
+    uint64_t b_unknown = ~(b_ones | b_zeros);
+    uint64_t sum, unknowns;
+    if (sub) {
+        sum = a_ones - b_ones;
+        unknowns = a_unknown | b_unknown | ((sum + a_unknown) ^ (sum - b_unknown));
+    } else {
+        sum = a_ones + b_ones;
+        unknowns = a_unknown | b_unknown | (sum ^ (sum + a_unknown + b_unknown));
+    }
+
+    out_known[1] = sum & ~unknowns;
+    out_known[0] = ~(out_known[1] | unknowns);
 }
 
 static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b, bool congruent, bool at_top) {
@@ -312,17 +328,12 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
     } else if (type == TB_ADD || type == TB_SUB) {
         uint64_t known[2];
-        if (type == TB_SUB) {
-            // a - b = a + ~b + 1
-            known_bits_add(a->_int.known_zeros, a->_int.known_ones, b->_int.known_ones, b->_int.known_zeros, mask, true, known);
-        } else {
-            known_bits_add(a->_int.known_zeros, a->_int.known_ones, b->_int.known_zeros, b->_int.known_ones, mask, false, known);
-        }
+        known_bits_add(a->_int.known_zeros, a->_int.known_ones, b->_int.known_zeros, b->_int.known_ones, mask, type == TB_SUB, known);
 
         // during the optimistic solver, this will be evaluated before the type-based splitting
         // and since congruences can never exist from nodes which produce different types we should
         // prune based on that fact to avoid an ambiguity.
-        Lattice* t = lattice_gimme_int2(f, min, max, known[0], known[1], 64);
+        Lattice* t = lattice_gimme_int3(f, min, max, known[0], known[1], 64, TB_MAX(a->_int.widen, b->_int.widen));
         if (congruent && type == TB_SUB) {
             // we can only drop to zero from TOP and our current approximation
             // is subset of 0 (that way if push comes to shove we can extend
@@ -356,7 +367,7 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
 ////////////////////////////////
 static TB_Node* ideal_shift(TB_Function* f, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
-    assert(type == TB_SHL || type == TB_SHR);
+    TB_ASSERT(type == TB_SHL || type == TB_SHR);
 
     TB_Node* a = n->inputs[1];
     TB_Node* b = n->inputs[2];
@@ -475,7 +486,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                             max = lattice_int_max(bits);
                         }
 
-                        return lattice_gimme_int2(f, min, max, zeros, ones, bits);
+                        return lattice_gimme_int3(f, min, max, zeros, ones, bits, TB_MAX(a->_int.widen, b->_int.widen));
                     }
                 } else {
                     // we at least shifted this many bits therefore we
@@ -515,7 +526,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     max = lattice_int_max(bits);
                 }
 
-                return lattice_gimme_int2(f, min, max, zeros, ones, bits);
+                return lattice_gimme_int3(f, min, max, zeros, ones, bits, TB_MAX(a->_int.widen, b->_int.widen));
             }
 
             case TB_SAR: {
@@ -526,7 +537,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     min = tb__sxt(min >> b->_int.min, bits - b->_int.min, 64);
                     max = tb__sxt(max >> b->_int.min, bits - b->_int.min, 64);
 
-                    return lattice_gimme_int2(f, min, max, zeros, ones, bits);
+                    return lattice_gimme_int3(f, min, max, zeros, ones, bits, TB_MAX(a->_int.widen, b->_int.widen));
                 }
 
                 break;

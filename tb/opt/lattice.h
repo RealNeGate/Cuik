@@ -336,7 +336,7 @@ static Lattice* lattice_f64_const(TB_Function* f, double con) {
     return lattice_intern(f, (Lattice){ LATTICE_FLTCON64, ._f64 = con });
 }
 
-static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uint64_t zeros, uint64_t ones, int bits) {
+static Lattice* lattice_gimme_int3(TB_Function* f, int64_t min, int64_t max, uint64_t zeros, uint64_t ones, int bits, int widen) {
     TB_ASSERT(min <= max);
     if (min != max) {
         // wherever the highest differing bit is we just clear everything below that
@@ -350,11 +350,15 @@ static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uin
         ones  |=  min;
     }
 
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones, widen } });
+}
+
+static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uint64_t zeros, uint64_t ones, int bits) {
+    return lattice_gimme_int3(f, min, max, zeros, ones, bits, 0);
 }
 
 static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int bits) {
-    return lattice_gimme_int2(f, min, max, 0, 0, bits);
+    return lattice_gimme_int3(f, min, max, 0, 0, bits, 0);
 }
 
 static Lattice* lattice_gimme_uint2(TB_Function* f, uint64_t min, uint64_t max, uint64_t zeros, uint64_t ones, int bits) {

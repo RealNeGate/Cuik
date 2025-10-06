@@ -763,9 +763,10 @@ function write_node(ids, set, hashes)
     node_cnt = node_cnt + 1
 
     -- if the set disagrees
+    local dt_name = n.dt
     local node_type = n[1]
     for i=2,#set do
-        if node_type ~= set[i][1] then
+        if node_type ~= set[i][1] or dt_name ~= set[i].dt then
             node_type = nil
             break
         end
@@ -774,10 +775,17 @@ function write_node(ids, set, hashes)
     local depth = 1
     if not node_type then
         node_type = "k"..ids[n].."_type"
+        dt_name = "k"..ids[n].."_dt"
+
         add_line(depth, string.format("int %s = 0;", node_type))
+        add_line(depth, string.format("TB_DataType %s = TB_TYPE_VOID;", dt_name))
         add_line(depth, "switch (hash) {")
         for i=1,#set do
-            add_line(depth+1, string.format("case %d: %s = %s; break;", hashes[i], node_type, set[i][1]))
+            if set[i].dt then
+                add_line(depth+1, string.format("case %d: %s = %s, %s = %s; break;", hashes[i], node_type, set[i][1], dt_name, set[i].dt))
+            else
+                add_line(depth+1, string.format("case %d: %s = %s; break;", hashes[i], node_type, set[i][1]))
+            end
         end
         add_line(depth+1, "default: abort(); return NULL;")
         add_line(depth, "}")
@@ -785,7 +793,6 @@ function write_node(ids, set, hashes)
 
     -- declaration of a node
     local extra_type = extra_node_type_name(n[1])
-    local dt_name = n.dt
     if dt_name == nil then
         dt_name = "TB_TYPE_VOID"
     end
@@ -799,6 +806,7 @@ function write_node(ids, set, hashes)
     end
 
     -- input edges
+    local use_mem_capture = false
     for i=2,#n do
         local v = n[i]
         if v == "___" then
@@ -809,6 +817,7 @@ function write_node(ids, set, hashes)
         elseif mem_capture and v == mem_capture.name then
             -- copy all the extra data
             potentially_dynamic_count = true
+            use_mem_capture = true
             -- copy inputs
             add_line(depth, string.format("if (%s->type != %s) {", v, mach_prefix.."MEMORY"))
             add_line(depth+1, string.format("set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n]))
@@ -851,8 +860,6 @@ function write_node(ids, set, hashes)
             if type(k) == "string" and k ~= "dt" then
                 -- replace all uses of captures with their real name
                 line[#line + 1] = string.format("k%d_extra->%s = %s", ids[n], k, v)
-            elseif mem_capture and v == mem_capture.name then
-                line[#line + 1] = string.format("memcpy(k%d_extra, %s->extra, sizeof("..extra_type.."))", ids[n], v)
             end
         end
 
@@ -861,6 +868,12 @@ function write_node(ids, set, hashes)
             -- print(hashes[i], line)
             extras:put(line, hashes[i])
         end
+    end
+
+    if use_mem_capture and mem_capture then
+        add_line(depth,   string.format("if (%s->type == %sMEMORY) {", mem_capture.name, mach_prefix))
+        add_line(depth+1, string.format("memcpy(k%d_extra, %s->extra, sizeof(%s));", ids[n], mem_capture.name, extra_type))
+        add_line(depth,   "}")
     end
 
     if extras:count() == 1 then

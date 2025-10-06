@@ -95,6 +95,7 @@ typedef enum TB_FeatureSet_X64 {
 
 typedef enum TB_FeatureSet_Generic {
     TB_FEATURE_FRAME_PTR  = (1u << 0u),
+    TB_FEATURE_STACK_MAPS = (1u << 1u),
 } TB_FeatureSet_Generic;
 
 typedef struct TB_FeatureSet {

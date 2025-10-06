@@ -420,6 +420,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
                         set_input(f, p, header, 0);
                         set_input(f, p, cloned[n->gvn], 1);
                         set_input(f, p, n, 2);
+                        latuni_set(f, p, latuni_get(f, n));
 
                         #if TB_OPTDEBUG_LOOP
                         printf("   PHI(");

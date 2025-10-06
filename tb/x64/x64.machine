@@ -55,12 +55,12 @@ where "fits_into_int32(TB_TYPE_I64, $imm)"
 // [base + index*scale + disp]
 pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ (TB_SHL ___ $index ($scale: TB_ICONST ...)) ($disp: TB_ICONST ...)))
 where "fits_into_scale($scale) && fits_into_int32(TB_TYPE_I64, $disp)"
-=> (x86_MEMORY dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale="as_int32($scale)" disp="as_int32($disp)")
+=> (x86_MEMORY flags=OP_INDEXED $base $index scale="as_int32($scale)" disp="as_int32($disp)")
 
 // [base + index*scale]
 pat (TB_PTR_OFFSET ___ $base (TB_SHL ___ $index ($scale: TB_ICONST ...)))
 where "fits_into_scale($scale)"
-=> (x86_MEMORY dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale="as_int32($scale)")
+=> (x86_MEMORY flags=OP_INDEXED $base $index scale="as_int32($scale)")
 
 // [base + index*scale + disp]
 pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ (TB_SHL ___ $index ($scale: TB_ICONST ...)) ($disp: TB_ICONST ...)))

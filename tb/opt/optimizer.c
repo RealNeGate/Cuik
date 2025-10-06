@@ -559,25 +559,23 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
             new_l._int.widen = old->_int.widen;
             l = lattice_intern(f, new_l);
         }
-
-        // we've hit the widening limit, since MAFs scale with the lattice height we limit how
-        // many steps our ints can take since the lattice itself has a height of 18 quintillion...
-        if (l->_int.widen >= INT_WIDEN_LIMIT) {
-            int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
-                        .min         =  lattice_int_min(bits),
-                        .max         =  lattice_int_max(bits),
-                        .widen       =  INT_WIDEN_LIMIT
-                    } });
-        }
     }
 
-    // downward progress will widen...
+    // downward progress will widen, if we hit the limit we stop growing
     if (old->tag == LATTICE_INT && old != l) {
         Lattice* glb = lattice_meet(f, old, l);
         if (glb == l && l->tag == LATTICE_INT) {
             Lattice new_l = *l;
             new_l._int.widen = TB_MAX(old->_int.widen, l->_int.widen) + 1;
+            if (new_l._int.widen >= INT_WIDEN_LIMIT) {
+                int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
+                return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
+                            .min         =  lattice_int_min(bits),
+                            .max         =  lattice_int_max(bits),
+                            .widen       =  INT_WIDEN_LIMIT
+                        } });
+            }
+
             return lattice_intern(f, new_l);
         }
     }
@@ -1607,7 +1605,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_Worklist tmp_ws = { 0 };
             worklist_alloc(&tmp_ws, f->node_count);
 
-            TB_OPTLOG(PEEP, tb_print_dumb(f));
+            TB_OPTLOG(PEEP, tb_print(f));
 
             ////////////////////////////////
             // 1. Loop finding

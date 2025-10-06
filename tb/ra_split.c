@@ -1200,7 +1200,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
     }
     #endif
 
-    printf("SPLIT %zu\n", num_spills);
+    // printf("SPLIT %zu\n", num_spills);
 
     TB_OPTDEBUG(REGSPLIT)(rogers_dump_sched(ctx, old_node_count));
     TB_OPTDEBUG(REGSPLIT)(__debugbreak());
