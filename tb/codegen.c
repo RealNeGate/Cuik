@@ -107,9 +107,9 @@ RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b) {
     return intern_regmask(ctx, i == 0 ? 1 : a->class, may_spill, i);
 }
 
-void tb__print_regmask(RegMask* mask) {
+void tb__print_regmask(OutStream* s, RegMask* mask) {
     if (!reg_mask_is_not_empty(mask)) {
-        printf("[SPILL]");
+        s_writef(s, "[SPILL]");
         return;
     }
 
@@ -119,7 +119,7 @@ void tb__print_regmask(RegMask* mask) {
     bool comma = false;
     uint64_t bits = mask->mask[0];
 
-    printf("[%s:", reg_class_name(mask->class));
+    s_writef(s, "[%s:", reg_class_name(mask->class));
     while (bits) {
         // skip zeros
         int skip = __builtin_ffs(bits) - 1;
@@ -128,14 +128,14 @@ void tb__print_regmask(RegMask* mask) {
         if (!comma) {
             comma = true;
         } else {
-            printf(", ");
+            s_writef(s, ", ");
         }
 
         // find sequence of ones
         int len = __builtin_ffs(~bits) - 1;
-        printf("R%d", i);
+        s_writef(s, "R%d", i);
         if (len > 1) {
-            printf(" .. R%d", i+len-1);
+            s_writef(s, " .. R%d", i+len-1);
         }
 
         // skip ones
@@ -143,9 +143,9 @@ void tb__print_regmask(RegMask* mask) {
     }
 
     if (mask->may_spill) {
-        printf(" | SPILL");
+        s_writef(s, " | SPILL");
     }
-    printf("]");
+    s_writef(s, "]");
 }
 
 static bool reg_mask_may_intersect(RegMask* a, RegMask* b) {

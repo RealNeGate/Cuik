@@ -1,28 +1,34 @@
 #include <hashes.h>
 
-static size_t insert_symtab(Cuik_CPP* ctx, size_t len, const char* key) {
-    uint32_t mask = (1u << ctx->macros.exp) - 1;
-    uint32_t hash = tb__murmur3_32((const unsigned char*) key, len);
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
-        i = (i + step) & mask;
+static bool macro_def_compare(void* a, void* b) {
+    MacroDef *x = a, *y = b;
 
-        String* k = &ctx->macros.keys[i];
-        if (k->length == 0 || k->length == MACRO_DEF_TOMBSTONE) {
-            // empty slot
-            if (ctx->macros.len > mask) {
-                printf("Symbol table: out of memory!\n");
-                abort();
-            }
-
-            ctx->macros.len++;
-            ctx->macros.keys[i] = (String){ len, (const unsigned char*) key };
-            return i;
-        } else if (len == k->length && memcmp(key, k->data, len) == 0) {
-            return i;
-        }
+    assert(y->key.length != MACRO_DEF_TOMBSTONE);
+    if (x->key.length == MACRO_DEF_TOMBSTONE) {
+        return false;
     }
+
+    return string_equals(&x->key, &y->key);
+}
+
+static uint32_t macro_def_hash(void* a) {
+    MacroDef *x = a;
+    assert(x->key.length != MACRO_DEF_TOMBSTONE);
+    return tb__murmur3_32((const unsigned char*) x->key.data, x->key.length);
+}
+
+static MacroDef* insert_symtab(Cuik_CPP* ctx, size_t len, const char* key) {
+    MacroDef* def = tb_arena_alloc(&ctx->perm_arena, sizeof(MacroDef));
+    *def = (MacroDef){ .key = { len, (const unsigned char*) key } };
+
+    void* actual_def = nl_hashset_put2(&ctx->macros, def, macro_def_hash, macro_def_compare);
+    if (actual_def == NULL) {
+        actual_def = def;
+    } else if (actual_def != def) {
+        // doesn't happen often... i think?
+        tb_arena_free(&ctx->perm_arena, def, sizeof(MacroDef));
+    }
+    return actual_def;
 }
 
 void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char* key) {
@@ -41,7 +47,7 @@ void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
-    char* newkey = gimme_the_shtuffs(ctx, pad_len);
+    char* newkey = tb_arena_alloc(&ctx->tmp_arena, pad_len);
     memcpy(newkey, key, keylen);
 
     // Hash name, name doesn't include parenthesis part btw
@@ -49,8 +55,7 @@ void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
     while ((paren - newkey) < keylen && *paren != '(') paren++;
     keylen = *paren == '(' ? paren - newkey : keylen;
 
-    size_t i = insert_symtab(ctx, keylen, newkey);
-    ctx->macros.vals[i] = (MacroDef){ 0 };
+    insert_symtab(ctx, keylen, newkey);
 }
 
 void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
@@ -59,7 +64,7 @@ void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen,
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
-    char* newkey = gimme_the_shtuffs(ctx, pad_len);
+    char* newkey = tb_arena_alloc(&ctx->tmp_arena, pad_len);
     memcpy(newkey, key, keylen);
 
     // Hash name, name doesn't include parenthesis part btw
@@ -67,45 +72,27 @@ void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen,
     while ((paren - newkey) < keylen && *paren != '(') paren++;
     size_t len = *paren == '(' ? paren - newkey : keylen;
 
-    char* newvalue;
+    unsigned char* newvalue;
     {
         pad_len = (vallen + 15) & ~15;
-        newvalue = gimme_the_shtuffs(ctx, pad_len);
+        newvalue = tb_arena_alloc(&ctx->tmp_arena, pad_len);
         memcpy(newvalue, value, vallen);
 
         size_t rem = pad_len - vallen;
         memset(newvalue + vallen, 0, rem);
     }
 
-    size_t i = insert_symtab(ctx, len, newkey);
-    ctx->macros.vals[i] = (MacroDef){ { vallen, (const unsigned char*) newvalue } };
+    MacroDef* def = insert_symtab(ctx, len, newkey);
+    def->value = (String){ vallen, newvalue };
 }
 
-bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
+void cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
     return cuikpp_undef(ctx, strlen(key), key);
 }
 
-bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
-    uint32_t mask = (1u << ctx->macros.exp) - 1;
-    uint32_t hash = tb__murmur3_32(key, keylen);
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
-        i = (i + step) & mask;
-
-        String* k = &ctx->macros.keys[i];
-        if (k->length == MACRO_DEF_TOMBSTONE) {
-            continue;
-        } else if (k->length == 0) {
-            break;
-        } else if (keylen == k->length && memcmp(key, k->data, keylen) == 0) {
-            ctx->macros.len--;
-            ctx->macros.keys[i] = (String){ MACRO_DEF_TOMBSTONE, 0 };
-            return true;
-        }
-    }
-
-    return false;
+void cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
+    MacroDef def = { .key = { keylen, (const unsigned char*) key } };
+    nl_hashset_remove2(&ctx->macros, &def, macro_def_hash, macro_def_compare);
 }
 
 // 16byte based compare
@@ -135,72 +122,49 @@ static bool memory_equals16(const unsigned char* src1, const unsigned char* src2
     #endif
 }
 
-static bool find_define(Cuik_CPP* restrict ctx, size_t* out_index, const unsigned char* start, size_t length) {
+static MacroDef* find_define(Cuik_CPP* restrict ctx, const unsigned char* start, size_t length) {
     #if CUIK__CPP_STATS
     uint64_t start_ns = cuik_time_in_nanos();
     #endif
 
-    bool found = false;
-    uint32_t mask = (1u << ctx->macros.exp) - 1;
-    uint32_t hash = tb__murmur3_32(start, length);
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
-        i = (i + step) & mask;
-
-        String* k = &ctx->macros.keys[i];
-        if (k->length == 0) {
-            break;
-        } else if (length == k->length && memcmp(start, k->data, length) == 0) {
-            *out_index = i;
-            found = true;
-            break;
-        }
-    }
+    MacroDef def = { .key = { length, start } };
+    MacroDef* actual_def = nl_hashset_get2(&ctx->macros, &def, macro_def_hash, macro_def_compare);
 
     #if CUIK__CPP_STATS
     uint64_t end_ns = cuik_time_in_nanos();
     ctx->total_define_access_time += (end_ns - start_ns);
     ctx->total_define_accesses += 1;
     #endif
-    return found;
+
+    return actual_def;
 }
 
 bool cuikpp_find_define_cstr(Cuik_CPP* restrict ctx, Cuik_DefineIter* out_ref, const char* key) {
-    size_t def_i;
-    if (!find_define(ctx, &def_i, (const unsigned char*) key, strlen(key))) {
-        return false;
-    }
-
-    out_ref->loc = ctx->macros.vals[def_i].loc;
-    out_ref->key = ctx->macros.keys[def_i];
-    out_ref->value = ctx->macros.vals[def_i].value;
+    MacroDef* def = find_define(ctx, (const unsigned char*) key, strlen(key));
+    out_ref->loc = def->loc;
+    out_ref->key = def->key;
+    out_ref->value = def->value;
     return true;
 }
 
 bool cuikpp_find_define(Cuik_CPP* restrict ctx, Cuik_DefineIter* out_ref, size_t keylen, const char key[]) {
-    size_t def_i;
-    if (!find_define(ctx, &def_i, (const unsigned char*) key, keylen)) {
-        return false;
-    }
-
-    out_ref->loc = ctx->macros.vals[def_i].loc;
-    out_ref->key = ctx->macros.keys[def_i];
-    out_ref->value = ctx->macros.vals[def_i].value;
+    MacroDef* def = find_define(ctx, (const unsigned char*) key, keylen);
+    out_ref->loc = def->loc;
+    out_ref->key = def->key;
+    out_ref->value = def->value;
     return true;
 }
 
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length) {
-    size_t garbage;
-    return find_define(c, &garbage, start, length);
+    return find_define(c, start, length);
 }
 
-static size_t hide_macro(Cuik_CPP* restrict c, size_t def_index) {
-    size_t saved = c->macros.keys[def_index].length;
-    c->macros.keys[def_index].length = MACRO_DEF_TOMBSTONE;
+static size_t hide_macro(Cuik_CPP* restrict c, MacroDef* def) {
+    size_t saved = def->key.length;
+    def->key.length = MACRO_DEF_TOMBSTONE;
     return saved;
 }
 
-static void unhide_macro(Cuik_CPP* restrict c, size_t def_index, size_t saved) {
-    c->macros.keys[def_index].length = saved;
+static void unhide_macro(Cuik_CPP* restrict c, MacroDef* def, size_t saved) {
+    def->key.length = saved;
 }

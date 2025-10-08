@@ -59,9 +59,17 @@ struct RegMask {
     uint64_t mask[];
 };
 
+// inserted at the bottom of the function to handle whatever little runtime support
+typedef struct TB_CodeStub {
+    struct TB_CodeStub* prev;
+    uint32_t tag;
+    uint32_t pos;
+} TB_CodeStub;
+
 typedef struct {
     TB_CGEmitter* emit;
     TB_SymbolPatch* patch;
+    TB_CodeStub* stubs;
     TB_Location* loc;
     TB_Location* end;
     Comment* comment;
@@ -161,6 +169,16 @@ typedef struct {
     uint8_t rets[8][2];
 } CallingConv;
 
+// Relevant to the DSL
+typedef int MatchRuleID;
+typedef TB_Node* (*MatchRule)(Ctx* ctx, TB_Function* f, TB_Node* n);
+
+typedef struct {
+    MatchRuleID id;
+    TB_Node* n;
+    int index;
+} TB_SubMatch;
+
 struct Ctx {
     TB_CGEmitter emit;
     TB_FeatureSet features;
@@ -170,6 +188,8 @@ struct Ctx {
     TB_Node* frame_ptr;
     TB_CFG cfg;
     TB_Worklist* walker_ws;
+
+    size_t old_node_count;
 
     // user callbacks
     NodeConstraint constraint;
@@ -189,6 +209,11 @@ struct Ctx {
     uint8_t epilogue_length;
     uint8_t nop_pads;
 
+    struct {
+        int top;
+        TB_SubMatch accept[16];
+    } dsl;
+
     // Basic blocks
     int bb_count;
 
@@ -200,6 +225,7 @@ struct Ctx {
     // clobbered by function calls so i figured keeping a copy of them around
     // would be nice.
     RegMask* cached_arg_list_mask;
+    TB_CodeStub* stubs;
 
     // Values
     ArenaArray(VReg) vregs;   // [vid]
@@ -264,6 +290,15 @@ static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {
 static VReg* vreg_at(Ctx* ctx, int id)       { return id > 0 ? &ctx->vregs[id] : NULL; }
 static VReg* node_vreg(Ctx* ctx, TB_Node* n) { return n && ctx->vreg_map[n->gvn] > 0 ? &ctx->vregs[ctx->vreg_map[n->gvn]] : NULL; }
 
+static void* add_code_stub(Ctx* restrict ctx, uint32_t tag, size_t size) {
+    TB_CodeStub* stub = tb_arena_alloc(&ctx->f->arena, size);
+    stub->tag = tag;
+    stub->pos = 0;
+    stub->prev = ctx->stubs;
+    ctx->stubs = stub;
+    return stub;
+}
+
 static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
     switch (n->type) {
         // these can rematerialize
@@ -284,19 +319,19 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
 static double get_node_spill_cost(Ctx* restrict ctx, TB_Node* n) {
     if (n->type == TB_MACH_TEMP) {
         return 1.0;
-    } else if (can_remat(ctx, n)) {
-        return -1.0;
-    } else if (n->type == TB_MACH_FRAME_PTR || n->user_count == 0) {
+    } else if (n->type == TB_MACH_FRAME_PTR || (n->type != TB_PHI && n->user_count == 0)) {
         // no users? probably a projection that can't be spilled
         return INFINITY;
     } else {
-        double c = 0.0f;
+        // remats grow slower
+        double scale = can_remat(ctx, n) ? 0.5 : 1.0;
 
         // sum of (block_freq * uses_in_block)
+        double c = 0.0f;
         FOR_USERS(u, n) {
             TB_Node* un = USERN(u);
             if (ctx->f->scheduled[un->gvn] == NULL) { continue; }
-            c += ctx->f->scheduled[un->gvn]->freq;
+            c += ctx->f->scheduled[un->gvn]->freq * scale;
         }
 
         return c;
@@ -480,6 +515,7 @@ static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg
 }
 
 #define BITS64_FOR(it, set, cap) for (int it = bits64_first(set, cap); it >= 0; it = bits64_next(set, cap, it))
+#define BITS64_FOR_ANDN(it, A, B, cap) for (int it = bits64_first_andn(A, B, cap); it >= 0; it = bits64_next_andn(A, B, cap, it))
 
 static int bits64_next(uint64_t* arr, size_t cnt, int x) {
     // skip one ahead
@@ -507,7 +543,37 @@ static int bits64_first(uint64_t* arr, size_t cnt) {
     return arr[0] & 1 ? 0 : bits64_next(arr, cnt, 0);
 }
 
+static int bits64_next_andn(uint64_t* A, uint64_t* B, size_t cnt, int x) {
+    // skip one ahead
+    x += 1;
+
+    // unpack coords
+    size_t i = x / 64, j = x % 64;
+
+    uint64_t word;
+    for (;;) {
+        // we're done
+        if (i*64 >= cnt) { return -1; }
+        // chop off the bottom bits which have been processed
+        uint64_t mask = UINT64_MAX << j;
+        word = (A[i] & ~B[i]) & mask;
+        if (word != 0) {
+            return i*64 + tb_ffs64(word) - 1;
+        }
+        i += 1, j = 0;
+    }
+}
+
+static int bits64_first_andn(uint64_t* A, uint64_t* B, size_t cnt) {
+    TB_ASSERT(cnt > 0);
+    return (A[0] & ~B[0]) & 1 ? 0 : bits64_next_andn(A, B, cnt, 0);
+}
+
 static bool bits64_member(uint64_t* arr, size_t x) {
     return arr[x / 64] & (1ull << (x % 64));
+}
+
+static bool is_gcref_dt(TB_DataType dt) {
+    return dt.type == TB_TAG_PTR && dt.elem_or_addrspace > 0;
 }
 

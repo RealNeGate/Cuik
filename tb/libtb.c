@@ -20,6 +20,7 @@ void* tb_jit_stack_create(void);
 #include "codegen.c"
 #include "rogers_ra.c"
 #include "briggs_ra.c"
+#include "ra_split.c"
 
 // Parsers
 #define TB_COFF_IMPL
@@ -59,7 +60,7 @@ int uf_find(int* uf, int uf_len, int a) {
     return l;
 }
 
-void uf_union(int* uf, int x, int y) {
+int uf_union(int* uf, int x, int y) {
     x = uf_find(uf, INT_MAX, x);
     y = uf_find(uf, INT_MAX, y);
 
@@ -71,6 +72,7 @@ void uf_union(int* uf, int x, int y) {
     if (x != y) {
         uf[y] = x;
     }
+    return x;
 }
 
 // Platform layer
@@ -115,6 +117,11 @@ void* tb_jit_stack_create(void) {
 }
 #endif /* NTDDI_VERSION >= NTDDI_WIN10_RS4 */
 #elif defined(_POSIX_C_SOURCE)
+
+void* tb_jit_stack_create(void) {
+    return mmap(NULL, 2*1024*1024, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+}
+
 void* tb_platform_valloc(size_t size) {
     return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 }

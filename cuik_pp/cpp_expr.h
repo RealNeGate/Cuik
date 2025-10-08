@@ -1,68 +1,88 @@
-static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenList* restrict in);
-static intmax_t eval_ternary_safe(Cuik_CPP* restrict c, TokenList* restrict in);
 
 static _Thread_local jmp_buf eval__restore_point;
 
-static intmax_t eval(Cuik_CPP* restrict c, TokenArray* restrict in) {
-    void* savepoint = tls_save();
+typedef struct {
+    DynArray(Token) tokens;
+    int current;
+} ExprParser;
 
-    TokenList l = line_into_list(in);
-    if (l.head == NULL) {
-        return 0;
-    }
+static intmax_t eval_ternary(Cuik_CPP* restrict c, ExprParser* in);
+static intmax_t eval_ternary_safe(Cuik_CPP* restrict c, ExprParser* in);
 
-    // We need to get rid of the defined(MACRO) and defined MACRO before we
-    // do real expansion or else it'll give us incorrect results
-    for (TokenNode* n = l.head; n != NULL; n = n->next) {
-        if (n->t.type != TOKEN_IDENTIFIER || !string_equals_cstr(&n->t.content, "defined")) {
-            continue;
-        }
+static intmax_t eval(Cuik_CPP* restrict ctx, Lexer* restrict in) {
+    DynArray(Token) tokens = ctx->tokens.list.tokens;
+    int start = dyn_array_length(tokens);
 
-        TokenNode* start = n;
-        String str = { 0 };
+    // place all the tokens on this line into the buffer to be expanded
+    Token t;
+    for (;;) {
+        t = lexer_read(in);
+        if (t.type == 0 || t.hit_line) { break; }
+        push_token(ctx, t);
 
-        n = n->next;
-        if (n->t.type == '(') {
-            n = n->next;
-            if (n->t.type != TOKEN_IDENTIFIER) {
-                fprintf(stderr, "expected identifier\n");
-                return 0;
+        size_t def_i;
+        if (t.type == TOKEN_IDENTIFIER) {
+            SourceLoc loc = t.location;
+            int head = dyn_array_length(tokens) - 1;
+
+            if (string_equals_cstr(&t.content, "defined")) {
+                bool paren = false;
+                t = lexer_read(in);
+                if (t.type == '(') {
+                    paren = true;
+                    t = lexer_read(in);
+                }
+
+                if (t.type != TOKEN_IDENTIFIER) {
+                    diag_err(&ctx->tokens, get_token_range(&t), "expected identifier");
+                    goto error;
+                }
+
+                // Replaced defined(MACRO) => 0/1
+                bool found = is_defined(ctx, t.content.data, t.content.length);
+                tokens[head] = (Token){ .type = TOKEN_INTEGER, .location = loc, .content = string_cstr(found ? "1" : "0") };
+
+                if (paren) {
+                    t = lexer_read(in);
+                    if (t.type != ')') {
+                        diag_err(&ctx->tokens, get_token_range(&t), "expected closing paren");
+                        goto error;
+                    }
+                }
+            } else {
+                MacroDef* def = find_define(ctx, t.content.data, t.content.length);
+                if (def != NULL) {
+                    expand_identifier(ctx, in, NULL, head, head+1, 0, def, 0, NULL);
+                }
             }
 
-            str = n->t.content;
-
-            n = n->next;
-            if (n->t.type != ')') {
-                fprintf(stderr, "expected ')'\n");
-                return false;
+            // remaining identifiers are converted to 0
+            FOR_N(i, head, dyn_array_length(tokens)) {
+                if (tokens[i].type == TOKEN_IDENTIFIER) {
+                    tokens[i].type = TOKEN_INTEGER;
+                    tokens[i].content = string_cstr("0");
+                }
             }
-        } else if (n->t.type == TOKEN_IDENTIFIER) {
-            str = n->t.content;
-        } else {
-            fprintf(stderr, "expected identifier for 'defined'!\n");
-            return 0;
         }
-
-        bool found = is_defined(c, str.data, str.length);
-
-        start->t.type = TOKEN_INTEGER;
-        start->t.content = string_cstr(found ? "1" : "0");
-        start->next = n->next;
     }
+    in->current = (unsigned char*) t.content.data;
 
-    expand(c, l.head, 0, NULL);
-    if (l.head->t.type == 0) {
-        return 0;
-    }
+    // EOL token
+    push_token(ctx, (Token){ 0 });
 
-    // don't worry about the tail being correct, it doesn't matter here
-    intmax_t result = eval_ternary_safe(c, &l);
-    tls_restore(savepoint);
-
+    ctx->tokens.list.tokens = tokens;
+    ExprParser p = { tokens, start };
+    intmax_t result = eval_ternary_safe(ctx, &p);
+    dyn_array_set_length(tokens, start);
     return result;
+
+    error:
+    dyn_array_set_length(tokens, start);
+    ctx->tokens.list.tokens = tokens;
+    return 0;
 }
 
-static intmax_t eval_ternary_safe(Cuik_CPP* restrict c, TokenList* restrict in) {
+static intmax_t eval_ternary_safe(Cuik_CPP* restrict c, ExprParser* in) {
     if (setjmp(eval__restore_point)) {
         return 0;
     }
@@ -70,21 +90,15 @@ static intmax_t eval_ternary_safe(Cuik_CPP* restrict c, TokenList* restrict in) 
     return eval_ternary(c, in);
 }
 
-// consume for lists
-static Token grab_n_go(TokenList* restrict in) {
-    TokenNode* n = in->head;
-    return (in->head = in->head->next, n->t);
-}
-
 // some helpers to make TokenList act like a TokenArray
-#define PEEK(in) (in->head->t)
-#define CONSUME(in) grab_n_go(in)
+#define PEEK(in) in->tokens[in->current]
+#define CONSUME(in) in->tokens[in->current++]
 
-static intmax_t eval_unary(Cuik_CPP* restrict c, TokenList* restrict in) {
+static intmax_t eval_unary(Cuik_CPP* restrict c, ExprParser* in) {
     bool flip = false;
     while (PEEK(in).type == '!') {
         flip = !flip;
-        in->head = in->head->next;
+        in->current++;
     }
 
     intmax_t val;
@@ -120,7 +134,7 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, TokenList* restrict in) {
     return flip ? !val : val;
 }
 
-static intmax_t eval_l2(Cuik_CPP* restrict c, TokenList* restrict in) {
+static intmax_t eval_l2(Cuik_CPP* restrict c, ExprParser* in) {
     if (PEEK(in).type == '-') {
         CONSUME(in);
         return -eval_unary(c, in);
@@ -178,21 +192,21 @@ static int get_precendence(TknType ty) {
     }
 }
 
-static intmax_t eval_binop(Cuik_CPP* restrict c, TokenList* restrict in, int min_prec) {
+static intmax_t eval_binop(Cuik_CPP* restrict c, ExprParser* in, int min_prec) {
     // This precendence climber is always left associative
     intmax_t result = eval_l2(c, in);
 
     int prec;
     TknType binop;
 
-    while (in->head) {
+    while (PEEK(in).type != 0) {
         TknType binop = PEEK(in).type;
         int prec = get_precendence(binop);
         if (prec == 0 || prec < min_prec) {
             break;
         }
 
-        in->head = in->head->next;
+        in->current++;
         intmax_t rhs = eval_binop(c, in, prec + 1);
         switch (binop) {
             case TOKEN_TIMES: result *= rhs; break;
@@ -220,15 +234,16 @@ static intmax_t eval_binop(Cuik_CPP* restrict c, TokenList* restrict in, int min
     return result;
 }
 
-static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenList* restrict in) {
+static intmax_t eval_ternary(Cuik_CPP* restrict c, ExprParser* in) {
     intmax_t lhs = eval_binop(c, in, 0);
 
-    if (in->head && in->head->t.type == '?') {
+    if (PEEK(in).type == '?') {
         CONSUME(in);
 
         intmax_t mhs = eval_ternary(c, in);
         if (PEEK(in).type != ':') {
-            // report(REPORT_ERROR, NULL, s, tokens_get_location(s), "expected : for ternary");
+            // TODO(NeGate): better error here...
+            diag_err(&c->tokens, get_token_range(&PEEK(in)), "expected : for ternary");
             abort();
         }
         CONSUME(in);

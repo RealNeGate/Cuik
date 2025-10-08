@@ -132,6 +132,7 @@ typedef struct {
     bool is_extern  : 1;
     bool is_tls     : 1;
     bool is_noret   : 1;
+    bool is_noinline: 1;
 
     // NOTE(NeGate): In all honesty, this should probably not be
     // here since it's used in cases that aren't relevant to attribs.
@@ -181,6 +182,10 @@ struct Cuik_Type {
     void* user_data;
     #endif
 
+    // only used by clones and function types
+    bool has_varargs : 1;
+    bool noret       : 1;
+
     union {
         char _;
 
@@ -199,9 +204,6 @@ struct Cuik_Type {
 
         struct {
             Cuik_Type* of;
-
-            // needs to get transmitted past clones
-            bool noret : 1;
         } clone;
 
         // Pointers
@@ -216,9 +218,6 @@ struct Cuik_Type {
 
             size_t param_count;
             Param* param_list;
-
-            bool has_varargs : 1;
-            bool noret       : 1;
         } func;
 
         // Structs/Unions

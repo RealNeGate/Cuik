@@ -9,7 +9,7 @@ typedef struct Elem {
 // any blocks in the dom tree between and including early and late are valid schedules.
 static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_lat, TB_Node* n, TB_BasicBlock* early, TB_BasicBlock* late) {
     TB_ASSERT(early != late);
-    if (n->type == TB_LOCAL) {
+    if (n->type == TB_LOCAL || n->type == TB_MACH_SYMBOL) {
         return early;
     }
 
@@ -18,16 +18,18 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
     }
 
     // ideally we don't place things into the backedge of a rotated loop
-    if (late->start->type == TB_BRANCH_PROJ && late->start == late->end) {
+    if (is_proj(late->start) && late->start == late->end) {
         TB_Node* next = cfg_next_control(late->end);
-        // if (cfg_is_natural_loop(next)) {
-        if (cfg_is_region(next)) {
+        if (cfg_is_natural_loop(next)) {
             return early != late ? late->dom : late;
         }
     }
 
-    // int lat = get_lat(f, n, NULL);
-    // if (lat >= 1) {
+    uint32_t flags = cfg_flags(n);
+    if (flags & NODE_ALWAYS_SINK) {
+        return late;
+    }
+
     TB_BasicBlock* best = late;
     for (;;) {
         if (late->freq < best->freq) {
@@ -37,8 +39,6 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
         late = late->dom;
     }
     return best;
-    // }
-    // return late;
 }
 
 // schedule nodes such that they appear the least common
@@ -199,13 +199,13 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         TB_Node* curr = n;
                         while (bb == NULL) {
                             bb = f->scheduled[curr->gvn];
-                            if (cfg_is_region(curr)) { // dead block? odd
+                            if (curr->type == TB_DEAD || cfg_is_region(curr)) { // dead block? odd
                                 break;
                             }
                             curr = curr->inputs[0];
                         }
 
-                        if (bb == NULL) {
+                        if (bb == NULL || curr->type == TB_DEAD) {
                             continue;
                         }
 
@@ -465,7 +465,6 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                                 // asked for from the previous block, but it should be "killed" in the PHI's block
                                 // to avoid propagating it further
                                 set_put(&pred_bb->gen, in->gvn);
-                                set_put(&bb->kill, in->gvn);
                             }
                         }
                     } else {

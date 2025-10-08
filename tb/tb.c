@@ -126,6 +126,10 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     return info;
 }
 
+void tb_module_use_cc_gc(TB_Module* m, TB_Symbol* phase_control_sym) {
+    m->ccgc.phase_control = phase_control_sym;
+}
+
 TB_DataType tb_data_type_ptr_int(TB_Module* m) {
     switch (m->codegen->pointer_size) {
         case 16: return TB_TYPE_I16;
@@ -439,6 +443,10 @@ const char* tb_symbol_get_name(TB_Symbol* s) {
     return s->name;
 }
 
+void tb_function_set_attrs(TB_Function* f, TB_FunctionAttribs attrs) {
+    f->attrs = attrs;
+}
+
 void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p) {
     TB_ASSERT(f->prototype == NULL);
     size_t param_count = p->param_count;
@@ -610,7 +618,7 @@ void tb_global_set_storage(TB_Module* m, TB_ModuleSectionHandle section, TB_Glob
 }
 
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data) {
-    assert(len <= 16);
+    assert(len <= 32);
 
     // copy into SmallConst
     SmallConst c = { .len = len };

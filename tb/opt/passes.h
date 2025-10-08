@@ -57,7 +57,7 @@ struct Lattice {
         LATTICE_INT,
         LATTICE_TUPLE,
 
-        // float (each float type has it's own separate set of these btw):
+        // float (each float type has its own separate set of these btw):
         //
         //        top
         //       /   \
@@ -132,6 +132,7 @@ struct Lattice {
 uint32_t cfg_flags(TB_Node* n);
 bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);
+bool cfg_is_if(TB_Node* n);
 bool cfg_is_branch(TB_Node* n);
 bool cfg_is_fork(TB_Node* n);
 bool cfg_is_terminator(TB_Node* n);
@@ -185,32 +186,6 @@ static bool cfg_is_bb_entry(TB_Node* n) {
     } else {
         return false;
     }
-}
-
-// returns a BranchProj's falsey proj, if it's an if-like TB_BRANCH
-static TB_NodeBranchProj* cfg_if_branch(TB_Node* n) {
-    size_t succ_count = 0;
-    if (n->type == TB_BRANCH || n->type == TB_AFFINE_LATCH) {
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-        succ_count = br->succ_count;
-    } else if (cfg_is_branch(n)) {
-        FOR_USERS(u, n) {
-            if (USERN(u)->type == TB_BRANCH_PROJ) { succ_count++; }
-        }
-    } else {
-        tb_todo();
-    }
-
-    if (succ_count != 2) { return NULL; }
-    FOR_USERS(u, n) {
-        if (USERN(u)->type == TB_BRANCH_PROJ) {
-            TB_NodeBranchProj* proj = TB_NODE_GET_EXTRA(USERN(u));
-            if (proj->index == 1) { return proj; }
-        }
-    }
-
-    // shouldn't be reached wtf?
-    return NULL;
 }
 
 static bool is_mem_end_op(TB_Node* n) {
@@ -392,9 +367,12 @@ bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);
 bool cfg_is_terminator(TB_Node* n);
 bool cfg_is_endpoint(TB_Node* n);
+bool tb_node_is_compare(TB_Node* n);
 
 // debug server
+void dbg_startup_server(TB_Module* m);
 void dbg_submit_event(TB_Function* f, const char* desc, ...);
+void dbg_submit_event_sched(TB_CFG* cfg, TB_Function* f, const char* desc, ...);
 
 // internal debugging mostly
 void tb_print_dumb_node(Lattice** types, TB_Node* n);
@@ -412,12 +390,15 @@ void worklist_clear_visited(TB_Worklist* restrict ws);
 bool worklist_test(TB_Worklist* restrict ws, TB_Node* n);
 bool worklist_test_n_set(TB_Worklist* restrict ws, TB_Node* n);
 void worklist_push(TB_Worklist* restrict ws, TB_Node* restrict n);
+void worklist_remove(TB_Worklist* restrict ws, TB_Node* n);
+void worklist_replace(TB_Worklist* restrict ws, TB_Node* n, TB_Node* k);
 int worklist_count(TB_Worklist* ws);
 TB_Node* worklist_pop(TB_Worklist* ws);
 
 void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void subsume_node_without_phis(TB_Function* f, TB_Node* n, TB_Node* new_n);
+void tb_violent_kill(TB_Function* f, TB_Node* n);
 void tb__gvn_remove(TB_Function* f, TB_Node* n);
 
 // Scheduler's cost model crap (talk about these in codegen_impl.h)
@@ -452,10 +433,12 @@ void push_ipsccp_job(TB_Module* m, TB_Function* f);
 void tb_integrated_dbg(TB_Function* f, TB_Node* n);
 
 Lattice* latuni_get(TB_Function* f, TB_Node* n);
+float tb_edge_prob(TB_Node* n);
 
-void tb__print_regmask(RegMask* mask);
+void tb__print_regmask(OutStream* s, RegMask* mask);
 
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
+TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 
 static TB_Node* int_binop(TB_Function* f, int type, TB_Node* lhs, TB_Node* rhs) {
     TB_Node* n = tb_alloc_node(f, type, lhs->dt, 3, sizeof(TB_NodeBinopInt));

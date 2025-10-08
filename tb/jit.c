@@ -29,6 +29,8 @@ void* tb_jit_wasm_obj(TB_Arena* arena, TB_Function* f) {
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <ucontext.h>
 #endif
 
 enum {
@@ -389,28 +391,18 @@ void* tb_jit_get_code_ptr(TB_Function* f) {
 ////////////////////////////////
 // Debugger
 ////////////////////////////////
-#if defined(CUIK__IS_X64) && defined(_WIN32)
-static char* poll_site_pages;
-
-struct TB_CPUContext {
-    // used for stack crawling
+#ifdef CUIK__IS_X64
+struct TB_Stacklet {
+    // used for stack locking mechanism
     void* pc;
     void* sp;
 
-    void* old_sp;
-    void* except;
+    // if you have segmented stacks
+    TB_Stacklet* prev;
+    uint32_t ud_size, limit;
 
     TB_JIT* jit;
-    size_t ud_size;
-
-    volatile bool interrupted;
-    volatile bool running;
-
-    CONTEXT cont;
-    CONTEXT state;
-
-    // safepoint page
-    volatile char* poll_site;
+    void* except;
 
     char user_data[];
 };
@@ -421,134 +413,90 @@ typedef struct {
     uint64_t gprs[6];
 } X64Params;
 
-typedef uint64_t (*JIT_Trampoline)(void* sp, void* pc, X64Params* params, TB_CPUContext* cpu);
+typedef uint64_t (*JIT_Trampoline)(void* sp, void* pc, X64Params* params, TB_Stacklet* stack);
 
 // win64/sysv trampoline ( sp pc params ctx -- rax )
+#ifdef _WIN32
 __declspec(allocate(".text")) __declspec(align(16))
+#else
+__attribute__((section (".text")))
+#endif
 static const uint8_t tb_jit__trampoline[] = {
     #if _WIN32
-    // save old SP, we'll come back for it later
-    0x49, 0x89, 0x61, 0x10,                   // mov [r9 + 0x10], rsp
-    // use new SP
-    0x48, 0x89, 0xCC,                         // mov rsp, rcx
+    0x48, 0x87, 0xCC,           // xchg rsp, rcx
+    0x51,                       // push rdi
     // shuffle some params into win64 volatile regs
-    0x48, 0x89, 0xD0,                         // mov rax, rdx
-    0x4D, 0x89, 0xC2,                         // mov r10, r8
+    0x48, 0x89, 0xD0,           // mov rax, rdx
+    0x4D, 0x89, 0xC2,           // mov r10, r8
     // fill GPR params
-    0x49, 0x8B, 0x4A, 0x00,                   // mov rcx, [r10 + 0x00]
-    0x49, 0x8B, 0x52, 0x08,                   // mov rdx, [r10 + 0x08]
-    0x4D, 0x8B, 0x42, 0x10,                   // mov r8,  [r10 + 0x10]
-    0x4D, 0x8B, 0x4A, 0x18,                   // mov r9,  [r10 + 0x18]
+    0x49, 0x8B, 0x4A, 0x00,     // mov rcx, [r10 + 0x00]
+    0x49, 0x8B, 0x52, 0x08,     // mov rdx, [r10 + 0x08]
+    0x4D, 0x8B, 0x42, 0x10,     // mov r8,  [r10 + 0x10]
+    0x4D, 0x8B, 0x4A, 0x18,     // mov r9,  [r10 + 0x18]
     #else
-    // save old SP, we'll come back for it later
-    0x48, 0x89, 0x61, 0x10,                   // mov [rcx + 0x10], rsp
-    // use new SP
-    0x48, 0x89, 0xFC,                         // mov rsp, rdi
-    // shuffle some params into win64 volatile regs
-    0x48, 0x89, 0xF0,                         // mov rax, rsi
-    0x49, 0x89, 0xD2,                         // mov r10, rdx
+    // use new SP and save old SP
+    0x48, 0x87, 0xFC,           // xchg rsp, rdi
+    0x56,                       // push rdi
+    // shuffle some params into sysv volatile regs
+    0x48, 0x89, 0xF0,           // mov rax, rsi
+    0x49, 0x89, 0xD2,           // mov r10, rdx
     // fill GPR params
-    0x49, 0x8B, 0x3A,                         // mov rdi, [r10 + 0x00]
-    0x49, 0x8B, 0x72, 0x08,                   // mov rsi, [r10 + 0x08]
-    0x49, 0x8B, 0x52, 0x10,                   // mov rdx, [r10 + 0x10]
-    0x49, 0x8B, 0x4A, 0x18,                   // mov rcx, [r10 + 0x18]
-    0x4D, 0x8B, 0x42, 0x20,                   // mov r8,  [r10 + 0x20]
-    0x4D, 0x8B, 0x4A, 0x28,                   // mov r9,  [r10 + 0x28]
+    0x49, 0x8B, 0x3A,           // mov rdi, [r10 + 0x00]
+    0x49, 0x8B, 0x72, 0x08,     // mov rsi, [r10 + 0x08]
+    0x49, 0x8B, 0x52, 0x10,     // mov rdx, [r10 + 0x10]
+    0x49, 0x8B, 0x4A, 0x18,     // mov rcx, [r10 + 0x18]
+    0x4D, 0x8B, 0x42, 0x20,     // mov r8,  [r10 + 0x20]
+    0x4D, 0x8B, 0x4A, 0x28,     // mov r9,  [r10 + 0x28]
     #endif
-    0xFF, 0xD0,                               // call rax
+    0xFF, 0xD0,                 // call rax
     // restore stack & return normally
-    0x48, 0x81, 0xE4, 0x00, 0x00, 0xE0, 0xFF, // and rsp, -0x200000
-    0x48, 0x8B, 0x64, 0x24, 0x10,             // mov rsp, [rsp + 0x10]
-    0xC3,                                     // ret
+    0x5C,                       // pop rsp
+    0xC3,                       // ret
 };
 
+size_t tb_jit_thread_userdata(void) { return offsetof(TB_Stacklet, user_data); }
+
+#ifdef _WIN32
+static _Thread_local TB_Stacklet* active_stack;
 static LONG except_handler(EXCEPTION_POINTERS* e) {
-    TB_CPUContext* cpu = (TB_CPUContext*) (e->ContextRecord->Rsp & -STACK_SIZE);
+    TB_Stacklet* cpu = active_stack;
     switch (e->ExceptionRecord->ExceptionCode) {
         case EXCEPTION_ACCESS_VIOLATION: {
-            uintptr_t accessed = e->ExceptionRecord->ExceptionInformation[1];
-
-            // disarm safepoint poll
-            if (accessed == (uintptr_t) &poll_site_pages[4096]) {
-                cpu->poll_site = &poll_site_pages[0];
-            }
-
+            void* accessed = (void*) e->ExceptionRecord->ExceptionInformation[1];
             void* pc = (void*) e->ContextRecord->Rip;
+
+            printf("FAULTING @ %p (ACCESS %p)\n", pc, accessed);
+
             mtx_lock(&cpu->jit->lock);
             TB_Safepoint* sp = nl_table_get(&cpu->jit->safepoints, pc);
             mtx_unlock(&cpu->jit->lock);
 
             if (sp) {
                 // continue at this new safepoint
-                printf("PAUSE RIP=%p\n", cpu->pc);
-                e->ContextRecord->Rip += sp->target - sp->ip;
+                // e->ContextRecord->Rip += sp->target - sp->ip;
                 return EXCEPTION_CONTINUE_EXECUTION;
             }
             break;
         }
 
-        case EXCEPTION_BREAKPOINT:
-        case EXCEPTION_SINGLE_STEP:
-        cpu->state = *e->ContextRecord;
-        break;
-
         default:
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
-    // necessary for stack crawling later
-    cpu->pc = (void*) e->ContextRecord->Rip;
-    cpu->sp = (void*) e->ContextRecord->Rsp;
-    cpu->interrupted = true;
-    cpu->running = false;
-
-    // jump out of the JIT
-    *e->ContextRecord = cpu->cont;
-    return EXCEPTION_CONTINUE_EXECUTION;
+    return EXCEPTION_CONTINUE_SEARCH;
 }
-
-#ifndef TB_NO_THREADS
-static once_flag tb_jit_init = ONCE_FLAG_INIT;
-#else
-static bool tb_jit_init;
 #endif
 
-static void init_poll_pages(void) {
-    poll_site_pages = tb_platform_valloc(8192);
-    tb_platform_vprotect(poll_site_pages + 4096, 4096, TB_PAGE_RXW);
-}
-
-TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size) {
-    TB_CPUContext* cpu = tb_jit_stack_create();
-    cpu->ud_size = ud_size;
-    cpu->jit = jit;
-    cpu->except = AddVectoredExceptionHandler(1, except_handler);
-    memset(cpu->user_data, 0, ud_size);
-
-    #ifndef TB_NO_THREADS
-    call_once(&tb_jit_init, init_poll_pages);
-    #else
-    if (!tb_jit_init) {
-        tb_jit_init = true;
-        init_poll_pages();
-    }
+TB_Stacklet* tb_jit_thread_create(TB_JIT* jit, size_t ud_size, size_t limit) {
+    TB_Stacklet* stack = tb_platform_valloc(limit);
+    stack->ud_size = ud_size;
+    stack->limit = limit;
+    stack->jit = jit;
+    #ifdef _WIN32
+    stack->except = AddVectoredExceptionHandler(1, except_handler);
     #endif
 
-    return cpu;
-}
-
-void* tb_jit_thread_pc(TB_CPUContext* cpu) { return cpu->pc; }
-void* tb_jit_thread_sp(TB_CPUContext* cpu) { return cpu->sp; }
-
-size_t tb_jit_thread_pollsite(void) { return offsetof(TB_CPUContext, poll_site); }
-
-void tb_jit_thread_pause(TB_CPUContext* cpu) {
-    cpu->poll_site = &poll_site_pages[4096];
-    __debugbreak();
-}
-
-void* tb_jit_thread_get_userdata(TB_CPUContext* cpu) {
-    return cpu->user_data;
+    return stack;
 }
 
 void tb_jit_breakpoint(TB_JIT* jit, void* addr) {
@@ -562,109 +510,36 @@ void tb_jit_breakpoint(TB_JIT* jit, void* addr) {
     dyn_array_put(jit->breakpoints, bp);
 }
 
-bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end) {
-    // step until we're out of the current PC region
-    DynArray(TB_Breakpoint) bp = cpu->jit->breakpoints;
-    uintptr_t rip = cpu->state.Rip;
-    while (rip >= pc_start && rip < pc_end) {
-        // printf("step %#"PRIxPTR" [%#"PRIxPTR" %#"PRIxPTR"]\n", rip, pc_start, pc_end);
+bool tb_jit_thread_call(TB_Stacklet* stack, void* pc, uint64_t* ret, size_t arg_count, void** args) {
+    // continue in JITted code
+    X64Params params;
 
-        // install breakpoints
-        dyn_array_for(i, bp) {
-            uint8_t* code = bp[i].pos;
-            if (code != (uint8_t*) rip) {
-                bp[i].prev_byte = *code;
-                *code = 0xCC;
-            }
-        }
+    #ifdef _WIN32
+    enum { ABI_GPR_COUNT = 4 };
+    #else
+    enum { ABI_GPR_COUNT = 6 };
+    #endif
 
-        // enable trap flag for single-stepping
-        cpu->state.EFlags |= 0x100;
-
-        // save our precious restore point
-        cpu->running = true;
-        cpu->state.ContextFlags = 0x10000f;
-        RtlCaptureContext(&cpu->cont);
-        if (cpu->running) {
-            RtlRestoreContext(&cpu->state, NULL);
-        }
-
-        // uninstall breakpoints
-        dyn_array_for(i, bp) {
-            uint8_t* code = bp[i].pos;
-            *code = bp[i].prev_byte;
-        }
-
-        rip = cpu->state.Rip;
+    size_t i = 0;
+    for (; i < arg_count && i < ABI_GPR_COUNT; i++) {
+        memcpy(&params.gprs[i], &args[i], sizeof(uint64_t));
     }
 
-    uintptr_t t = (uintptr_t) &tb_jit__trampoline;
-    if ((rip - t) < sizeof(tb_jit__trampoline)) {
-        // we in the trampoline, read RAX for the return
-        *ret = cpu->state.Rax;
-        return true;
-    } else {
-        return false;
+    size_t stack_usage = 8 + align_up((arg_count > 0 && arg_count < 4 ? 4 : arg_count) * 8, 16);
+
+    // go to stack top (minus whatever alloc'd param space)
+    uint8_t* sp = ((uint8_t*) stack) + (stack->limit - stack_usage);
+
+    // fill param slots
+    for (; i < arg_count; i++) {
+        memcpy(&sp[i*8], &args[i], sizeof(uint64_t));
     }
+
+    uint64_t r = ((JIT_Trampoline)tb_jit__trampoline)(sp, pc, &params, stack);
+    if (ret) { *ret = r; }
+    return true;
 }
+#endif // CUIK__IS_X64
+#endif // EMSCRIPTEN
 
-bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args) {
-    // save our precious restore point
-    cpu->interrupted = false;
-    cpu->running = true;
-    RtlCaptureContext(&cpu->cont);
-
-    if (cpu->running) {
-        // continue in JITted code
-        X64Params params;
-
-        #ifdef _WIN32
-        enum { ABI_GPR_COUNT = 4 };
-        #else
-        enum { ABI_GPR_COUNT = 6 };
-        #endif
-
-        size_t i = 0;
-        for (; i < arg_count && i < ABI_GPR_COUNT; i++) {
-            memcpy(&params.gprs[i], &args[i], sizeof(uint64_t));
-        }
-
-        size_t stack_usage = 8 + align_up((arg_count > 0 && arg_count < 4 ? 4 : arg_count) * 8, 16);
-
-        // go to stack top (minus whatever alloc'd param space)
-        uint8_t* sp = (uint8_t*) cpu;
-        sp += 2*1024*1024;
-        sp -= stack_usage;
-
-        // fill param slots
-        for (; i < arg_count; i++) {
-            memcpy(&sp[i*8], &args[i], sizeof(uint64_t));
-        }
-
-        // install breakpoints
-        DynArray(TB_Breakpoint) bp = cpu->jit->breakpoints;
-        dyn_array_for(i, bp) {
-            uint8_t* code = bp[i].pos;
-            if (code != pc) {
-                bp[i].prev_byte = *code;
-                *code = 0xCC;
-            }
-        }
-
-        uint64_t r = ((JIT_Trampoline)tb_jit__trampoline)(sp, pc, &params, cpu);
-        if (ret) { *ret = r; }
-
-        // uninstall breakpoints
-        dyn_array_for(i, bp) {
-            uint8_t* code = bp[i].pos;
-            *code = bp[i].prev_byte;
-        }
-
-        cpu->running = false;
-    }
-
-    return cpu->interrupted;
-}
-#endif
-#endif
 

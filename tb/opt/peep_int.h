@@ -15,6 +15,9 @@ static int node_pos(TB_Node* n) {
         case TB_ADD:
         return 2;
 
+        case TB_LOAD:
+        return 3;
+
         default:
         return 4;
 
@@ -90,7 +93,7 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
             Lattice* l = value_of(f, abb);
             assert(l->tag == LATTICE_INT && l->_int.min == l->_int.max);
 
-            violent_kill(f, abb);
+            tb_violent_kill(f, abb);
 
             TB_Node* con = make_int_node(f, n->dt, l->_int.min);
             set_input(f, n, a->inputs[1], 1);
@@ -210,6 +213,7 @@ static bool will_add_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattic
 }
 
 static void known_bits_add(uint64_t a_zeros, uint64_t a_ones, uint64_t b_zeros, uint64_t b_ones, uint64_t mask, bool sub, uint64_t* out_known) {
+    #if 0
     uint64_t possible_sum_zeros = ~a_zeros + ~b_zeros;
     uint64_t possible_sum_ones  =  a_ones  +  b_ones;
     if (sub) {
@@ -229,6 +233,21 @@ static void known_bits_add(uint64_t a_zeros, uint64_t a_ones, uint64_t b_zeros, 
 
     out_known[0] = ~possible_sum_zeros & known;
     out_known[1] =  possible_sum_ones  & known;
+    #endif
+
+    uint64_t a_unknown = ~(a_ones | a_zeros);
+    uint64_t b_unknown = ~(b_ones | b_zeros);
+    uint64_t sum, unknowns;
+    if (sub) {
+        sum = a_ones - b_ones;
+        unknowns = a_unknown | b_unknown | ((sum + a_unknown) ^ (sum - b_unknown));
+    } else {
+        sum = a_ones + b_ones;
+        unknowns = a_unknown | b_unknown | (sum ^ (sum + a_unknown + b_unknown));
+    }
+
+    out_known[1] = sum & ~unknowns;
+    out_known[0] = ~(out_known[1] | unknowns);
 }
 
 static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b, bool congruent, bool at_top) {
@@ -280,15 +299,19 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
             overflow |= mul_overflow(amax, bmin, bits, &prods[1]);
             overflow |= mul_overflow(amin, bmax, bits, &prods[2]);
             overflow |= mul_overflow(amax, bmax, bits, &prods[3]);
-            if (overflow) {
-                min = imin, max = imax;
-                break;
-            }
+            if (amin == amax && bmin == bmax) {
+                min = max = prods[0];
+            } else {
+                if (overflow) {
+                    min = imin, max = imax;
+                    break;
+                }
 
-            min = prods[0], max = prods[0];
-            for (int i = 1; i < 4; i++) {
-                min = TB_MIN(min, prods[i]);
-                max = TB_MAX(max, prods[i]);
+                min = prods[0], max = prods[0];
+                for (int i = 1; i < 4; i++) {
+                    min = TB_MIN(min, prods[i]);
+                    max = TB_MAX(max, prods[i]);
+                }
             }
             break;
         }
@@ -305,17 +328,12 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
     } else if (type == TB_ADD || type == TB_SUB) {
         uint64_t known[2];
-        if (type == TB_SUB) {
-            // a - b = a + ~b + 1
-            known_bits_add(a->_int.known_zeros, a->_int.known_ones, b->_int.known_ones, b->_int.known_zeros, mask, true, known);
-        } else {
-            known_bits_add(a->_int.known_zeros, a->_int.known_ones, b->_int.known_zeros, b->_int.known_ones, mask, false, known);
-        }
+        known_bits_add(a->_int.known_zeros, a->_int.known_ones, b->_int.known_zeros, b->_int.known_ones, mask, type == TB_SUB, known);
 
         // during the optimistic solver, this will be evaluated before the type-based splitting
         // and since congruences can never exist from nodes which produce different types we should
         // prune based on that fact to avoid an ambiguity.
-        Lattice* t = lattice_gimme_int2(f, min, max, known[0], known[1], 64);
+        Lattice* t = lattice_gimme_int3(f, min, max, known[0], known[1], 64, TB_MAX(a->_int.widen, b->_int.widen));
         if (congruent && type == TB_SUB) {
             // we can only drop to zero from TOP and our current approximation
             // is subset of 0 (that way if push comes to shove we can extend
@@ -349,7 +367,7 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
 ////////////////////////////////
 static TB_Node* ideal_shift(TB_Function* f, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
-    assert(type == TB_SHL || type == TB_SHR);
+    TB_ASSERT(type == TB_SHL || type == TB_SHR);
 
     TB_Node* a = n->inputs[1];
     TB_Node* b = n->inputs[2];
@@ -445,11 +463,12 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
         int64_t bmin = b->_int.min & mask;
         int64_t bmax = b->_int.max & mask;
 
+        int widen = TB_MAX(a->_int.widen, b->_int.widen);
         switch (n->type) {
             case TB_SHL: {
                 if (bmin == bmax) {
-                    uint64_t new_min = (min << bmin) & mask;
-                    uint64_t new_max = (max << bmin) & mask;
+                    int64_t new_min = (min << bmin) & mask;
+                    int64_t new_max = (max << bmin) & mask;
 
                     // we know exactly where the bits went
                     zeros <<= bmin;
@@ -460,7 +479,15 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     // overflow check
                     if ((new_min >> bmin) == min &&
                         (new_max >> bmin) == max) {
-                        return lattice_gimme_int2(f, new_min, new_max, zeros, ones, bits);
+                        // convert back to signed
+                        min = tb__sxt(new_min, bits, 64);
+                        max = tb__sxt(new_max, bits, 64);
+                        if (min > max) {
+                            min = lattice_int_min(bits);
+                            max = lattice_int_max(bits);
+                        }
+
+                        return lattice_gimme_int3(f, min, max, zeros, ones, bits, widen);
                     }
                 } else {
                     // we at least shifted this many bits therefore we
@@ -470,7 +497,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
 
                 min = lattice_int_min(bits);
                 max = lattice_int_max(bits);
-                return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+                return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones, widen } });
             }
 
             case TB_SHR: {
@@ -500,7 +527,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     max = lattice_int_max(bits);
                 }
 
-                return lattice_gimme_int2(f, min, max, zeros, ones, bits);
+                return lattice_gimme_int3(f, min, max, zeros, ones, bits, widen);
             }
 
             case TB_SAR: {
@@ -511,7 +538,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     min = tb__sxt(min >> b->_int.min, bits - b->_int.min, 64);
                     max = tb__sxt(max >> b->_int.min, bits - b->_int.min, 64);
 
-                    return lattice_gimme_int2(f, min, max, zeros, ones, bits);
+                    return lattice_gimme_int3(f, min, max, zeros, ones, bits, widen);
                 }
 
                 break;
@@ -553,7 +580,7 @@ static TB_Node* ideal_bits(TB_Function* f, TB_Node* n) {
         Lattice* l = value_of(f, abb);
         TB_ASSERT(l->tag == LATTICE_INT && l->_int.min == l->_int.max);
 
-        violent_kill(f, abb);
+        tb_violent_kill(f, abb);
 
         TB_Node* con = make_int_node(f, n->dt, l->_int.min);
         set_input(f, n, a->inputs[1], 1);
@@ -775,6 +802,9 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
     TB_DataType dt = n->dt;
     TB_Node* x = n->inputs[1];
 
+    int bits = tb_data_type_bit_size(NULL, n->dt.type);
+    uint64_t mask = tb__mask(bits);
+
     uint64_t y = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
     if (y >= (1ull << 63ull) && !is_signed) {
         // if the top bit is set in the divisor then there's literally only two quotients
@@ -791,7 +821,7 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         return tb_alloc_node(f, TB_POISON, dt, 1, 0);
     } else if (y == 1) {
         return x;
-    } else if (y == -1 && is_signed) {
+    } else if ((y & mask) == mask && is_signed) {
         // just negate it
         TB_Node* neg = tb_alloc_node(f, TB_SUB, dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, neg, make_int_node(f, dt, 0), 1);
@@ -843,7 +873,6 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
 
     // now we can take a and sh and do:
     //   x / y  => mulhi(x, a) >> sh
-    int bits = tb_data_type_bit_size(NULL, n->dt.type);
     if (dt.type != TB_TAG_I64) {
         TB_DataType big_dt;
         switch (dt.type) {
@@ -1073,7 +1102,7 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
     }
 
     // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))
-    if (src->type == TB_PHI) {
+    if (0 && src->type == TB_PHI) {
         FOR_N(i, 1, src->input_count) {
             if (src->inputs[i]->type != TB_ICONST) return NULL;
         }

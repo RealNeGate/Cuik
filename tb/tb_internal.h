@@ -363,6 +363,7 @@ struct TB_Function {
     TB_DebugType* dbg_type;
     TB_FunctionPrototype* prototype;
     TB_FeatureSet features;
+    TB_FunctionAttribs attrs;
 
     // raw parameters
     size_t param_count;
@@ -383,7 +384,7 @@ struct TB_Function {
     TB_Trace trace;
     TB_Node* last_loc;
 
-    // Bookkeeping in certain opts
+    // Bookkeeping in certain interprocedural opts
     int uid;
 
     // Optimizer related data
@@ -420,9 +421,6 @@ struct TB_Function {
 
         // IPO lock
         Futex ipo_lock;
-
-        // Inlining info
-        bool no_inline;
 
         #if TB_OPTDEBUG_SERVER
         int dbg_server_t;
@@ -487,7 +485,7 @@ struct TB_ModuleSection {
 
 typedef struct {
     int len;
-    char data[16];
+    char data[32];
 } SmallConst;
 
 // only next_in_module is ever mutated on multiple threads (when first attached)
@@ -545,6 +543,11 @@ struct TB_Module {
     TB_Symbol* tls_index_extern;
     TB_Symbol* chkstk_extern;
 
+    // Concurrent collecting GC based on C4
+    struct {
+        TB_Symbol* phase_control;
+    } ccgc;
+
     // interning lattice
     NBHS lattice_elements;
 
@@ -580,17 +583,27 @@ enum {
     NODE_FORK_CTRL  = 8,
     // uses TB_BRANCH_PROJ for the cprojs
     NODE_BRANCH     = 16,
+    // uses TB_NodeIf
+    NODE_IF         = 32,
     // has potential memory input in inputs[1]
-    NODE_MEMORY_IN  = 32,
+    NODE_MEMORY_IN  = 64,
     // has memory outputs
-    NODE_MEMORY_OUT = 64,
+    NODE_MEMORY_OUT = 128,
     // the first few bytes of extra are TB_NodeSafepoint
-    NODE_SAFEPOINT  = 128,
+    NODE_SAFEPOINT  = 256,
     // cannot be scheduled late
-    NODE_PINNED     = 256,
+    NODE_PINNED     = 512,
     // "necessary" CFG node (in the context of the optimistic solver)
-    NODE_EFFECT     = 512,
+    NODE_EFFECT     = 1024,
+    NODE_ALWAYS_SINK = 2048,
 };
+
+typedef struct OutStream {
+    void (*color)(struct OutStream* s, int ansi_code);
+    void (*write)(struct OutStream* s, size_t n, const char* data);
+    int (*writef)(struct OutStream* s, const char* fmt, va_list ap);
+    bool quoted;
+} OutStream;
 
 struct ICodeGen {
     // what does CHAR_BIT mean on said platform
@@ -602,8 +615,9 @@ struct ICodeGen {
     bool (*can_gvn)(TB_Node* n);
     uint32_t (*flags)(TB_Node* n);
     size_t (*extra_bytes)(TB_Node* n);
+    float (*edge_prob)(TB_Node* n);
     const char* (*node_name)(int n_type);
-    void (*print_extra)(TB_Node* n);
+    void (*print_extra)(OutStream* s, TB_Node* n);
 
     int (*is_pack_op_supported)(TB_Function* f, TB_DataType dt, TB_Node* n, int width);
     int (*max_pack_width_for_op)(TB_Function* f, TB_DataType dt, TB_Node* n);
@@ -626,13 +640,6 @@ typedef struct {
     // thus function_sym_start tells you what the starting point is in the symbol table
     TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_Arena* arena);
 } IDebugFormat;
-
-typedef struct OutStream {
-    void (*color)(struct OutStream* s, int ansi_code);
-    void (*write)(struct OutStream* s, size_t n, const char* data);
-    int (*writef)(struct OutStream* s, const char* fmt, va_list ap);
-    bool quoted;
-} OutStream;
 
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
 
@@ -732,7 +739,7 @@ TB_ExportChunk* tb_export_make_chunk(TB_Arena* arena, size_t size);
 void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 
 int uf_find(int* uf, int uf_len, int a);
-void uf_union(int* uf, int x, int y);
+int uf_union(int* uf, int x, int y);
 
 int tb_data_type_bit_size(TB_Module* m, uint8_t type);
 int tb_data_type_byte_size(TB_Module* m, uint8_t type);

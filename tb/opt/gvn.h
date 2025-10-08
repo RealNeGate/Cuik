@@ -17,6 +17,9 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_AFFINE_LATCH:
         return sizeof(TB_NodeBranch);
 
+        case TB_IF:
+        return sizeof(TB_NodeIf);
+
         case TB_SAFEPOINT:
         return sizeof(TB_NodeSafepoint);
 
@@ -86,6 +89,8 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_SPLITMEM:
         case TB_VBROADCAST:
         case TB_BLACKHOLE:
+        case TB_X86INTRIN_SQRT:
+        case TB_X86INTRIN_RSQRT:
         return 0;
 
         case TB_SYMBOL_TABLE:

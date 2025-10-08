@@ -42,10 +42,12 @@ void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_DriverArgs* args) {
     cuikpp_define_cstr(cpp, "__CUIK_MINOR__", STR(CUIK_COMPILER_MINOR));
 
     // C23/Cuik bool being available without stdbool.h
-    cuikpp_define_empty_cstr(cpp, "__bool_true_false_are_defined");
-    cuikpp_define_cstr(cpp, "bool", "_Bool");
-    cuikpp_define_cstr(cpp, "false", "0");
-    cuikpp_define_cstr(cpp, "true", "1");
+    if (args->version == CUIK_VERSION_C23) {
+        cuikpp_define_empty_cstr(cpp, "__bool_true_false_are_defined");
+        cuikpp_define_cstr(cpp, "bool", "_Bool");
+        cuikpp_define_cstr(cpp, "false", "0");
+        cuikpp_define_cstr(cpp, "true", "1");
+    }
 
     // GNU C
     cuikpp_define_cstr(cpp, "__BYTE_ORDER__", "1");

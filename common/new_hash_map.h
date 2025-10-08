@@ -231,10 +231,18 @@ void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_C
     size_t mask = (1 << hs->exp) - 1;
     size_t first = h & mask, i = first;
 
+    int last_tombstone = -1;
     do {
-        if (hs->data[i] == NULL || hs->data[i] == NL_HASHSET_TOMB) {
+        if (hs->data[i] == NL_HASHSET_TOMB) {
+            last_tombstone = i;
+        } else if (hs->data[i] == NULL) {
+            // not found? ok add it to the last seen tombstone to avoid probing far
+            if (last_tombstone >= 0) {
+                hs->data[last_tombstone] = ptr;
+            } else {
+                hs->data[i] = ptr;
+            }
             hs->count++;
-            hs->data[i] = ptr;
             return NULL;
         } else if (hs->data[i] == ptr || cmp(hs->data[i], ptr)) {
             return hs->data[i];

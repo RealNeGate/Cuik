@@ -45,6 +45,66 @@ static TB_Node* ideal_libcall(TB_Function* f, TB_Node* n) {
         subsume_node(f, proj2, dst_ptr);
 
         return dst_ptr;
+    } else if (strcmp(sym->name, "sqrt") == 0) {
+        TB_Node* proj0 = USERN(proj_with_index(n, 0));
+        TB_Node* proj1 = USERN(proj_with_index(n, 1));
+        TB_Node* proj2 = USERN(proj_with_index(n, 2));
+
+        if (proj2->dt.type == TB_TAG_F64) {
+            TB_Node* zero = make_f64_node(f, 0.0);
+
+            // if it's already gated, skip it
+            if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_IF) {
+                TB_Node* cmp = n->inputs[0]->inputs[0]->inputs[1];
+                if (cmp->type == TB_CMP_FLT && cmp->inputs[2] == zero && cmp->inputs[1] == n->inputs[3]) {
+                    return NULL;
+                }
+            }
+
+            // If we support a builtin sqrt intrinsic, we can wrap it in a guard
+            TB_Node* n2 = tb_alloc_node(f, TB_X86INTRIN_SQRT, proj2->dt, 2, 0);
+            set_input(f, n2, n->inputs[3], 1); // mem
+            mark_node(f, n2);
+
+            // if we're above zero or unordered, we don't use the libcall
+            TB_Node* cmp_node = tb_alloc_node(f, TB_CMP_FLT, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+            set_input(f, cmp_node, n->inputs[3], 1);
+            set_input(f, cmp_node, zero, 2);
+            TB_NODE_SET_EXTRA(cmp_node, TB_NodeCompare, .cmp_dt = TB_TYPE_F64);
+
+            TB_Node* br = tb_alloc_node(f, TB_IF, TB_TYPE_TUPLE, 2, sizeof(TB_NodeIf));
+            set_input(f, br, n->inputs[0], 0);
+            set_input(f, br, cmp_node, 1);
+            mark_node(f, br);
+            TB_NODE_SET_EXTRA(br, TB_NodeIf, .prob = 0.0001f);
+
+            TB_Node* ift = make_proj_node(f, TB_TYPE_CONTROL, br, 0);
+            TB_Node* iff = make_proj_node(f, TB_TYPE_CONTROL, br, 1);
+
+            TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
+            subsume_node2(f, proj0, join);
+            TB_Node* phi_mem = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 3, 0);
+            subsume_node2(f, proj1, phi_mem);
+            TB_Node* phi_data = tb_alloc_node(f, TB_PHI, proj2->dt, 3, 0);
+            subsume_node2(f, proj2, phi_data);
+
+            set_input(f, n, ift, 0);
+
+            set_input(f, join, iff, 0);
+            set_input(f, join, proj0, 1);
+            mark_node(f, join);
+
+            set_input(f, phi_mem, join, 0);
+            set_input(f, phi_mem, n->inputs[1], 1);
+            set_input(f, phi_mem, proj1, 2);
+            mark_node(f, phi_mem);
+
+            set_input(f, phi_data, join, 0);
+            set_input(f, phi_data, n2, 1);
+            set_input(f, phi_data, proj2, 2);
+            mark_node(f, phi_data);
+            return n;
+        }
     }
 
     return NULL;

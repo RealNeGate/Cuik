@@ -42,6 +42,37 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
         return n->inputs[3];
     }
 
+    uint64_t tv, fv;
+    if (get_int_const(n->inputs[2], &tv) && get_int_const(n->inputs[3], &fv)) {
+        // select(x, 1, 0) => (x != 0)
+        // select(x, 0, 1) => (x == 0)
+        if ((tv == 1 && fv == 0) || (tv == 0 && fv == 1)) {
+            TB_Node* false_node = make_int_node(f, TB_TYPE_BOOL, 0);
+
+            TB_Node* cmp_node = tb_alloc_node(f, tv ? TB_CMP_NE : TB_CMP_EQ, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+            set_input(f, cmp_node, src, 1);
+            set_input(f, cmp_node, false_node, 2);
+            TB_NODE_SET_EXTRA(cmp_node, TB_NodeCompare, .cmp_dt = src->dt);
+            return cmp_node;
+        }
+    }
+
+    // zero and sign extension doesn't change the "falsey-ness" of a value, 0 will still be zero.
+    if (src->type == TB_ZERO_EXT || src->type == TB_SIGN_EXT) {
+        set_input(f, n, src->inputs[1], 1);
+        return n;
+    }
+
+    // select(x != 0, a, b) => select(x, a, b)
+    uint64_t comparand;
+    if ((src->type == TB_CMP_NE || src->type == TB_CMP_EQ) && get_int_const(src->inputs[2], &comparand) && comparand == 0) {
+        set_input(f, n, src->inputs[1], 1);
+        if (src->type == TB_CMP_EQ) {
+            swap_edges(f, n, 2, 3);
+        }
+        return n;
+    }
+
     // ideally immediates are on the right side and i'd rather than over
     // having less-than operators
     if ((src->type == TB_CMP_SLT || src->type == TB_CMP_ULT) &&

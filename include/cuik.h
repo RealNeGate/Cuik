@@ -95,6 +95,10 @@ CUIK_API TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu
 #include "cuik_driver.h"
 #include "cuik_fs.h"
 
+#ifdef CONFIG_HAS_CUIKGO
+#include "cuik_go.h"
+#endif
+
 #ifdef CONFIG_HAS_TB
 #include "cuik_irgen.h"
 #endif

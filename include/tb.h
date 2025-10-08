@@ -68,7 +68,10 @@ typedef enum TB_DebugFormat {
 
 typedef enum TB_CallingConv {
     TB_CDECL,
-    TB_STDCALL
+    TB_STDCALL,
+
+    // clobbers all regs
+    TB_TRAPCALL,
 } TB_CallingConv;
 
 typedef enum TB_FeatureSet_X64 {
@@ -92,6 +95,7 @@ typedef enum TB_FeatureSet_X64 {
 
 typedef enum TB_FeatureSet_Generic {
     TB_FEATURE_FRAME_PTR  = (1u << 0u),
+    TB_FEATURE_STACK_MAPS = (1u << 1u),
 } TB_FeatureSet_Generic;
 
 typedef struct TB_FeatureSet {
@@ -176,6 +180,7 @@ static_assert(sizeof(TB_DataType) == 1, "im expecting this to be a byte");
 #define TB_IS_POINTER_TYPE(x)  ((x).type == TB_TAG_PTR)
 #define TB_IS_SCALAR_TYPE(x)   ((x).type <= TB_TAG_F64)
 #define TB_IS_INT_OR_PTR(x)    ((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_PTR)
+#define TB_IS_INT_OR_PTR0(x)   (((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_I64) || ((x).type == TB_TAG_PTR && (x).elem_or_addrspace == 0))
 #define TB_IS_BOOL_INT_PTR(x)  ((x).type >= TB_TAG_BOOL && (x).type <= TB_TAG_PTR)
 
 // accessors
@@ -271,6 +276,8 @@ typedef enum TB_NodeTypeEnum {
     TB_BRANCH,      // (Control, Data) -> (Control...)
     //   just a branch but tagged as the latch to some affine loop.
     TB_AFFINE_LATCH,// (Control, Data) -> (Control...)
+    //   if the condition is non-zero, it'll take the CProj0 else CProj1
+    TB_IF,          // (Control, Data) -> (Control...)
     //   this is a fake branch which acts as a backedge for infinite loops, this keeps the
     //   graph from getting disconnected with the endpoint.
     //
@@ -427,11 +434,13 @@ typedef enum TB_NodeTypeEnum {
     // variadic
     TB_VA_START,
 
+    // Extra float math
+    TB_X86INTRIN_SQRT,
+    TB_X86INTRIN_RSQRT,
+
     // x86 intrinsics
     TB_X86INTRIN_LDMXCSR,
     TB_X86INTRIN_STMXCSR,
-    TB_X86INTRIN_SQRT,
-    TB_X86INTRIN_RSQRT,
 
     // general machine nodes:
     TB_MACH_COPY,
@@ -596,6 +605,10 @@ typedef struct { // TB_BRANCH
     size_t succ_count;
 } TB_NodeBranch;
 
+typedef struct { // TB_IF
+    float prob; // probability of hitting the true case
+} TB_NodeIf;
+
 typedef struct { // TB_MACH_COPY
     RegMask* use;
     RegMask* def;
@@ -686,7 +699,6 @@ typedef struct {
 
 typedef struct {
     void* userdata;
-    // all the saved values are at the end of the input list
     int saved_val_count;
 } TB_NodeSafepoint;
 
@@ -729,15 +741,23 @@ typedef struct {
     TB_Node* value;
 } TB_SwitchEntry;
 
+typedef struct {
+    // if the top bit is set, we're referring to a
+    // physical register.
+    uint32_t value;
+    // user-defined reference type data
+    void* metadata;
+} TB_StackMapEntry;
+
 typedef struct TB_Safepoint {
     TB_Function* func;
     TB_Node* node; // type == TB_SAFEPOINT
     void* userdata;
 
-    uint32_t target;// relative to the function body.
-    uint32_t ip;    // relative to the function body.
-    uint32_t count; // same as node->input_count
-    uint32_t values[];
+    uint32_t ip; // relative to the function body.
+
+    size_t count;
+    uint64_t has_refs[];
 } TB_Safepoint;
 
 typedef enum {
@@ -794,6 +814,10 @@ typedef struct {
 
 #endif
 
+typedef enum TB_FunctionAttribs {
+    TB_FUNCTION_NOINLINE = 1,
+} TB_FunctionAttribs;
+
 // defined in common/arena.h
 #ifndef TB_OPAQUE_ARENA_DEF
 #define TB_OPAQUE_ARENA_DEF
@@ -833,6 +857,8 @@ TB_API TB_Module* tb_module_create_for_host(bool is_jit);
 // Frees all resources for the TB_Module and it's functions, globals and
 // compiled code.
 TB_API void tb_module_destroy(TB_Module* m);
+
+TB_API void tb_module_use_cc_gc(TB_Module* m, TB_Symbol* phase_control_sym);
 
 // When targetting windows & thread local storage, you'll need to bind a tls index
 // which is usually just a global that the runtime support has initialized, if you
@@ -908,7 +934,7 @@ typedef struct TB_JIT TB_JIT;
 #ifdef EMSCRIPTEN
 TB_API void* tb_jit_wasm_obj(TB_Arena* arena, TB_Function* f);
 #else
-typedef struct TB_CPUContext TB_CPUContext;
+typedef struct TB_Stacklet TB_Stacklet;
 
 // passing 0 to jit_heap_capacity will default to 4MiB
 TB_API TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity);
@@ -924,6 +950,8 @@ typedef struct {
     uint32_t offset;
 } TB_ResolvedAddr;
 
+typedef void (*TB_JIT_ExceptionHandler)(TB_JIT* jit, TB_Stacklet* stack, void* sp, void* pc);
+
 TB_API void* tb_jit_resolve_addr(TB_JIT* jit, void* ptr, uint32_t* offset);
 TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 
@@ -931,28 +959,12 @@ TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 TB_API void tb_jit_tag_object(TB_JIT* jit, void* ptr, void* tag);
 
 // Debugger stuff
-//   creates a new context we can run JIT code in, you don't
-//   technically need this but it's a nice helper for writing
-//   JITs especially when it comes to breakpoints (and eventually
-//   safepoints)
-TB_API TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size);
-TB_API void* tb_jit_thread_get_userdata(TB_CPUContext* cpu);
-TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);
+TB_API TB_Stacklet* tb_jit_thread_create(TB_JIT* jit, size_t ud_size, size_t stack_limit);
 
-// changes the pollsite of the thread to fault such that the execution stops.
-TB_API void tb_jit_thread_pause(TB_CPUContext* cpu);
+// offsetof user_data in the TB_Stacklet
+TB_API size_t tb_jit_thread_userdata(void);
 
-// offsetof pollsite in the CPUContext
-TB_API size_t tb_jit_thread_pollsite(void);
-
-// Only relevant when you're pausing the thread
-TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
-TB_API void* tb_jit_thread_sp(TB_CPUContext* cpu);
-
-TB_API bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args);
-
-// returns true if we stepped off the end and returned through the trampoline
-TB_API bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end);
+TB_API bool tb_jit_thread_call(TB_Stacklet* stacklet, void* pc, uint64_t* ret, size_t arg_count, void** args);
 #endif
 
 ////////////////////////////////
@@ -1112,6 +1124,7 @@ TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int l
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage);
 TB_API void tb_function_set_features(TB_Function* f, const TB_FeatureSet* features);
+TB_API void tb_function_set_attrs(TB_Function* f, TB_FunctionAttribs attrs);
 TB_API void tb_function_destroy(TB_Function* f);
 
 TB_API TB_FeatureSet tb_features_from_profile_str(TB_Module* m, const char* name);
@@ -1451,10 +1464,7 @@ TB_API void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file,
 // function call
 TB_API TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
 TB_API TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
-
-// paths[0] has the normal path's symbol table written in it.
-// paths[1] has the "hit" path's symbol table written in it.
-TB_API void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args, TB_Node* paths[2]);
+TB_API void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args);
 
 // locals (variables but as stack vars)
 TB_API TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align);
@@ -1489,7 +1499,7 @@ TB_API int tb_builder_label_pred_count(TB_GraphBuilder* g, TB_Node* label);
 TB_API void tb_builder_label_kill(TB_GraphBuilder* g, TB_Node* label);
 //   writes to the paths array the symbol tables for the branch.
 //   [0] is the true case and [1] is the false case.
-TB_API void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]);
+TB_API TB_Node* tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]);
 //   begins empty switch statement, we can add cases as we go.
 //   returns the symbol table we use to instatiate the cases.
 TB_API TB_Node* tb_builder_switch(TB_GraphBuilder* g, TB_Node* cond);

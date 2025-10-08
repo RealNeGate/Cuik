@@ -236,7 +236,7 @@ void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
     #endif
 }
 
-static bool tb__linker_is_library_new(TB_Linker* l, const char* file_name) {
+bool tb__linker_is_library_new(TB_Linker* l, const char* file_name) {
     if (!linker_thread_init) {
         linker_thread_init = true;
         tb_arena_create(&linker_perm_arena, "LinkerPerm");

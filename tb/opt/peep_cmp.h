@@ -88,7 +88,7 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             break;
             case TB_CMP_SLT: // cmp < 0
             if (lattice_int_lt(cmp, 0)) { return lattice_int_const(f,-1); }
-            if (lattice_int_ge(cmp, 0)) { return lattice_int_const(f, 0); }
+            if (lattice_int_gt(cmp, 0)) { return lattice_int_const(f, 0); }
             break;
             case TB_CMP_SLE: // cmp <= 0
             if (lattice_int_le(cmp, 0)) { return lattice_int_const(f,-1); }

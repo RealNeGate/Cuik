@@ -102,6 +102,7 @@ int main(int argc, const char** argv) {
     #endif
 
     cuik_init(true);
+    log_set_level(LOG_DEBUG);
 
     int status = EXIT_SUCCESS;
     if (argc >= 2) {
@@ -113,7 +114,6 @@ int main(int argc, const char** argv) {
         if (strcmp(argv[1], "-bindgen") == 0) return run_bindgen(argc - 2, argv + 2);
     }
 
-    log_set_level(LOG_INFO);
     // test_diag();
 
     Cuik_DriverArgs args = {
@@ -187,6 +187,7 @@ int main(int argc, const char** argv) {
     }
 
     // spin up worker threads
+    uint64_t build_time = cuik_time_in_nanos();
     TPool pool = { 0 };
 
     #if CUIK_ALLOW_THREADS
@@ -198,25 +199,39 @@ int main(int argc, const char** argv) {
     args.threads = 0;
     #endif
 
-    // compile source files
-    size_t obj_count = dyn_array_length(args.sources);
-    Cuik_BuildStep** objs = cuik_malloc(obj_count * sizeof(Cuik_BuildStep*));
-    dyn_array_for(i, args.sources) {
-        objs[i] = cuik_driver_cc(&args, args.sources[i]->data);
-    }
+    if (false) {
+        CuikGo_Parser parser = {
+            .locate = cuikpp_locate_file,
+            .fs     = cuikpp_default_fs,
+        };
 
-    // link (if no codegen is performed this doesn't *really* do much)
-    Cuik_BuildStep* linked = cuik_driver_ld(&args, obj_count, objs);
-    if (!cuik_step_run(linked, args.threads > 0 ? &pool : NULL)) {
-        status = 1;
-    }
+        cuikgo_parse_file(&parser, args.sources[0]);
+    } else {
+        // compile source files
+        size_t obj_count = dyn_array_length(args.sources);
+        Cuik_BuildStep** objs = cuik_malloc(obj_count * sizeof(Cuik_BuildStep*));
+        dyn_array_for(i, args.sources) {
+            objs[i] = cuik_driver_cc(&args, args.sources[i]->data);
+        }
 
-    cuik_step_free(linked);
-    cuik_free(objs);
+        // link (if no codegen is performed this doesn't *really* do much)
+        Cuik_BuildStep* linked = cuik_driver_ld(&args, obj_count, objs);
+        if (!cuik_step_run(linked, args.threads > 0 ? &pool : NULL)) {
+            status = 1;
+        }
+
+        cuik_step_free(linked);
+        cuik_free(objs);
+    }
 
     #if CUIK_ALLOW_THREADS
     tpool_destroy(&pool);
     #endif
+
+    if (args.time_report) {
+        uint64_t elapsed = cuik_time_in_nanos() - build_time;
+        printf("\nBuild: %.3f", elapsed / 1000000.0);
+    }
 
     if (args.time) {
         cuikperf_stop();

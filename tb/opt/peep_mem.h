@@ -2,6 +2,14 @@
 enum { MEM_REF_MAX_INDICES = 2 };
 
 typedef struct {
+    TB_Node* base;
+    int64_t stride;
+
+    int32_t offset;
+    int32_t size;
+} ArrayAccess;
+
+typedef struct {
     TB_Node* mem;
     TB_Node* base;
     int32_t offset;
@@ -12,8 +20,53 @@ typedef struct {
     int32_t stride[MEM_REF_MAX_INDICES];
 } MemRef;
 
+static ArrayAccess compute_array_access(TB_Function* f, TB_Node* mem) {
+    ArrayAccess r = { mem->inputs[2] };
+
+    if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_ICONST) {
+        int64_t offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
+        if (offset == (int32_t) offset) {
+            r.base = r.base->inputs[1];
+            r.offset = offset;
+        }
+    }
+
+    if (r.base->type == TB_PHI && cfg_is_natural_loop(r.base->inputs[0])) {
+        TB_Node* step = r.base->inputs[2];
+        if (step->type == TB_PTR_OFFSET && step->inputs[2]->type == TB_ICONST) {
+            r.base = r.base->inputs[1];
+            r.stride = TB_NODE_GET_EXTRA_T(step->inputs[2], TB_NodeInt)->value;
+        }
+    } else if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_MUL && r.base->inputs[2]->inputs[2]->type == TB_ICONST) {
+        TB_Node* step = r.base->inputs[2]->inputs[2];
+        r.base = r.base->inputs[1];
+        r.stride = TB_NODE_GET_EXTRA_T(step, TB_NodeInt)->value;
+    } else if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_SHL && r.base->inputs[2]->inputs[2]->type == TB_ICONST) {
+        TB_Node* step = r.base->inputs[2]->inputs[2];
+        r.base = r.base->inputs[1];
+        r.stride = 1ull << TB_NODE_GET_EXTRA_T(step, TB_NodeInt)->value;
+    }
+
+    if (mem->type == TB_LOAD) {
+        r.size = tb_data_type_byte_size(f->super.module, mem->dt.type);
+    } else {
+        r.size = tb_data_type_byte_size(f->super.module, mem->inputs[3]->dt.type);
+    }
+    return r;
+}
+
+static void dump_array_access(ArrayAccess a) {
+    printf("%%%u [X*%"PRId64" + %d, %d]\n", a.base->gvn, a.stride, a.offset, a.size);
+}
+
 static MemRef compute_mem_ref(TB_Function* f, TB_Node* mem) {
     MemRef r = { mem, mem->inputs[2] };
+
+    if (r.base->type == TB_PTR_OFFSET && r.base->inputs[1]->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_ICONST) {
+        r.offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
+        r.base = r.base->inputs[1];
+    }
+
     if (r.base->type == TB_PTR_OFFSET) {
         TB_Node* curr = r.base->inputs[2];
         r.base = r.base->inputs[1];
@@ -139,66 +192,66 @@ static TB_Node* node_lookup(TB_Function* f, TB_Node* n) {
     return nl_hashset_get2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
 }
 
-static bool partially_redundant(TB_Function* f, TB_Node* n, TB_Node* phi, int phi_i, MemRef addr) {
-    int64_t offset = 0;
+static TB_Node* partially_redundant(TB_Function* f, TB_Node* n, TB_Node* phi, int phi_i, MemRef addr) {
+    int64_t offset = addr.offset;
     TB_Node* path = phi->inputs[phi_i];
 
     // reverse the operation
     uint64_t amt;
     if (path->type == TB_ADD && get_int_const(path->inputs[2], &amt)) {
-        if (addr.index_count) {
-            addr.index[addr.index_count - 1] = path->inputs[1];
-        } else {
-            addr.base = path->inputs[1];
-        }
-        addr.offset += amt;
+        offset += amt;
     }
 
-    // speculatively construct the previous paths' address, if we find it
-    // exists then we'd consider this redundant load.
-    __debugbreak();
-
-    #if 0
-    size_t mark = f->node_count;
-    TB_ArenaSavepoint sp = tb_arena_save(&f->arena);
-
-    // compute index sums
-    bool bad = false;
     TB_DataType ptr_int_dt = TB_TYPE_I64;
-    FOR_N(i, 1, addr.index_count) {
-        TB_Node* idx = addr.index[i];
+    TB_Node* ptr = addr.mem->inputs[2];
+    if (ptr->type == TB_PTR_OFFSET) {
+        if (offset == 0) {
+            ptr = ptr->inputs[1];
+        } else {
+            TB_Node* new_offset = make_int_node(f, ptr_int_dt, offset);
+            TB_Node* add = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
+            set_input(f, add, ptr->inputs[1], 1);
+            set_input(f, add, new_offset,     2);
 
-        TB_Node* mul = tb_alloc_node(f, TB_MUL, ptr_int_dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, mul, idx, 1);
-        set_input(f, mul, make_int_node(f, ptr_int_dt, addr.stride[i]), 2);
-        mul = node_lookup(f, mul);
-        if (mul == NULL) {
-            bad = true;
-            break;
+            TB_Node* k = node_lookup(f, add);
+            if (k == NULL) {
+                tb_kill_node(f, add);
+                return NULL;
+            }
+            ptr = k;
         }
-
-        TB_Node* add = tb_alloc_node(f, TB_ADD, ptr_int_dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, add, lhs, 1);
-        set_input(f, add, idx, 2);
-        add = node_lookup(f, add);
-        if (add == NULL) {
-            bad = true;
-            break;
-        }
-
-        addr.index[i] = add;
     }
 
-    // compute base
-    if (!bad) {
-        // TB_Node* significant = addr.index_count ? addr.index[addr.index_count - 1] : addr.base;
+    enum {
+        MAX_STEPS = 5,
+    };
+
+    // any store users that are known to happen before the phi path?
+    FOR_USERS(u, ptr) {
+        TB_Node* st = USERN(u);
+        if (st->type == TB_STORE && USERI(u) == 2) {
+            TB_Node* mem = n->inputs[1];
+            int i = 0;
+            while (i++ < MAX_STEPS && mem != st) {
+                // non-aliasing operations can be walked past
+                if (is_proj(mem)) {
+                    mem = mem->inputs[1];
+                }
+
+                // we can walk past the region that got us here
+                if (mem->type == TB_PHI && mem->inputs[0] == phi->inputs[0]) {
+                    mem = mem->inputs[phi_i];
+                } else if (mem->type != TB_DEBUG_LOCATION) {
+                    // we assume anything that isn't a debug info annotation aliases us... for now
+                    break;
+                }
+            }
+
+            return mem == st ? mem->inputs[3] : NULL;
+        }
     }
 
-    f->node_count = mark;
-    tb_arena_restore(&f->arena, sp);
-    return bad;
-    #endif
-    return false;
+    return NULL;
 }
 
 static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
@@ -255,29 +308,57 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
         int curr_bytes = tb_data_type_byte_size(f->super.module, n->dt.type);
         KnownPointer curr_ptr = known_pointer(addr);
 
-        if (no_alias_with(f->super.module, curr_ptr, curr_bytes, mem, mem->inputs[3]->dt)) {
+        /* if (no_alias_with(f->super.module, curr_ptr, curr_bytes, mem, mem->inputs[3]->dt)) {
             set_input(f, n, mem->inputs[1], 1);
 
             // mark potential anti-deps
             mark_node_n_users(f, mem);
             return n;
+        } */
+
+        ArrayAccess A = compute_array_access(f, n);
+        ArrayAccess B = compute_array_access(f, n->inputs[1]);
+
+        if (A.base == B.base && A.stride == B.stride) {
+            int64_t A_limit = A.offset+A.size;
+            int64_t B_limit = B.offset+B.size;
+            if (
+                A.offset > 0 && A_limit <= A.stride &&
+                B.offset > 0 && B_limit <= B.stride
+            ) {
+                if (!(B.offset < A_limit && A.offset < B_limit)) {
+                    // dump_array_access(A);
+                    // dump_array_access(B);
+
+                    set_input(f, n, mem->inputs[1], 1);
+                    // mark potential anti-deps
+                    mark_node_n_users(f, mem);
+                    return n;
+                }
+            }
         }
     }
 
     // we could push the load further up if we know
     // it's safe to access and partially redundant:
     // * address is a phi-dependent (even indirectly to a degree)
-    if (0 && n->gvn == 33) {
+    if (0) {
         MemRef addr = compute_mem_ref(f, n);
         TB_Node* significant = addr.index_count ? addr.index[addr.index_count - 1] : addr.base;
         if (significant->type == TB_PHI) {
             tb_print(f);
             __debugbreak();
 
+            TB_Node** paths = tb_arena_alloc(&f->tmp_arena, (significant->input_count - 1) * sizeof(TB_Node*));
+
             int redundant = 0;
             FOR_N(i, 1, significant->input_count) {
-                if (partially_redundant(f, n, significant, i, addr)) {
+                TB_Node* k = partially_redundant(f, n, significant, i, addr);
+                if (k != NULL) {
+                    paths[i-1] = k;
                     redundant++;
+                } else {
+                    paths[i-1] = NULL;
                 }
             }
 
@@ -286,6 +367,7 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
             if (redundant >= (significant->input_count/2)) {
                 __debugbreak();
             }
+            tb_arena_free(&f->tmp_arena, paths, (significant->input_count - 1) * sizeof(TB_Node*));
         }
     }
 
@@ -388,20 +470,48 @@ static TB_Node* ideal_ptr_offset(TB_Function* f, TB_Node* n) {
     TB_Node* offset = n->inputs[2];
 
     // reassociate:
-    //   off(off(a, b), c) => off(a, b + c)
-    if (base->type == TB_PTR_OFFSET) {
-        TB_Node* rhs = tb_alloc_node(f, TB_ADD, offset->dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, rhs, base->inputs[2], 1);
-        set_input(f, rhs, offset,          2);
-        mark_node(f, rhs);
+    //   off(a, b + CON) => off(off(a, b), CON)
+    if (offset->type == TB_ADD && offset->inputs[2]->type == TB_ICONST) {
+        TB_Node* lhs = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
+        set_input(f, lhs, base,              1);
+        set_input(f, lhs, offset->inputs[1], 2);
+        mark_node(f, lhs);
 
         // give it a good type to avoid monotonicity problems
-        Lattice* rhs_type = value_of(f, rhs);
-        latuni_set(f, rhs, rhs_type);
+        Lattice* lhs_type = value_of(f, lhs);
+        latuni_set(f, lhs, lhs_type);
 
-        set_input(f, n, base->inputs[1], 1);
-        set_input(f, n, rhs,             2);
+        set_input(f, n, lhs, 1);
+        set_input(f, n, offset->inputs[2], 2);
         return n;
+    }
+
+    // reassociate:
+    //   off(off(a, b), c) => off(a, b + c)
+    if (base->type == TB_PTR_OFFSET) {
+        if (offset->type != TB_ICONST) {
+            TB_Node* rhs = tb_alloc_node(f, TB_ADD, offset->dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, rhs, base->inputs[2], 1);
+            set_input(f, rhs, offset,          2);
+            mark_node(f, rhs);
+
+            // give it a good type to avoid monotonicity problems
+            Lattice* rhs_type = value_of(f, rhs);
+            latuni_set(f, rhs, rhs_type);
+
+            set_input(f, n, base->inputs[1], 1);
+            set_input(f, n, rhs,             2);
+            return n;
+        } else if (base->inputs[2]->type == TB_ICONST) {
+            Lattice* a = latuni_get(f, offset);
+            Lattice* b = latuni_get(f, base->inputs[2]);
+            TB_ASSERT(lattice_is_iconst(a) && lattice_is_iconst(b));
+
+            TB_Node* con = make_int_node(f, offset->dt, a->_int.min + b->_int.min);
+            set_input(f, n, base->inputs[1], 1);
+            set_input(f, n, con,             2);
+            return n;
+        }
     }
 
     return NULL;

@@ -1,0 +1,11 @@
+// *******************************
+// Assembler
+// *******************************
+(assembly
+    // define tokens
+    (rule IDENT "[A-Za-z_][A-Za-z0-9_]*")
+    (rule NUM   "[0-9]+")
+    (rule WS    "[ ]+")
+    //
+    (rule LINE "(NUM|WS)*")
+)

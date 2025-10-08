@@ -209,10 +209,21 @@ Lattice* lattice_truthy(Lattice* l) {
 
         case LATTICE_NULL:  return &FALSE_IN_THE_SKY;
         case LATTICE_XNULL: return &TRUE_IN_THE_SKY;
+        // pointer constants are symbols, these cannot be NULL
+        case LATTICE_PTRCON: return &TRUE_IN_THE_SKY;
 
         case LATTICE_TOP: return &TOP_IN_THE_SKY;
         default: return &BOT_IN_THE_SKY;
     }
+}
+
+static Lattice* lattice_int_widen(TB_Function* f, Lattice* l, Lattice* old) {
+    if (old->tag == LATTICE_INT && l->tag == LATTICE_INT && l->_int.widen < old->_int.widen) {
+        Lattice new_l = *l;
+        new_l._int.widen = old->_int.widen;
+        return lattice_intern(f, new_l);
+    }
+    return l;
 }
 
 static uint64_t lattice_int_min(int bits) { return (1ll << (bits - 1)) | ~tb__mask(bits); }
@@ -325,32 +336,29 @@ static Lattice* lattice_f64_const(TB_Function* f, double con) {
     return lattice_intern(f, (Lattice){ LATTICE_FLTCON64, ._f64 = con });
 }
 
-static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uint64_t zeros, uint64_t ones, int bits) {
+static Lattice* lattice_gimme_int3(TB_Function* f, int64_t min, int64_t max, uint64_t zeros, uint64_t ones, int bits, int widen) {
     TB_ASSERT(min <= max);
-
-    uint64_t umin = min;
-    uint64_t umax = max;
-    if (umin > umax) {
-        umin = 0, umax = lattice_uint_max(bits);
-    }
-
-    if (umin != umax) {
+    if (min != max) {
         // wherever the highest differing bit is we just clear everything below that
-        int msb_diff = 64 - __builtin_clzll(umin ^ umax);
+        int msb_diff = 64 - __builtin_clzll(min ^ max);
         uint64_t diff = ~(UINT64_MAX >> (64 - msb_diff));
 
-        zeros |= ~umin & diff;
-        ones  |=  umin & diff;
+        zeros |= ~min & diff;
+        ones  |=  min & diff;
     } else {
         zeros |= ~min;
         ones  |=  min;
     }
 
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones, widen } });
+}
+
+static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uint64_t zeros, uint64_t ones, int bits) {
+    return lattice_gimme_int3(f, min, max, zeros, ones, bits, 0);
 }
 
 static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int bits) {
-    return lattice_gimme_int2(f, min, max, 0, 0, bits);
+    return lattice_gimme_int3(f, min, max, 0, 0, bits, 0);
 }
 
 static Lattice* lattice_gimme_uint2(TB_Function* f, uint64_t min, uint64_t max, uint64_t zeros, uint64_t ones, int bits) {
@@ -399,9 +407,9 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
             i.widen = INT_WIDEN_LIMIT - i.widen;
 
             // invert unknowns
-            uint64_t unknown = (i.known_zeros | i.known_ones);
-            i.known_zeros = ~(i.known_ones | unknown);
-            i.known_ones  &= unknown;
+            // uint64_t known = (i.known_zeros | i.known_ones);
+            i.known_ones  = ~i.known_ones;  // known;
+            i.known_zeros = ~i.known_zeros; // ~i.known_ones & known;
 
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = i });
         }
@@ -454,6 +462,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
                 return &BOT_IN_THE_SKY;
             }
 
+            #if 0
             // unknown is when it's not one and not zero
             uint64_t a_unk = ~(a->_int.known_ones | a->_int.known_zeros);
             uint64_t b_unk = ~(b->_int.known_ones | b->_int.known_zeros);
@@ -462,6 +471,10 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             // not one, not unknown
             uint64_t known_ones = a->_int.known_ones & b->_int.known_ones;
             uint64_t known_zeros = ~unknown & ~known_ones;
+            #else
+            uint64_t known_ones  = a->_int.known_ones & b->_int.known_ones;
+            uint64_t known_zeros = a->_int.known_zeros & b->_int.known_zeros;
+            #endif
 
             // [amin, amax] /\ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
             LatticeInt i = {

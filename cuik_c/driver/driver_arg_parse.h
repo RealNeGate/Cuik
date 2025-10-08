@@ -69,7 +69,7 @@ static Option options[] = {
     Z("backend"),
     X(BOOL,     "O",          NULL, optimize,          "enable the optimizer"),
     X(BOOL,     "emit-ir",    NULL, emit_ir,           "print IR into stdout"),
-    X(PATH,     "o",          NULL, output_name,       "set the output filepath"),
+    X(STR,      "o",          NULL, output_name,       "set the output filepath"),
     X(BOOL,     "c",          NULL, flavor,            "output object file"),
     X(BOOL,     "S",          NULL, assembly,          "output assembly to stdout"),
     X(BOOL,     "g",          NULL, debug_info,        "compile with debug information"),
@@ -245,7 +245,6 @@ static void print_help(void) {
         for (int j = len; j < round_up; j++) printf(" ");
         printf("%s\n", options[i].desc);
     }
-    __debugbreak();
 
     /*size_t split = 24;
     for (int i = 1; i < ARG_DESC_COUNT; i++) {
@@ -328,14 +327,15 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
         void* dst = &dst_base[opt->offset];
         const char* oldstr = NULL;
         if (opt->type != ARG_BOOL) {
-            if (len == 1 && first[2] == 0) {
+            int short_len = opt->short_name ? strlen(opt->short_name) : 0;
+            if (short_len == 1 && first[2] != 0) {
                 // short names for args might be directly followed by the
                 // arg value (e.g. "-j5")
                 oldstr = first+2;
             } else if (opt == &options[0]) {
                 oldstr = first;
             } else {
-                if (i + 1 >= argc || argv[i + 1][0] == '-') {
+                if (i >= argc || argv[i][0] == '-') {
                     fprintf(stderr, "\x1b[31merror\x1b[0m: expected argument after %s\n", first);
                     return false;
                 } else {
@@ -351,6 +351,18 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
             } else {
                 *(bool*) dst = true;
             }
+        } else if (opt->type == ARG_ENUM) {
+            for (Option* kid = opt+1; kid != &options[OPTION_COUNT] && kid->type == ARG_ENUM_VAL; kid++) {
+                if (strcmp(kid->short_name, oldstr) == 0) {
+                    *(int*) dst = kid->offset;
+                    goto skip;
+                }
+            }
+
+            fprintf(stderr, "\x1b[31merror\x1b[0m: that's not valid (TODO error), got %s\n", oldstr);
+            return false;
+
+            skip:;
         } else if (opt->type == ARG_INT) {
             *(int*) dst = atoi(oldstr);
         } else if (opt->type == ARG_STR) {

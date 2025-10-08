@@ -1,4 +1,4 @@
-TOKEN_KW_auto = 0x10000000,
+TOKEN_KW_auto = 0x800000,
 TOKEN_KW_break,
 TOKEN_KW_case,
 TOKEN_KW_char,

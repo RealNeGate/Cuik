@@ -448,6 +448,10 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         return inst->dt2 == TB_X86_QWORD ? "movq" : "movd";
     } else if (inst->opcode == 0x17E) {
         return inst->dt == TB_X86_QWORD ? "movq" : "movd";
+    } else if (inst->opcode == 0x15A) {
+        // F3 0F 5A /r CVTSS2SD xmm1, xmm2/m32
+        // F2 0F 5A /r CVTSD2SS xmm1, xmm2/m64
+        return (inst->flags & TB_X86_INSTR_REP) ? "cvtss2sd" : "cvtsd2ss";
     }
 
     #define _0F(op)      0x100+op
@@ -705,7 +709,7 @@ size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs) 
     }
 
     const char* mnemonic = tb_x86_mnemonic(inst);
-    if (inst->dt >= TB_X86_F32x1 && inst->dt <= TB_X86_F64x2) {
+    if (inst->dt >= TB_X86_F32x1 && inst->dt <= TB_X86_F64x2 && inst->opcode != 0x15A) {
         static const char* strs[] = { "ss", "sd", "ps", "pd" };
         tb_disasm_outf(disasm, "%s", mnemonic);
         tb_disasm_outf(disasm, "%*s ", -(8 - strlen(mnemonic)), strs[inst->dt - TB_X86_F32x1]);

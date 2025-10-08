@@ -360,7 +360,7 @@ static bool run_inliner(TB_Module* m, IPOSolver* ipo, SCC* scc, TB_Worklist* ws,
             TB_OPTDEBUG(INLINE)(printf("  -> %s?", target->super.name));
 
             bool should = false;
-            if (!target->no_inline) {
+            if (!(target->attrs & TB_FUNCTION_NOINLINE)) {
                 // cannot inline functions which directly recurse for code size reasons
                 should = should_full_inline_by_size(m, ipo, size, target);
                 if (!should) {

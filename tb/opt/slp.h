@@ -30,6 +30,7 @@ typedef struct {
     TB_DataType v_dt;
     TB_Node* v_op;
 
+    int id;
     int width;
     TB_Node* ops[];
 } VectorOp;
@@ -68,11 +69,13 @@ static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) 
         SWAP(TB_Node*, shallow, deep);
     }
 
-    worklist_push(f->worklist, deep);
+    TB_Worklist* ws = f->worklist;
+    worklist_clear(ws);
+    worklist_push(ws, deep);
     int mark = pairs->depth[shallow->gvn];
 
-    for (size_t i = 0; i < dyn_array_length(f->worklist->items); i++) {
-        TB_Node* n = f->worklist->items[i];
+    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+        TB_Node* n = ws->items[i];
 
         // printf("Checked... ");
         // tb_print_dumb_node(NULL, n);
@@ -87,8 +90,8 @@ static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) 
             // push inputs which are still below the mark
             if (n->inputs[i]) {
                 int d = pairs->depth[n->inputs[i]->gvn];
-                if (d >= 0 && d >= mark) {
-                    worklist_push(f->worklist, n->inputs[i]);
+                if (d >= 0 && d > mark) {
+                    worklist_push(ws, n->inputs[i]);
                 }
             }
         }
@@ -112,7 +115,7 @@ static bool is_adjacent_ref(MemRef a, MemRef b) {
 }
 
 static bool can_pack(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b, TB_Node* top) {
-    if (pairs->l_map[a->gvn] || pairs->r_map[b->gvn]) {
+    if (a == b || pairs->l_map[a->gvn] || pairs->r_map[b->gvn]) {
         return false;
     }
 
@@ -278,6 +281,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs, TB_Worklist* ws, LoopOpt* ctx
     CUIK_TIMED_BLOCK("SLP scan") {
         // scan for groups with the same base & element size
         int start = 0;
+        Pair* to_scan = NULL;
         while (start < aarray_length(refs)) {
             int end = start + 1;
             while (refs[end].base   == refs[start].base
@@ -306,48 +310,46 @@ bool generate_pack(TB_Function* f, PairSet* pairs, TB_Worklist* ws, LoopOpt* ctx
                 }
 
                 // extend packs based on use-def
-                bool progress;
-                do {
-                    progress = false;
+                CUIK_TIMED_BLOCK("SLP extend") {
+                    if (to_scan == NULL) {
+                        to_scan = pairs->first;
+                    }
 
-                    CUIK_TIMED_BLOCK("SLP extend") {
-                        #if TB_OPTDEBUG_SLP
-                        /*printf("=== PAIRS ===\n");
-                        for (Pair* p = pairs->first; p; p = p->next) {
-                            printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
-                            tb_print_dumb_node(NULL, p->lhs);
-                            printf("\n  ");
-                            tb_print_dumb_node(NULL, p->rhs);
-                            printf("\n\n");
+                    // check if all input edges do the same op
+                    for (; to_scan; to_scan = to_scan->next) {
+                        TB_Node* lhs = to_scan->lhs;
+                        TB_Node* rhs = to_scan->rhs;
+                        TB_ASSERT(lhs->type == rhs->type);
+
+                        // loads always terminate the SIMD chains, they only have an address input and those are scalar
+                        if (lhs->type == TB_LOAD) {
+                            continue;
                         }
-                        printf("\n\n\n");*/
-                        #endif
 
-                        // check if all input edges do the same op
-                        for (Pair* p = pairs->first; p; p = p->next) {
-                            TB_Node* lhs = p->lhs;
-                            TB_Node* rhs = p->rhs;
-                            TB_ASSERT(lhs->type == rhs->type);
-
-                            // loads always terminate the SIMD chains, they only have an address input and those are scalar
-                            if (lhs->type == TB_LOAD) {
-                                continue;
-                            }
-
-                            // can we pack the normal input ops (doesn't count the memory or address for a store)
-                            FOR_N(j, lhs->type == TB_STORE ? 3 : 1, lhs->input_count) {
-                                TB_Node* a = lhs->inputs[j];
-                                TB_Node* b = rhs->inputs[j];
-                                if (can_pack(f, pairs, a, b, top)) {
-                                    slp_add_pair(f, pairs, a, b);
-                                    progress = true;
-                                } else {
-                                    // printf("failed to pack... %%%u -- %%%u\n", a->gvn, b->gvn);
-                                }
+                        // can we pack the normal input ops (doesn't count the memory or address for a store)
+                        FOR_N(j, lhs->type == TB_STORE ? 3 : 1, lhs->input_count) {
+                            TB_Node* a = lhs->inputs[j];
+                            TB_Node* b = rhs->inputs[j];
+                            if (can_pack(f, pairs, a, b, top)) {
+                                slp_add_pair(f, pairs, a, b);
+                            } else {
+                                // printf("failed to pack... %%%u -- %%%u\n", a->gvn, b->gvn);
                             }
                         }
                     }
-                } while (progress);
+
+                    #if TB_OPTDEBUG_SLP
+                    printf("=== PAIRS ===\n");
+                    for (Pair* p = pairs->first; p; p = p->next) {
+                        printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
+                        tb_print_dumb_node(NULL, p->lhs);
+                        printf("\n  ");
+                        tb_print_dumb_node(NULL, p->rhs);
+                        printf("\n\n");
+                    }
+                    printf("\n\n\n");
+                    #endif
+                }
             }
 
             start = end;
@@ -460,58 +462,100 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
     return k;
 }
 
+static void schedule_packs(TB_Function* f, NL_Table* ops, Set* visited, DynArray(VectorOp*)* schedule, VectorOp* op) {
+    if (set_get(visited, op->id)) {
+        return;
+    }
+    set_put(visited, op->id);
+
+    // push inputs first
+    FOR_N(j, 1, op->ops[0]->input_count) {
+        FOR_N(i, 0, op->width) {
+            if (op->ops[i]->inputs[j]) {
+                VectorOp* in = nl_table_get(ops, op->ops[i]->inputs[j]);
+                if (in) {
+                    schedule_packs(f, ops, visited, schedule, in);
+                }
+            }
+        }
+    }
+
+    // printf("  PUSH V%d\n", op->id);
+    dyn_array_put(*schedule, op);
+}
+
 bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     TB_Node* top = loop ? loop->header : f->root_node;
     DynArray(TB_Node*) combined = dyn_array_create(TB_Node*, 8);
-    bool* visited  = tb_arena_alloc(&f->tmp_arena, pairs->count * sizeof(bool));
-    FOR_N(i, 0, pairs->count) {
-        visited[i] = false;
-    }
 
     // Node -> VectorOp
     NL_Table ops = nl_table_alloc(64);
-    DynArray(VectorOp*) schedule = dyn_array_create(VectorOp*, 32);
+    DynArray(VectorOp*) all_packs = dyn_array_create(VectorOp*, 32);
 
     // combine packs
     TB_OPTDEBUG(SLP)(printf("=== COMBINED ===\n"));
 
+    Set visited = set_create_in_arena(&f->tmp_arena, pairs->count);
     ICodeGen* codegen = f->super.module->codegen;
     for (Pair* p = pairs->first; p; p = p->next) {
-        if (visited[p->id]) { continue; }
-        visited[p->id] = true;
-
-        dyn_array_clear(combined);
-        dyn_array_put(combined, p->lhs);
-        dyn_array_put(combined, p->rhs);
-
-        Pair* curr = p;
-        while (pairs->l_map[curr->rhs->gvn]) {
-            curr = pairs->l_map[curr->rhs->gvn];
-            visited[curr->id] = true;
-            dyn_array_put(combined, curr->rhs);
-        }
-
+        // early out: operation cannot vectorize at all
         TB_DataType elem_dt = slp_node_data_type(p->lhs);
         int pack_limit = codegen->max_pack_width_for_op(f, elem_dt, p->lhs);
         if (pack_limit <= 1) {
-            // operation cannot vectorize at all, filter out this pack
             continue;
         }
 
+        Pair* base = p;
+        Pair* curr = p;
+        bool cycle = false;
+
+        // find leftmost pair (keep walking until there's no more pairs
+        // which consider our LHS the RHS)
+        while (pairs->r_map[curr->lhs->gvn]) {
+            curr = pairs->r_map[curr->lhs->gvn];
+
+            if (curr == base) {
+                TB_OPTDEBUG(SLP)(printf("  CYCLE: %%%u -- %%%u\n", curr->lhs->gvn, curr->rhs->gvn));
+                cycle = true;
+                break;
+            }
+        }
+
+        if (set_get(&visited, curr->id)) {
+            continue;
+        }
+        set_put(&visited, curr->id);
+
+        if (cycle) {
+            break;
+        }
+
+        dyn_array_clear(combined);
+        dyn_array_put(combined, curr->lhs);
+        dyn_array_put(combined, curr->rhs);
+
+        while (pairs->l_map[curr->rhs->gvn]) {
+            curr = pairs->l_map[curr->rhs->gvn];
+            set_put(&visited, curr->id);
+            dyn_array_put(combined, curr->rhs);
+        }
+
         VectorOp* op = tb_arena_alloc(&f->tmp_arena, sizeof(VectorOp) + pack_limit*sizeof(TB_Node*));
+        op->id = dyn_array_length(all_packs);
         op->v_op = NULL;
         op->width = 0;
-        dyn_array_put(schedule, op);
+        dyn_array_put(all_packs, op);
 
-        TB_OPTDEBUG(SLP)(printf("  PACK_LIMIT=%d\n", pack_limit));
+        TB_OPTDEBUG(SLP)(printf("  V%d, PACK_LIMIT=%d\n", op->id, pack_limit));
         dyn_array_for(i, combined) {
             if (op->width >= pack_limit) {
                 op = tb_arena_alloc(&f->tmp_arena, sizeof(VectorOp) + pack_limit*sizeof(TB_Node*));
+                op->id = dyn_array_length(all_packs);
                 op->v_op = NULL;
                 op->width = 0;
-                dyn_array_put(schedule, op);
+                dyn_array_put(all_packs, op);
 
-                TB_OPTDEBUG(SLP)(printf("  SPLIT\n"));
+                TB_OPTDEBUG(SLP)(printf("  V%d, SPLIT\n", op->id));
             }
 
             TB_Node* n = combined[i];
@@ -526,94 +570,195 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         }
         TB_OPTDEBUG(SLP)(printf("\n"));
     }
+    dyn_array_destroy(combined);
 
-    size_t i = dyn_array_length(schedule);
-    while (i--) {
+    ////////////////////////////////
+    // Schedule packs
+    ////////////////////////////////
+    DynArray(VectorOp*) schedule = dyn_array_create(VectorOp*, 32);
+    set_clear(&visited);
+    FOR_REV_N(i, 0, dyn_array_length(all_packs)) {
+        schedule_packs(f, &ops, &visited, &schedule, all_packs[i]);
+    }
+    dyn_array_destroy(all_packs);
+
+    #if 0
+    // regardless of the SLP vectorized completing the rest of the work, we can split the stores
+    dyn_array_for(i, schedule) {
         VectorOp* op = schedule[i];
-        TB_Node* first = op->ops[0];
-
-        // classify the vector width and see if it's good
-        bool bad = false;
-        TB_DataType elem_dt = slp_node_data_type(first);
-        if (!TB_IS_INTEGER_TYPE(elem_dt) && !TB_IS_FLOAT_TYPE(elem_dt)) {
-            TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this type. %%%u ", first->gvn), print_type(elem_dt), printf("\n"));
-            bad = true;
-            goto done;
+        if (op->ops[0]->type != TB_STORE || op->width <= 1) {
+            continue;
         }
 
-        if (!codegen->is_pack_op_supported(f, elem_dt, op->ops[0], op->width)) {
-            TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this operation. %%%u [", first->gvn), print_type(elem_dt), printf(" x %d]\n", op->width));
-            bad = true;
-            goto done;
+        int loads_in_between = 0;
+        FOR_N(i, 0, op->width) {
+            FOR_USERS(u, op->ops[i]) {
+                if (tb_node_mem_in(USERN(u)) && nl_table_get(&ops, USERN(u)) != op) {
+                    loads_in_between++;
+                }
+            }
         }
 
-        int elem_bits = tb_data_type_bit_size(f->super.module, elem_dt.type);
-        int vector_bits = elem_bits * op->width;
-        TB_DataType v_dt = TB_TYPE_VOID;
-        switch (vector_bits) {
-            case 64:  v_dt = (TB_DataType){ { TB_TAG_V64,  .elem_or_addrspace = elem_dt.type } }; break;
-            case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
-            case 256: v_dt = (TB_DataType){ { TB_TAG_V256, .elem_or_addrspace = elem_dt.type } }; break;
-            case 512: v_dt = (TB_DataType){ { TB_TAG_V512, .elem_or_addrspace = elem_dt.type } }; break;
-            default: tb_todo();
+        if (loads_in_between > 0) {
+            continue;
         }
-        op->v_dt = v_dt;
 
-        // check if the vector ops can legally be connected up
-        if (first->type == TB_STORE) {
-            if (!viable_vector(f, &ops, v_dt, op, 3)) {
+        TB_Node* split = tb_alloc_node(f, TB_SPLITMEM, TB_TYPE_MEMORY, 2, 0);
+        set_input(f, split, op->ops[0]->inputs[0], 0);
+        set_input(f, split, op->ops[0]->inputs[1], 1);
+
+        TB_Node* merge = tb_alloc_node(f, TB_MERGEMEM, TB_TYPE_MEMORY, 2 + op->width, 0);
+        set_input(f, merge, op->ops[0]->inputs[0], 0);
+        set_input(f, merge, split, 1);
+
+        FOR_N(i, 0, op->width) {
+            // move all the loads up to the split
+            // subsume_node2(f, op->ops[i], );
+
+            set_input(f, op->ops[i], split, 1);
+            set_input(f, merge, op->ops[i], 2+i);
+
+            mark_node(f, op->ops[i]);
+        }
+        mark_node(f, split);
+        mark_node(f, merge);
+
+        tb_print_dumb(f);
+        __debugbreak();
+    }
+    #endif
+
+    bool progress;
+    size_t len = dyn_array_length(schedule);
+    do {
+        progress = false;
+
+        // prune based on inputs
+        FOR_N(i, 0, dyn_array_length(schedule)) {
+            VectorOp* op = schedule[i];
+            if (op == NULL) {
+                continue;
+            }
+
+            TB_Node* first = op->ops[0];
+
+            // classify the vector width and see if it's good
+            bool bad = false;
+            TB_DataType elem_dt = slp_node_data_type(first);
+            if (!TB_IS_INTEGER_TYPE(elem_dt) && !TB_IS_FLOAT_TYPE(elem_dt)) {
+                TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this type. %%%u ", first->gvn), print_type(&OUT_STREAM_DEFAULT, elem_dt), printf("\n"));
                 bad = true;
-            }
-        } else {
-            if (first->type != TB_LOAD) {
-                if (!viable_vector(f, &ops, v_dt, op, 1)) {
-                    bad = true;
-                }
-
-                if (!viable_vector(f, &ops, v_dt, op, 2)) {
-                    bad = true;
-                }
+                goto done;
             }
 
-            // all uses must also point to a pack... for now
-            FOR_N(i, 0, op->width) {
-                FOR_USERS(u, op->ops[i]) {
-                    VectorOp* use_op = nl_table_get(&ops, USERN(u));
-                    if (use_op == NULL) {
+            if (!codegen->is_pack_op_supported(f, elem_dt, op->ops[0], op->width)) {
+                TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this operation. %%%u [", first->gvn), print_type(&OUT_STREAM_DEFAULT, elem_dt), printf(" x %d]\n", op->width));
+                bad = true;
+                goto done;
+            }
+
+            int elem_bits = tb_data_type_bit_size(f->super.module, elem_dt.type);
+            int vector_bits = elem_bits * op->width;
+            TB_DataType v_dt = TB_TYPE_VOID;
+            switch (vector_bits) {
+                // case 64:  v_dt = (TB_DataType){ { TB_TAG_V64,  .elem_or_addrspace = elem_dt.type } }; break;
+
+                case 32:  v_dt = TB_TYPE_I32; break;
+                case 64:  v_dt = TB_TYPE_I64; break;
+
+                case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
+                case 256: v_dt = (TB_DataType){ { TB_TAG_V256, .elem_or_addrspace = elem_dt.type } }; break;
+                case 512: v_dt = (TB_DataType){ { TB_TAG_V512, .elem_or_addrspace = elem_dt.type } }; break;
+                default: tb_todo();
+            }
+            op->v_dt = v_dt;
+
+            // check if the vector ops can legally be connected up
+            if (first->type == TB_STORE) {
+                if (!viable_vector(f, &ops, v_dt, op, 3)) {
+                    TB_OPTDEBUG(SLP)(printf("    SLP failed: Store value of %%%u isn't a viable vector\n", first->gvn));
+                    bad = true;
+                }
+            } else {
+                if (first->type != TB_LOAD) {
+                    if (!viable_vector(f, &ops, v_dt, op, 1)) {
+                        TB_OPTDEBUG(SLP)(printf("    SLP failed: LHS of %%%u isn't a viable vector\n", first->gvn));
                         bad = true;
-                        goto done;
+                    }
+
+                    if (first->input_count > 2 && !viable_vector(f, &ops, v_dt, op, 2)) {
+                        TB_OPTDEBUG(SLP)(printf("    SLP failed: RHS of %%%u isn't a viable vector\n", first->gvn));
+                        bad = true;
                     }
                 }
             }
+
+            // prune out
+            done:;
+            if (bad) {
+                FOR_N(j, 0, op->width) {
+                    nl_table_remove(&ops, op->ops[j]);
+                }
+                schedule[i] = NULL;
+                len -= 1;
+                progress = true;
+            }
         }
 
-        // prune out
-        done:;
-        if (bad) {
-            FOR_N(i, 0, op->width) {
-                nl_table_remove(&ops, op->ops[i]);
-            }
+        // prune based on users
+        FOR_N(i, 0, dyn_array_length(schedule)) {
+            VectorOp* op = schedule[i];
+            if (op == NULL) { continue; }
+            FOR_N(j, 0, op->width) {
+                bool dead = true;
+                bool bad_use = false;
+                FOR_USERS(u, op->ops[j]) {
+                    if (USERN(u)->dt.type == TB_TAG_MEMORY) {
+                        dead = false;
+                        continue;
+                    }
 
-            size_t len = dyn_array_length(schedule);
-            if (len - 1 != i) {
-                i++;
-                memmove(&schedule[i - 1], &schedule[i], (len - i) * sizeof(VectorOp*));
+                    VectorOp* use_op = nl_table_get(&ops, USERN(u));
+                    if (use_op == NULL) {
+                        TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize %%%u, user %%%u isn't vector.\n", op->ops[j]->gvn, USERN(u)->gvn));
+                        bad_use = true;
+                        dead = true;
+                        break;
+                    }
+                }
+
+                if (dead) {
+                    if (!bad_use) {
+                        TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize %%%u, no users...\n", op->ops[j]->gvn));
+                    }
+
+                    FOR_N(k, 0, op->width) {
+                        nl_table_remove(&ops, op->ops[k]);
+                    }
+                    schedule[i] = NULL;
+                    len -= 1;
+                    progress = true;
+                    break;
+                }
             }
-            dyn_array_pop(schedule);
+            done2:;
         }
-    }
+    } while (len > 0 && progress);
 
     // nothing left which is valid, bail out
-    if (dyn_array_length(schedule) == 0) {
+    if (len == 0) {
         return false;
     }
 
     TB_OPTDEBUG(SLP)(printf("=== COMPILED ===\n"));
-    FOR_REV_N(i, 0, dyn_array_length(schedule)) {
+    dyn_array_for(i, schedule) {
         VectorOp* op = schedule[i];
-        TB_Node* first = op->ops[0];
+        if (op == NULL) {
+            continue;
+        }
 
         // convert these ops into a packed op
+        TB_Node* first = op->ops[0];
         TB_DataType v_dt = op->v_dt;
         if (first->type == TB_LOAD) {
             int align = TB_NODE_GET_EXTRA_T(first, TB_NodeMemAccess)->align;
@@ -668,14 +813,14 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     // vaporization time, replace any effectful nodes tho
     FOR_REV_N(i, 0, dyn_array_length(schedule)) {
         VectorOp* op = schedule[i];
-
-        // most ops can just have all their nodes killed
-        FOR_N(j, 0, op->width) {
-            tb_kill_node(f, op->ops[j]);
+        if (op != NULL) {
+            // most ops can just have all their nodes killed
+            FOR_N(j, 0, op->width) {
+                tb_kill_node(f, op->ops[j]);
+            }
         }
     }
 
-    tb_arena_free(&f->tmp_arena, visited, pairs->count * sizeof(bool));
     return true;
 }
 

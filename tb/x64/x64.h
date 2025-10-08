@@ -3,38 +3,6 @@
 #include "../tb_internal.h"
 #include <tb_x64.h>
 
-static_assert(sizeof(float) == sizeof(uint32_t), "Float needs to be a 32-bit float!");
-static_assert(sizeof(double) == sizeof(uint64_t), "Double needs to be a 64-bit float!");
-
-typedef union {
-    float f;
-    uint32_t i;
-} Cvt_F32U32;
-
-typedef union {
-    double f;
-    uint64_t i;
-} Cvt_F64U64;
-
-typedef enum Cond {
-    O, NO, B, NB, E, NE, BE, A,
-    S, NS, P, NP, L, GE, LE, G
-} Cond;
-
-typedef enum GPR {
-    RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI,
-    R8,  R9,  R10, R11, R12, R13, R14, R15,
-
-    GPR_NONE = -1
-} GPR;
-
-typedef enum XMM {
-    XMM0, XMM1, XMM2,  XMM3,  XMM4,  XMM5,  XMM6,  XMM7,
-    XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15,
-
-    XMM_NONE = -1
-} XMM;
-
 typedef enum {
     VAL_NONE, VAL_FLAGS, VAL_GPR, VAL_XMM, VAL_IMM, VAL_MEM, VAL_GLOBAL, VAL_LABEL
 } ValType;
@@ -111,16 +79,10 @@ typedef struct InstDesc {
     uint8_t rx_i;
 } InstDesc;
 
-static const GPR WIN64_GPR_PARAMETERS[4] = { RCX, RDX, R8, R9 };
-static const GPR SYSV_GPR_PARAMETERS[6] = { RDI, RSI, RDX, RCX, R8, R9 };
-
 static const InstDesc inst_table[] = {
     #define X(a, b, c, ...) [a] = { .mnemonic = b, .cat = INST_ ## c, __VA_ARGS__ },
     #include "x64_insts.inc"
 };
-
-#define SYSCALL_ABI_CALLER_SAVED ((1u << RDI) | (1u << RSI) | (1u << RDX) | (1u << R10) | (1u << R8) | (1u << R9) | (1u << RAX) | (1u << R11))
-#define SYSCALL_ABI_CALLEE_SAVED ~SYSCALL_ABI_CALLER_SAVED
 
 static Val val_gpr(GPR g) {
     return (Val) { .type = VAL_GPR, .reg = g };

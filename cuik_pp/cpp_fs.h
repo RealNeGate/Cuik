@@ -34,7 +34,10 @@ bool cuikpp_locate_file(void* user_data, const Cuik_Path* restrict input, Cuik_P
         }
     } else {
         cuikfs_canonicalize(output, input->data, case_insensitive);
-        return cuikfs_exists(output->data);
+        cuikperf_region_start("exists", output->data);
+        bool f = cuikfs_exists(output->data);
+        cuikperf_region_end();
+        return f;
     }
 }
 

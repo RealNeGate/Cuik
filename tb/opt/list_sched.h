@@ -30,6 +30,7 @@ typedef struct {
     TB_Function* f;
     TB_GetLatency get_lat;
 
+    Set has_sfpt;
     Set ready_set;
     ArenaArray(ReadyNode) ready;
 
@@ -110,8 +111,8 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
         }
 
         // score things which decrease pressure higher
-        int dt = pressure_delta(sched, n);
-        score -= dt * 50;
+        // int dt = pressure_delta(sched, n);
+        // score -= dt * 10;
 
         // if we have a single use and it's waiting on us? then we
         // really wanna schedule, if it's waiting on a lot of others then
@@ -120,13 +121,8 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
             TB_Node* use = USERN(&n->users[0]);
 
             // try to schedule the latch IVs late
-            if (cfg_is_branch(bb->end) && n == bb->end->inputs[1]) {
+            if (cfg_is_if(bb->end) && n == bb->end->inputs[1]) {
                 continue;
-            }
-
-            if (count_waiting_deps(f, ws, bb, use) == 1) {
-                score += use == bb->end ? -200 : 100;
-                if (score < 1) { score = 1; }
             }
         }
 
@@ -176,6 +172,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
     ListSched sched = {
         .f = f, .get_lat = get_lat
     };
+    sched.has_sfpt  = set_create_in_arena(&f->tmp_arena, f->node_count);
     sched.ready_set = set_create_in_arena(&f->tmp_arena, f->node_count);
     sched.ready     = aarray_create(&f->tmp_arena, ReadyNode, 32);
     sched.latency   = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
@@ -312,7 +309,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
                     if (in) {
                         if (is_proj(in)) { in = in->inputs[0]; }
                         if (in->type != TB_MACH_TEMP && f->scheduled[in->gvn] == bb) {
-                            int edge_latency = sched.get_lat(sched.f, in, i);
+                            int edge_latency = sched.get_lat(sched.f, n, i);
                             int curr_latency = edge_latency + use_latency;
                             if (curr_latency > sched.latency[in->gvn]) {
                                 sched.latency[in->gvn] = curr_latency;
@@ -327,7 +324,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
         TB_OPTDEBUG(SCHED4)(printf("}\n"));
 
         #if TB_OPTDEBUG_SCHED3
-        FOR_REV_N(i, 0, cnt) {
+        FOR_N(i, 0, cnt) {
             TB_Node* n = ordered[i];
             tb_print_dumb_node(NULL, n);
             printf(" latency=%d\n", sched.latency[n->gvn]);
@@ -417,10 +414,23 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
 
             // make sure to place all projections directly after their tuple node
             if (!cfg_is_fork(n)) {
-                FOR_USERS(u, n) if (is_proj(USERN(u))) {
-                    TB_ASSERT(USERI(u) == 0);
-                    TB_ASSERT(!worklist_test(ws, USERN(u)));
-                    worklist_push(ws, USERN(u));
+                TB_Node* sfpt = NULL;
+                FOR_USERS(u, n) {
+                    if (is_proj(USERN(u))) {
+                        TB_ASSERT(USERI(u) == 0);
+                        TB_ASSERT(!worklist_test(ws, USERN(u)));
+                        worklist_push(ws, USERN(u));
+                    } else if (USERN(u)->type == TB_SAFEPOINT && USERI(u) == 2) {
+                        sfpt = USERN(u);
+                    }
+                }
+
+                if (sfpt != NULL) {
+                    TB_OPTDEBUG(SCHED1)(printf("  Safepoint? "), tb_print_dumb_node(NULL, sfpt), printf("\n"));
+
+                    TB_ASSERT(!worklist_test(ws, sfpt));
+                    TB_ASSERT(can_ready_user(f, ws, bb, &sched.ready_set, sfpt));
+                    worklist_push(ws, sfpt);
                 }
             }
 

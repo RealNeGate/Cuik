@@ -73,6 +73,19 @@ void worklist_push(TB_Worklist* restrict ws, TB_Node* restrict n) {
     }
 }
 
+void worklist_replace(TB_Worklist* restrict ws, TB_Node* n, TB_Node* k) {
+    if (worklist_test(ws, n)) {
+        dyn_array_for(i, ws->items) {
+            if (ws->items[i] == n) {
+                worklist_remove(ws, n);
+                worklist_test_n_set(ws, k);
+                ws->items[i] = k;
+                break;
+            }
+        }
+    }
+}
+
 TB_Node* worklist_pop(TB_Worklist* ws) {
     if (dyn_array_length(ws->items)) {
         TB_Node* n = dyn_array_pop(ws->items);

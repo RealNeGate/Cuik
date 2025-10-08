@@ -255,13 +255,13 @@ static void dump_ipsccp(TB_Module* m) {
             Lattice* args = f->ipsccp_args ? f->ipsccp_args : &TOP_IN_THE_SKY;
             Lattice* ret  = f->ipsccp_ret  ? f->ipsccp_ret  : &TOP_IN_THE_SKY;
             if (args != &TOP_IN_THE_SKY) {
-                #if 1
                 printf("%s: ", f->super.name);
                 print_lattice(args);
                 printf(" -> ");
                 print_lattice(ret);
                 printf("\n");
-                #endif
+            } else {
+                printf("%s: DEAD\n", f->super.name);
             }
         }
     }

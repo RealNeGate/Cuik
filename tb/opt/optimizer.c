@@ -13,13 +13,13 @@
 //
 #include "passes.h"
 #include <log.h>
+#include <math.h>
 
 #include "../sandbird/sandbird.h"
 
 // helps us do some matching later
 static void remove_user(TB_Function* f, TB_Node* n, int slot);
 static void remove_input(TB_Function* f, TB_Node* n, size_t i);
-static void violent_kill(TB_Function* f, TB_Node* n);
 static bool alloc_types(TB_Function* f);
 
 static bool can_gvn(TB_Node* n);
@@ -33,6 +33,7 @@ static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int6
 // node creation helpers
 TB_Node* make_poison(TB_Function* f, TB_DataType dt);
 TB_Node* dead_node(TB_Function* f);
+TB_Node* make_f64_node(TB_Function* f, double x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_Node* rhs);
 TB_Node* make_ptr_offset(TB_Function* f, TB_Node* lhs, TB_Node* rhs);
@@ -134,12 +135,6 @@ static bool is_empty_bb(TB_Function* f, TB_Node* end) {
     return true;
 }
 
-static bool same_sorta_branch(TB_Node* n, TB_Node* n2) {
-    TB_NodeBranchProj* br  = cfg_if_branch(n);
-    TB_NodeBranchProj* br2 = cfg_if_branch(n2);
-    return br && br2 && br->key == br2->key;
-}
-
 static TB_Node* next_mem_user(TB_Node* n) {
     FOR_USERS(u, n) {
         if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u)) || (USERN(u)->type == TB_PHI && USERN(u)->dt.type == TB_TAG_MEMORY)) {
@@ -148,6 +143,37 @@ static TB_Node* next_mem_user(TB_Node* n) {
     }
 
     return NULL;
+}
+
+float tb_edge_prob(TB_Node* n) {
+    TB_ASSERT(!cfg_is_endpoint(n));
+
+    // not even a branch? then it's getting 100%
+    if (!cfg_is_cproj(n)) {
+        return 1.0f;
+    }
+
+    TB_Node* tup = n->inputs[0];
+    int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+    if (cfg_is_if(tup)) {
+        TB_NodeIf* br = TB_NODE_GET_EXTRA(tup);
+        return index ? 1.0 - br->prob : br->prob;
+    } else if (cfg_is_branch(tup)) {
+        uint64_t total = TB_NODE_GET_EXTRA_T(tup, TB_NodeBranch)->total_hits;
+        uint64_t hits  = TB_NODE_GET_EXTRA_T(n, TB_NodeBranchProj)->taken;
+        return (float)hits / (float)total;
+    } else if (n->type >= 0x100) {
+        int family = n->type / 0x100;
+        TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
+        return tb_codegen_families[family].edge_prob(n);
+    } else {
+        int succ_count = 0;
+        FOR_USERS(u, tup) {
+            succ_count += cfg_is_cproj(USERN(u));
+        }
+        return 1.0f / succ_count;
+    }
 }
 
 // incremental dominators, plays nice with peepholes and has
@@ -171,6 +197,7 @@ static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
     // note that "subtypes" of region like TB_NATURAL_LOOP and TB_AFFINE_LOOP are
     // valid for fast doms since they guarentee they're dominated by inputs[0]
     while (steps < FAST_IDOM_LIMIT && bb != expected_dom && bb->type != TB_REGION && bb->type != TB_ROOT) {
+        TB_ASSERT(bb->inputs[0]);
         bb = bb->inputs[0];
         steps++;
     }
@@ -197,7 +224,7 @@ static void mark_users(TB_Function* f, TB_Node* n) {
 
         // tuples changing means their projections did too.
         if (type == TB_PROJ || type == TB_PTR_OFFSET) {
-            mark_users(f, USERN(u));
+            mark_users_raw(f, USERN(u));
         }
 
         // (br (cmp a b)) => ...
@@ -263,7 +290,7 @@ void tb__gvn_remove(TB_Function* f, TB_Node* n) {
     }
 }
 
-static void violent_kill(TB_Function* f, TB_Node* n) {
+void tb_violent_kill(TB_Function* f, TB_Node* n) {
     // remove from GVN if we're murdering it
     size_t extra = extra_bytes(n);
     nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
@@ -379,14 +406,16 @@ static Lattice* value_region(TB_Function* f, TB_Node* n) {
 static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int64_t trips_max, int64_t step, int bits) {
     int64_t max;
     if (mul_overflow(trips_max, step, bits, &max)) { return NULL; }
-    if (add_overflow(max, init->_int.min, bits, &max)) { return NULL; }
+    if (add_overflow(max, init->_int.max, bits, &max)) { return NULL; }
 
     // min can't overflow if max overflows since min < max
     int64_t min = (uint64_t)init->_int.min + (uint64_t) (((uint64_t) trips_min-1)*step);
-    if (step > 0) {
-        if (min <= max) { return lattice_gimme_int(f, min, max, bits); }
-    } else if (step > 0) {
-        if (min >= max) { return lattice_gimme_int(f, max, min, bits); }
+    if (min >= lattice_int_min(bits) && max <= lattice_int_max(bits)) {
+        if (step > 0) {
+            if (min <= max) { return lattice_gimme_int(f, min, max, bits); }
+        } else if (step > 0) {
+            if (min >= max) { return lattice_gimme_int(f, max, min, bits); }
+        }
     }
     return NULL;
 }
@@ -395,19 +424,21 @@ static TB_Node* ideal_location(TB_Function* f, TB_Node* n) {
     TB_ASSERT(n->type == TB_DEBUG_LOCATION);
     if (n->user_count == 0) { return NULL; }
 
-    TB_Node* cproj = USERN(proj_with_index(n, 0));
-    TB_Node* mproj = USERN(proj_with_index(n, 1));
+    if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_DEBUG_LOCATION) {
+        TB_Node* cproj = USERN(proj_with_index(n, 0));
+        TB_Node* mproj = USERN(proj_with_index(n, 1));
 
-    set_input(f, cproj, NULL, 0);
-    set_input(f, mproj, NULL, 0);
+        set_input(f, cproj, NULL, 0);
+        set_input(f, mproj, NULL, 0);
 
-    mark_users(f, cproj);
-    mark_users(f, mproj);
+        mark_users(f, cproj);
+        mark_users(f, mproj);
 
-    subsume_node(f, cproj, n->inputs[0]);
-    subsume_node(f, mproj, n->inputs[1]);
-
-    return n;
+        subsume_node(f, cproj, n->inputs[0]);
+        subsume_node(f, mproj, n->inputs[1]);
+        return n;
+    }
+    return NULL;
 }
 
 static Lattice* value_phi(TB_Function* f, TB_Node* n) {
@@ -434,22 +465,16 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                     Lattice* init = latuni_get(f, var.phi->inputs[1]);
                     end = var.end_cond ? latuni_get(f, var.end_cond) : lattice_int_const(f, var.end_const);
 
-                    if (
-                        init->tag == LATTICE_INT &&
-                        end->tag == LATTICE_INT &&
-                        var.step > 0 &&
-                        init->_int.max <= end->_int.min
-                    ) {
-                        int64_t pad = var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
-                        int64_t trips = (end->_int.max - init->_int.min + pad) / var.step;
-                        int64_t rem   = (end->_int.max - init->_int.min) % var.step;
-                        if (rem == 0 || var.pred != IND_NE) {
-                            trips_max = trips;
+                    if (init->tag == LATTICE_INT && end->tag == LATTICE_INT) {
+                        Lattice* range = value_arith_raw(f, TB_SUB, n->dt, end, init, false, false);
+                        if (var.step > 0 && range->_int.max > 0) {
+                            int64_t pad = var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
+                            int64_t trips = (range->_int.max + pad) / var.step;
+                            int64_t rem   = range->_int.max % var.step;
+                            if (rem == 0 || var.pred != IND_NE) {
+                                trips_max = trips;
+                            }
                         }
-                    } else {
-                        // TODO(NeGate): we vaguely know the range, this is the common case
-                        // so let's handle it. main things we wanna know are whether or not
-                        // the number is ever negative.
                     }
 
                     if (var.phi != n) { end = NULL; }
@@ -469,9 +494,9 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                         return &TOP_IN_THE_SKY;
                     }
 
-                    if (lattice_is_const(init) && trips_max <= INT64_MAX) {
+                    if (init->tag == LATTICE_INT && trips_max <= INT64_MAX) {
                         Lattice* range = affine_iv(f, init, trips_min, trips_max, step, bits);
-                        if (range) { return range; }
+                        if (range) { return lattice_int_widen(f, range, old); }
                     }
 
                     if (step > 0 && cant_signed_overflow(n->inputs[2])) {
@@ -481,7 +506,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
 
                         // JOIN would achieve this effect too btw
                         if (old == &TOP_IN_THE_SKY) {
-                            return lattice_gimme_int(f, min, max, bits);
+                            return lattice_int_widen(f, lattice_gimme_int(f, min, max, bits), old);
                         } else {
                             min = TB_MAX(min, old->_int.min);
                             max = TB_MIN(max, old->_int.max);
@@ -500,7 +525,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                             uint64_t zeros = lsb_diff ? UINT64_MAX >> (64 - lsb_diff) : 0;
                             #endif
 
-                            return lattice_gimme_int2(f, min, max, 0, 0, bits);
+                            return lattice_int_widen(f, lattice_gimme_int2(f, min, max, 0, 0, bits), old);
                         }
                     }
                 }
@@ -534,25 +559,23 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
             new_l._int.widen = old->_int.widen;
             l = lattice_intern(f, new_l);
         }
-
-        // we've hit the widening limit, since MAFs scale with the lattice height we limit how
-        // many steps our ints can take since the lattice itself has a height of 18 quintillion...
-        if (l->_int.widen >= INT_WIDEN_LIMIT) {
-            int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
-                        .min         =  lattice_int_min(bits),
-                        .max         =  lattice_int_max(bits),
-                        .widen       =  INT_WIDEN_LIMIT
-                    } });
-        }
     }
 
-    // downward progress will widen...
+    // downward progress will widen, if we hit the limit we stop growing
     if (old->tag == LATTICE_INT && old != l) {
         Lattice* glb = lattice_meet(f, old, l);
         if (glb == l && l->tag == LATTICE_INT) {
             Lattice new_l = *l;
             new_l._int.widen = TB_MAX(old->_int.widen, l->_int.widen) + 1;
+            if (new_l._int.widen >= INT_WIDEN_LIMIT) {
+                int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
+                return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
+                            .min         =  lattice_int_min(bits),
+                            .max         =  lattice_int_max(bits),
+                            .widen       =  INT_WIDEN_LIMIT
+                        } });
+            }
+
             return lattice_intern(f, new_l);
         }
     }
@@ -716,6 +739,18 @@ TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x) {
     return tb__gvn(f, n, sizeof(TB_NodeInt));
 }
 
+TB_Node* make_f64_node(TB_Function* f, double x) {
+    TB_Node* n = tb_alloc_node(f, TB_F64CONST, TB_TYPE_F64, 1, sizeof(TB_NodeFloat64));
+    TB_NodeFloat64* i = TB_NODE_GET_EXTRA(n);
+    i->value = x;
+
+    set_input(f, n, f->root_node, 0);
+    if (f->types) {
+        latuni_set(f, n, value_f64(f, n));
+    }
+    return tb__gvn(f, n, sizeof(TB_NodeFloat64));
+}
+
 TB_Node* dead_node(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_DEAD, TB_TYPE_VOID, 1, 0);
     set_input(f, n, f->root_node, 0);
@@ -730,7 +765,7 @@ TB_Node* make_ptr_offset(TB_Function* f, TB_Node* lhs, TB_Node* rhs) {
 
     TB_Node* k = tb_opt_peep_node(f, n);
     if (k != n && n->user_count == 0) {
-        violent_kill(f, n);
+        tb_violent_kill(f, n);
         n = k;
     }
 
@@ -743,7 +778,7 @@ TB_Node* make_int_unary(TB_Function* f, TB_DataType dt, TB_NodeTypeEnum type, TB
 
     TB_Node* k = tb_opt_peep_node(f, n);
     if (k != n && n->user_count == 0) {
-        violent_kill(f, n);
+        tb_violent_kill(f, n);
         n = k;
     }
 
@@ -757,7 +792,7 @@ TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_N
 
     TB_Node* k = tb_opt_peep_node(f, n);
     if (k != n && n->user_count == 0) {
-        violent_kill(f, n);
+        tb_violent_kill(f, n);
         n = k;
     }
     return n;
@@ -1049,7 +1084,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                     }
                 }
 
-                if (n->type != TB_BRANCH && n->type != TB_AFFINE_LATCH) {
+                if (n->type != TB_IF && n->type != TB_AFFINE_LATCH) {
                     return NULL;
                 }
 
@@ -1189,7 +1224,7 @@ static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
 // because certain optimizations apply when things are the same
 // we mark ALL users including the ones who didn't get changed
 // when subsuming.
-static TB_Node* peephole(TB_Function* f, TB_Node* n) {
+static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
     TB_OPTLOG(PEEP, printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
     bool progress = false;
@@ -1224,6 +1259,12 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
         old_n_type = n->type;
         k = idealize(f, n);
         DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 5) { log_warn("%p: we looping a lil too much dawg...", n); });
+    }
+
+    // idealize ops could kill a node
+    if (see_users && n->user_count == 0) {
+        TB_OPTLOG(PEEP, printf(" => \x1b[93mKILL\x1b[0m"));
+        return NULL;
     }
 
     // pessimistic constant prop
@@ -1352,7 +1393,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
 }
 
 TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
-    TB_Node* k = peephole(f, n);
+    TB_Node* k = peephole(f, n, false);
     return k ? k : n;
 }
 
@@ -1400,8 +1441,11 @@ int tb_opt_peeps(TB_Function* f) {
                 DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.killed, n->type));
                 TB_OPTLOG(PEEP, printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
                 TB_OPTLOG(PEEP, printf(" => \x1b[196mKILL\x1b[0m\n"));
+                if (n->type == TB_SYMBOL_TABLE) {
+                    mark_node_n_users(f, n->inputs[0]);
+                }
                 tb_kill_node(f, n);
-            } else if (peephole(f, n)) {
+            } else if (peephole(f, n, true)) {
                 changes += 1;
             }
         }
@@ -1442,7 +1486,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     #if TB_OPT_LOG_ENABLED
-    if (strcmp(f->super.name, "advance") == 0) {
+    if (1 || strcmp(f->super.name, "pack_table") == 0) {
         f->enable_log = true;
     }
     #endif
@@ -1543,7 +1587,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_OPTLOG(PEEP, printf("=== COMPACT ===\n"));
             STATS_ENTER(COMPACT);
             size_t old = tb_arena_current_size(&f->arena);
-            // tb_compact_nodes(f, ws);
+            tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
             STATS_EXIT(COMPACT);
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
@@ -1556,11 +1600,12 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
             TB_OPTLOG(PEEP, printf("=== LOOPS OPTS ===\n"));
             TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
-            TB_OPTLOG(PEEP, tb_print_dumb(f));
             cuikperf_region_start("loops", NULL);
 
             TB_Worklist tmp_ws = { 0 };
             worklist_alloc(&tmp_ws, f->node_count);
+
+            TB_OPTLOG(PEEP, tb_print(f));
 
             ////////////////////////////////
             // 1. Loop finding
@@ -1618,6 +1663,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             ////////////////////////////////
             // 6. Loop strength reduction
             ////////////////////////////////
+            TB_OPTDEBUG(LOOP)(tb_print(f));
             STATS_ENTER(STRENGTH_REDUCE);
             CUIK_TIMED_BLOCK("induction vars") {
                 aarray_for(i, ctx.cfg.loops) {

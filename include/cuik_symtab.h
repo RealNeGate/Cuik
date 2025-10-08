@@ -5,7 +5,7 @@
 
 #include "cuik_prelude.h"
 
-// interned string, generated with atoms_put (or it's sisters)
+// interned string, generated with atoms_put (or its sisters)
 typedef char* Cuik_Atom;
 
 // in C, there's two symbol tables used (one for tags, another for proper symbols)
@@ -20,6 +20,7 @@ CUIK_API void cuik_scope_close(Cuik_SymbolTable* st);
 // define a symbol, the pointer returned is stable across the lifetime (until it's popped
 // off by a scope)
 CUIK_API void* cuik_symtab_put(Cuik_SymbolTable* st, Cuik_Atom name, size_t size);
+CUIK_API void* cuik_symtab_put_global(Cuik_SymbolTable* st, Cuik_Atom name, size_t size);
 #define CUIK_SYMTAB_PUT(st, name, T) ((T*) cuik_symtab_put(st, name, sizeof(T)))
 
 CUIK_API void* cuik_symtab_lookup(Cuik_SymbolTable* st, Cuik_Atom name);
@@ -131,6 +132,13 @@ void cuik_scope_close(Cuik_SymbolTable* st) {
     st->watermark = prev->watermark;
     st->local_count = prev->start;
     st->top = prev->last;
+}
+
+void* cuik_symtab_put_global(Cuik_SymbolTable* st, Cuik_Atom name, size_t size) {
+    void* ptr = cuik_symtab__alloc(st, size, st->top == NULL);
+    // put into global scope
+    nl_map_put(st->globals, name, ptr);
+    return ptr;
 }
 
 void* cuik_symtab_put(Cuik_SymbolTable* st, Cuik_Atom name, size_t size) {

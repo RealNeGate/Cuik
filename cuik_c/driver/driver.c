@@ -185,7 +185,7 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
-    if (0 && strcmp(name, "main") != 0) {
+    if (0 && strcmp(name, "func_81") != 0) {
         return;
     }
 
@@ -434,6 +434,11 @@ static void ld_invoke(TPool* tp, void** arg) {
     // generate object file
     ////////////////////////////////
     if (args->based && args->flavor != TB_FLAVOR_OBJECT) {
+        #ifndef CONFIG_HAS_LINKER
+        fprintf(stderr, "unsupported platform to link with... sorry (contact NeGate)\n");
+        tb_module_destroy(mod);
+        goto done;
+        #else
         TB_ExecutableType exe;
         switch (sys) {
             case CUIK_SYSTEM_WINDOWS: exe = TB_EXECUTABLE_PE;  break;
@@ -474,6 +479,7 @@ static void ld_invoke(TPool* tp, void** arg) {
 
         step_error(s);
         tb_module_destroy(mod);
+        #endif
     } else {
         Cuik_Path obj_path;
         if (args->output_name == NULL) {
@@ -642,8 +648,6 @@ void cuikpp_dump_tokens(TokenStream* s) {
 
     Token* tokens = cuikpp_get_tokens(s);
     size_t count = cuikpp_get_token_count(s);
-
-    int last_spot = 0;
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
 
@@ -670,21 +674,42 @@ void cuikpp_dump_tokens(TokenStream* s) {
             } else {
                 printf("\n#line %d \"%s\"\n", r.line, str);
             }
-            last_spot = 0, last_file = r.file->filename;
+            last_file = r.file->filename;
+            last_line = r.line;
         }
 
-        if (last_line != r.line) {
-            printf("\n/* line %3d */\t", r.line);
-            last_spot = 0, last_line = r.line;
+        if (r.line - last_line) {
+            int dt = r.line - last_line;
+
+            // initial indentation for the new line
+            int spaces = 0;
+            const char* line = r.line_str;
+            while (line[spaces] && (line[spaces] == ' ' || line[spaces] == '\t')) {
+                spaces++;
+            }
+
+            if (dt < 0 || dt > 5) {
+                printf("\n#line %3d\n", r.line);
+                last_line = r.line;
+            } else {
+                while (last_line < r.line) {
+                    printf("\n");
+                    last_line++;
+                }
+            }
+            printf("%*s", spaces, "");
+        }
+
+        if (t->has_space) {
+            printf(" ");
         }
 
         if (t->type == TOKEN_STRING_WIDE_SINGLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
             printf("L");
         }
 
-        printf("%*s", r.column - last_spot, "");
+        // Normal token printing
         printf("%.*s", (int) t->content.length, t->content.data);
-        last_spot = r.column + t->content.length;
     }
     printf("\n");
 }
@@ -853,7 +878,8 @@ static void irgen_job(TPool* pool, void** arg) {
 static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {
     log_debug("IR generation...");
 
-    TB_FeatureSet features = tb_features_from_profile_str(mod, "x86_64-v3");
+    TB_FeatureSet features = tb_features_from_profile_str(mod, "x86_64-v1");
+    // TB_FeatureSet features = tb_features_from_profile_str(mod, "x86_64-v1");
     if (tp != NULL) {
         #if CUIK_ALLOW_THREADS
         size_t stmt_count = 0;

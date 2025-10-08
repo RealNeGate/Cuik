@@ -9,13 +9,6 @@ typedef struct {
     NL_Table loop_map;
 } LoopOpt;
 
-static TB_Node* branch_cproj(TB_Function* f, TB_Node* n, uint64_t taken, int64_t key, int index) {
-    TB_Node* cproj = tb_alloc_node(f, TB_BRANCH_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeBranchProj));
-    set_input(f, cproj, n, 0);
-    TB_NODE_SET_EXTRA(cproj, TB_NodeBranchProj, .index = index, .taken = taken, .key = key);
-    return cproj;
-}
-
 ////////////////////////////////
 // Loop finding
 ////////////////////////////////
@@ -42,6 +35,7 @@ typedef struct {
 bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_Worklist* ws, TB_LoopTree* loop);
 
 static void loop_add_kid(TB_LoopTree* kid, TB_LoopTree* mom) {
+    TB_ASSERT(kid != mom);
     kid->parent = mom;
     kid->next   = mom->kid;
     mom->kid    = kid;
@@ -123,7 +117,7 @@ static void loop_scc_walk(LoopSCC* restrict scc, TB_CFG* restrict cfg, TB_BasicB
                 if (cfg->root_loop == NULL) {
                     TB_OPTDEBUG(LOOP)(printf("    * Loop%d is next to Loop%d\n", new_loop->id, last->id));
                     new_loop->next = last;
-                } else {
+                } else if (new_loop != cfg->root_loop) {
                     TB_OPTDEBUG(LOOP)(printf("    * Loop%d is inside Loop%d\n", new_loop->id, cfg->root_loop->id));
                     loop_add_kid(new_loop, cfg->root_loop);
                 }
@@ -426,6 +420,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
                         set_input(f, p, header, 0);
                         set_input(f, p, cloned[n->gvn], 1);
                         set_input(f, p, n, 2);
+                        latuni_set(f, p, latuni_get(f, n));
 
                         #if TB_OPTDEBUG_LOOP
                         printf("   PHI(");
@@ -471,15 +466,17 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             TB_Node* next_val = old_phi->inputs[2];
             for (size_t j = 0; j < old_phi->user_count;) {
                 TB_Node* un = USERN(&old_phi->users[j]);
+                int ui = USERI(&old_phi->users[j]);
 
-                if (cloned[un->gvn] && un != old_phi) {
+                if (cloned[un->gvn] && un != old_phi) { // (un->inputs[ui]->type != TB_PHI || un->inputs[ui]->inputs[0] != header)) {
+                    // &&  != old_phi) {
                     #if TB_OPTDEBUG_LOOP
                     printf("   USER(");
                     tb_print_dumb_node(NULL, un);
-                    printf(", %d, %%%u)\n", USERI(&old_phi->users[j]), next_val->gvn);
+                    printf(", %d, %%%u)\n", ui, next_val->gvn);
                     #endif
 
-                    set_input(f, un, next_val, USERI(&old_phi->users[j]));
+                    set_input(f, un, next_val, ui);
                 } else {
                     j++;
                 }
@@ -497,22 +494,22 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
         }
     }
 
-    // if the "pre_latch_ctrl" is not cloned that means there's at least
-    // one control node in the body of the loop and we're now hooking the
-    // rotated control nodes to it.
-    TB_Node* pre_latch_ctrl = latch->inputs[1];
-    if (!cloned[pre_latch_ctrl->gvn]) {
+    TB_Node* pre_latch_ctrl = latch->inputs[0];
+    if (pre_latch_ctrl != header) {
+        TB_Node* next_ctrl = header->inputs[1];
         for (size_t j = 0; j < header->user_count;) {
             TB_Node* un = USERN(&header->users[j]);
+            int ui = USERI(&header->users[j]);
 
             if (cloned[un->gvn] && un->type != TB_PHI) {
                 #if TB_OPTDEBUG_LOOP
                 printf("   USER(");
                 tb_print_dumb_node(NULL, un);
-                printf(", %d, %%%u)\n", USERI(&header->users[j]), pre_latch_ctrl->gvn);
+                printf(", %d, %%%u)\n", ui, pre_latch_ctrl->gvn);
                 #endif
 
-                set_input(f, un, pre_latch_ctrl, USERI(&header->users[j]));
+                // set_input(f, un, next_ctrl, ui);
+                j++;
             } else {
                 j++;
             }
@@ -525,7 +522,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
 // Affine loop accessors
 static TB_Node* affine_loop_latch(TB_Node* header) {
     if (header->type == TB_AFFINE_LOOP &&
-        header->inputs[1]->type == TB_BRANCH_PROJ &&
+        header->inputs[1]->type == TB_PROJ &&
         header->inputs[1]->inputs[0]->type == TB_AFFINE_LATCH) {
         return header->inputs[1]->inputs[0];
     }
@@ -545,7 +542,7 @@ static void swap_nodes(TB_Function* f, TB_Node* n, int i, int j) {
 
 static TB_Node* get_simple_loop_exit(LoopOpt* opt, TB_LoopTree* loop, TB_Node* header, TB_Node* latch) {
     TB_ASSERT(nl_table_get(&opt->loop_map, header) == loop);
-    if ((latch->type != TB_BRANCH && latch->type != TB_AFFINE_LATCH) || TB_NODE_GET_EXTRA_T(latch, TB_NodeBranch)->succ_count != 2) {
+    if ((latch->type != TB_IF && latch->type != TB_AFFINE_LATCH)) {
         return NULL;
     }
 
@@ -553,7 +550,7 @@ static TB_Node* get_simple_loop_exit(LoopOpt* opt, TB_LoopTree* loop, TB_Node* h
     TB_Node* exit = NULL;
     TB_Node* backedge_bb = header->inputs[1];
     FOR_USERS(u, latch) {
-        if (USERN(u)->type != TB_BRANCH_PROJ) { continue; }
+        if (USERN(u)->type != TB_PROJ) { continue; }
         int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
         assert(index < 2);
 
@@ -586,7 +583,7 @@ static const char* ind_pred_names[] = { "ne", "slt", "sle", "ult", "ule" };
 //   i = phi(init, i2)
 //   n = i + step where step is constant
 static TB_Node* affine_indvar(TB_Node* n, TB_Node* header) {
-    if (n->type == TB_PHI) {
+    if (n->type == TB_PHI && n->inputs[0] == header) {
         n = n->inputs[2];
     }
 
@@ -612,9 +609,6 @@ static uint64_t* find_affine_indvar(TB_Node* n, TB_Node* header) {
 
 static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* restrict var) {
     bool exit_when_key = !TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
-    TB_NodeBranchProj* if_br = cfg_if_branch(latch);
-    assert(if_br);
-
     TB_Node* cond = latch->inputs[1];
     if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE) {
         // canonicalize compare, this way it's always shaped such that "true" means continue
@@ -623,8 +617,7 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
         TB_Node* b = cond->inputs[2];
 
         // flip condition
-        if ((!exit_when_key && if_br->key == 0) ||
-            (exit_when_key && if_br->key == 1)) {
+        if (!exit_when_key) {
             if (type == TB_CMP_EQ) { type = TB_CMP_NE; }
             else if (type == TB_CMP_NE) { type = TB_CMP_EQ; }
             else {
@@ -651,7 +644,6 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
         } else if (indvar = affine_indvar(b, header), indvar) {
             limit = a;
             backwards = true;
-            tb_todo();
         }
 
         if (indvar) {
@@ -678,7 +670,7 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
             return true;
         }
     } else if (affine_indvar(cond, header)) {
-        if (exit_when_key || if_br->key == 0) {
+        if (exit_when_key) {
             TB_Node* stepper = cond;
             if (cond->type == TB_PHI) {
                 stepper = cond->inputs[2];
@@ -694,7 +686,7 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
                 .cond = cond,
                 .phi  = cond,
                 .step = step,
-                .end_const = if_br->key,
+                .end_const = 0,
                 .pred = IND_NE,
                 .backwards = false
             };
@@ -737,6 +729,7 @@ typedef struct {
     TB_Node* init;
     Lattice* step;
 
+    TB_Node* stepper;
     TB_Node* node;
     int uses;
 
@@ -769,7 +762,8 @@ static TB_Node* generate_loop_trip_count(TB_Function* f, TB_InductionVar var) {
     }
 
     // if we're dealing with "<" then we wanna round our range up
-    Lattice* pad = lattice_int_const(f, var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0));
+    int64_t extra = var.pred == IND_NE || var.pred == IND_SLT || var.pred == IND_ULT ? (var.step > 0 ? 1 : -1) : 0;
+    Lattice* pad = lattice_int_const(f, var.step - extra);
     if (!lattice_is_izero(pad)) {
         Lattice* range_ty = latuni_get(f, range);
         Lattice* add = value_arith_raw(f, TB_ADD, var.phi->dt, range_ty, pad, false, false);
@@ -781,7 +775,7 @@ static TB_Node* generate_loop_trip_count(TB_Function* f, TB_InductionVar var) {
         }
     }
 
-    bool is_signed = var.pred == IND_SLT || var.pred == IND_SLE;
+    bool is_signed = var.pred == IND_NE || var.pred == IND_SLT || var.pred == IND_SLE;
     if (var.step != 1) {
         TB_Node* step = make_int_node(f, var.phi->dt, var.step);
         return make_int_binop(f, is_signed ? TB_SDIV : TB_UDIV, range, step);
@@ -800,6 +794,8 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
     if (!find_latch_indvar(header, latch, &latch_var)) {
         return false;
     }
+
+    int latch_iv = -1;
 
     // find any IV-users to strength reduce
     ArenaArray(LSRVar) vars = aarray_create(&f->tmp_arena, LSRVar, 4);
@@ -841,7 +837,18 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         var.init = n->inputs[1];
         var.step = lattice_int_const(f, *step_ptr);
         var.node = n;
+        var.stepper = n->inputs[2];
         var.uses = n->user_count - 1; // one of these users is just the stepping op itself, ignore it
+
+        TB_Node* cond = latch->inputs[1];
+        if ((cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) && cond->inputs[1] == var.stepper) {
+            latch_iv = aarray_length(vars);
+            var.uses += 1;
+        } else if (cond == var.stepper) {
+            latch_iv = aarray_length(vars);
+            var.uses += 1;
+        }
+
         aarray_push(vars, var);
     }
 
@@ -865,10 +872,10 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
             printf(" = %%%u ", var->init->gvn);
         }
 
-        printf(" + %"PRId64"*x\n", var->step->_int.min);
+        printf(" + %"PRId64"*x (%d uses)\n", var->step->_int.min, var->uses);
         #endif
 
-        TB_Node* stepper = n->type == TB_PHI ? n->inputs[2] : NULL;
+        TB_Node* stepper = var->stepper;
         TB_Node* reduce = NULL;
         FOR_USERS(u2, n) {
             if (USERN(u2) == stepper) {
@@ -885,14 +892,22 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         TB_Node* cmp = NULL;
         if (stepper) {
             FOR_USERS(u2, stepper) {
-                if (USERN(u2) == latch->inputs[1] && latch->inputs[1]->user_count == 1) {
+                if (USERN(u2) == latch->inputs[1] && USERI(u2) == 1 && latch->inputs[1]->user_count == 1) {
                     cmp = latch->inputs[1];
                 } else if (USERN(u2) == latch) {
+                    TB_ASSERT(USERI(u2) == 1);
                     cmp = latch;
                 } else if (USERN(u2) != n) {
                     reduce = NULL;
                     break;
                 }
+            }
+        } else if (i == latch_iv) {
+            TB_Node* cond = latch->inputs[1];
+            if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
+                cmp = cond;
+            } else {
+                cmp = latch;
             }
         }
 
@@ -902,87 +917,143 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         print_lattice(var->step);
         printf("\n");*/
 
-        if (reduce != NULL && var->op == TB_ADD) {
-            TB_ASSERT(lattice_is_iconst(var->step));
+        if (var->op == TB_ADD) {
+            if (reduce != NULL) {
+                TB_ASSERT(lattice_is_iconst(var->step));
 
-            uint64_t scale = 1;
-            if (reduce->type == TB_SHL && lattice_is_iconst(latuni_get(f, reduce->inputs[2]))) {
-                TB_ASSERT(reduce->inputs[1] == n);
+                uint64_t scale = 1;
+                if (reduce->type == TB_SHL && lattice_is_iconst(latuni_get(f, reduce->inputs[2]))) {
+                    TB_ASSERT(reduce->inputs[1] == n);
 
-                Lattice* sh_amt = latuni_get(f, reduce->inputs[2]);
-                scale = 1ull << sh_amt->_int.min;
-            } else if (reduce->type == TB_MUL && lattice_is_iconst(latuni_get(f, reduce->inputs[2]))) {
-                // if the compare's limit can be bumped up without overflow then we'll do that too
-                Lattice* l = latuni_get(f, reduce->inputs[2]);
-                scale = l->_int.min;
-            }
-
-            int64_t prod;
-            int bits = tb_data_type_bit_size(NULL, n->dt.type);
-            if (scale != 1 && !mul_overflow(var->step->_int.min, scale, bits, &prod)) {
-                prod = tb__sxt(prod, bits, 64);
-
-                // make a simple trip counter and replace this IV
-                // with a better fit.
-                if (cmp && !replace_latch_iv) {
-                    replace_latch_iv = generate_loop_trip_count(f, latch_var);
+                    Lattice* sh_amt = latuni_get(f, reduce->inputs[2]);
+                    scale = 1ull << sh_amt->_int.min;
+                } else if (reduce->type == TB_MUL && lattice_is_iconst(latuni_get(f, reduce->inputs[2]))) {
+                    // if the compare's limit can be bumped up without overflow then we'll do that too
+                    Lattice* l = latuni_get(f, reduce->inputs[2]);
+                    scale = l->_int.min;
                 }
 
-                LSRVar new_var = *var;
-                new_var.init = make_int_binop(f, TB_MUL, var->init, make_int_node(f, n->dt, scale));
-                new_var.step = lattice_int_const(f, prod);
-                new_var.node = reduce;
-                new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
-                new_var.good = true;
+                int64_t prod;
+                int bits = tb_data_type_bit_size(NULL, n->dt.type);
+                if (scale != 1 && !mul_overflow(var->step->_int.min, scale, bits, &prod)) {
+                    prod = tb__sxt(prod, bits, 64);
 
-                var->uses -= new_var.uses;
-                aarray_push(vars, new_var);
+                    LSRVar new_var = *var;
+                    new_var.init = make_int_binop(f, TB_MUL, var->init, make_int_node(f, n->dt, scale));
+                    new_var.step = lattice_int_const(f, prod);
+                    new_var.node = reduce;
+                    new_var.stepper = NULL;
+                    new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
+                    new_var.good = true;
 
-                rewrite = true;
-                continue;
-            }
+                    TB_ASSERT(var->uses >= 1);
+                    var->uses -= 1;
 
-            // NOTE(NeGate): we can safely extend values which don't overflow, maybe
-            // then we shouldn't replace the latch IV
-            if (reduce->type == TB_ZERO_EXT || reduce->type == TB_SIGN_EXT) {
-                if (cmp && !replace_latch_iv) {
-                    replace_latch_iv = generate_loop_trip_count(f, latch_var);
+                    // make a simple trip counter and replace this IV
+                    // with a better fit.
+                    if (cmp && !replace_latch_iv) {
+                        TB_ASSERT(var->uses >= 1);
+                        var->uses -= 1;
+                        new_var.uses += 1;
+
+                        latch_iv = aarray_length(vars);
+                        if (cmp != latch) {
+                            // latch is bound by a compare, upscale it
+                            TB_Node* new_limit = make_int_binop(f, TB_MUL, cmp->inputs[2], make_int_node(f, n->dt, scale));
+                            set_input(f, cmp, new_limit, 2);
+                            TB_OPTDEBUG(LOOP)(printf("  Upscaling latch: %%%u (limit=%%%u)\n", cmp->gvn, new_limit->gvn));
+                        }
+                    }
+                    aarray_push(vars, new_var);
+
+                    rewrite = true;
+                    continue;
                 }
 
-                LSRVar new_var = *var;
-                new_var.init = make_int_unary(f, reduce->dt, reduce->type, var->init);
-                new_var.step = var->step;
-                new_var.node = reduce;
-                new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
-                new_var.good = true;
+                // NOTE(NeGate): we can safely extend values which don't overflow, maybe
+                // then we shouldn't replace the latch IV
+                if (reduce->type == TB_ZERO_EXT || reduce->type == TB_SIGN_EXT) {
+                    LSRVar new_var = *var;
+                    new_var.init = make_int_unary(f, reduce->dt, reduce->type, var->init);
+                    new_var.step = var->step;
+                    new_var.node = reduce;
+                    new_var.stepper = NULL;
+                    new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
+                    new_var.good = true;
 
-                var->uses -= new_var.uses;
-                aarray_push(vars, new_var);
+                    TB_ASSERT(var->uses >= 1);
+                    var->uses -= 1;
 
-                rewrite = true;
-                continue;
-            }
+                    if (cmp && !replace_latch_iv) {
+                        TB_ASSERT(var->uses >= 1);
+                        var->uses -= 1;
+                        new_var.uses += 1;
 
-            // if the IV is always used as the index to some pointer, it might
-            // make sense to just make a pointer IV.
-            if (reduce->type == TB_PTR_OFFSET && reduce->inputs[2] == n) {
-                if (cmp && !replace_latch_iv) {
-                    replace_latch_iv = generate_loop_trip_count(f, latch_var);
+                        latch_iv = aarray_length(vars);
+                        if (cmp != latch) {
+                            // latch is bound by a compare, upscale it
+                            TB_Node* new_limit = make_int_unary(f, reduce->dt, reduce->type, cmp->inputs[2]);
+                            set_input(f, cmp, new_limit, 2);
+                            TB_OPTDEBUG(LOOP)(printf("  Upscaling latch: %%%u (limit=%%%u)\n", cmp->gvn, new_limit->gvn));
+                        }
+
+                        if (tb_node_is_compare(cmp)) {
+                            TB_NODE_SET_EXTRA(cmp, TB_NodeCompare, .cmp_dt = reduce->dt);
+                        }
+                    }
+                    aarray_push(vars, new_var);
+
+                    rewrite = true;
+                    continue;
                 }
 
-                LSRVar new_var = *var;
-                new_var.init = make_ptr_offset(f, reduce->inputs[1], var->init);
-                new_var.op = TB_PTR_OFFSET;
-                new_var.step = var->step;
-                new_var.node = reduce;
-                new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
-                new_var.good = true;
+                // if the IV is always used as the index to some pointer, it might
+                // make sense to just make a pointer IV.
+                if (reduce->type == TB_PTR_OFFSET && reduce->inputs[2] == n) {
+                    LSRVar new_var = *var;
+                    new_var.init = make_ptr_offset(f, reduce->inputs[1], var->init);
+                    new_var.op = TB_PTR_OFFSET;
+                    new_var.step = var->step;
+                    new_var.node = reduce;
+                    new_var.stepper = NULL;
+                    new_var.uses = reduce->user_count; // one of these users is just the stepping op itself, ignore it
+                    new_var.good = true;
 
-                var->uses -= new_var.uses;
-                aarray_push(vars, new_var);
+                    TB_ASSERT(var->uses >= 1);
+                    var->uses -= 1;
 
-                rewrite = true;
-                continue;
+                    if (cmp && !replace_latch_iv) {
+                        #if 0
+                        if (latch_iv >= 0) {
+                            TB_ASSERT(vars[latch_iv].uses >= 1);
+                            vars[latch_iv].uses -= 1;
+                            latch_iv = -1;
+                        }
+
+                        replace_latch_iv = generate_loop_trip_count(f, latch_var);
+                        #else
+                        TB_ASSERT(var->uses >= 1);
+                        var->uses -= 1;
+                        new_var.uses += 1;
+
+                        latch_iv = aarray_length(vars);
+                        if (cmp != latch) {
+                            // latch is bound by a compare, upscale it
+                            TB_Node* new_limit = make_ptr_offset(f, reduce->inputs[1], cmp->inputs[2]);
+                            set_input(f, cmp, new_limit, 2);
+                            TB_OPTDEBUG(LOOP)(printf("  Upscaling latch: %%%u (limit=%%%u)\n", cmp->gvn, new_limit->gvn));
+                        }
+
+                        if (tb_node_is_compare(cmp)) {
+                            TB_NODE_SET_EXTRA(cmp, TB_NodeCompare, .cmp_dt = TB_TYPE_PTR);
+                        }
+                        #endif
+                    }
+                    aarray_push(vars, new_var);
+
+                    rewrite = true;
+                    continue;
+                }
             }
         }
     }
@@ -992,6 +1063,7 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
     }
 
     if (replace_latch_iv) {
+        TB_ASSERT(latch_iv < 0);
         TB_DataType dt = replace_latch_iv->dt;
 
         // i = phi(limit, i2);
@@ -1005,7 +1077,7 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         set_input(f, trip_inc, make_int_node(f, dt, -1), 2);
         // { ... } while (i2);
         TB_Node* cond = latch->inputs[1];
-        if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
+        if (tb_node_is_compare(cond)) {
             // if there's more than one user, it means we couldn't have replaced this IV
             TB_ASSERT(cond->user_count == 1);
             tb_kill_node(f, cond);
@@ -1020,10 +1092,9 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         bool loop_when_key = TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
         if (loop_when_key) {
             FOR_USERS(u, latch) {
-                TB_ASSERT(USERN(u)->type == TB_BRANCH_PROJ);
-                TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(USERN(u));
+                TB_ASSERT(USERN(u)->type == TB_PROJ);
+                TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
                 p->index = !p->index;
-                p->key   = 0;
             }
         }
 
@@ -1073,9 +1144,22 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         TB_OPTDEBUG(PASSES)(printf("        * Added new IV %%%u (replacing %%%u)\n", new_iv->gvn, var->node->gvn));
         TB_OPTDEBUG(LOOP)(printf("  Replaced IV: %%%u => %%%u (new_step=%%%u)\n", var->node->gvn, new_iv->gvn, new_inc->gvn));
 
+        // replace latch IV with stepper
+        if (latch_iv == i) {
+            TB_Node* cond = latch->inputs[1];
+            if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
+                set_input(f, cond, new_inc, 1);
+            } else {
+                set_input(f, latch, new_inc, 1);
+            }
+        }
+
         subsume_node(f, var->node, new_iv);
         mark_node_n_users(f, latch);
     }
+
+    TB_OPTDEBUG(LOOP)(tb_print(f));
+    TB_OPTDEBUG(LOOP)(__debugbreak());
 
     return true;
 }
@@ -1093,11 +1177,25 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
 
     aarray_for(i, cfg->blocks) {
         TB_BasicBlock* bb = &cfg->blocks[i];
+        bb->freq = 1.0;
+    }
+
+    aarray_for(i, cfg->blocks) {
+        TB_BasicBlock* bb = &cfg->blocks[i];
         TB_LoopTree* loop = nl_table_get(&ctx.loop_map, bb->start);
 
         // 8^depth
         int depth = loop ? loop->depth : 0;
-        bb->freq = 1 << (depth * 3);
+        bb->freq *= 1 << (depth * 3);
+
+        // single-entry? inherit the parent's edge frequency
+        if (i != 0 && !cfg_is_region(bb->start)) {
+            TB_Node* pred = cfg_get_pred(cfg, bb->start, 0);
+            TB_BasicBlock* pred_bb = nl_map_get_checked(cfg->node_to_block, pred);
+
+            float edge = tb_edge_prob(bb->start);
+            bb->freq = pred_bb->freq * edge;
+        }
 
         TB_Node* fallthru = bb->end;
         if (!cfg_is_terminator(fallthru)) {
@@ -1234,6 +1332,10 @@ static bool loop_opt_remove_safepoints(TB_Function* f, LoopOpt* ctx) {
 // canonicalize regions into natural loop headers (or affine loops) and
 // join all backedges into one pred path on the header
 static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp_ws) {
+    size_t cloned_cap = (f->node_count * 3) / 2;
+    TB_Node** cloned  = cuik_malloc(cloned_cap * sizeof(TB_Node*));
+    log_debug("allocating clone array %zu (%zu)", cloned_cap, f->node_count);
+
     bool progress = false;
     DynArray(ptrdiff_t) backedges = NULL;
     aarray_for(i, ctx->cfg.loops) {
@@ -1277,7 +1379,7 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
 
             // find out which are the entry paths
             bool* is_backedge = tb_arena_alloc(&f->tmp_arena, back_path_count * sizeof(bool));
-            memset(is_backedge, 0, back_path_count * sizeof(bool));
+            memset(is_backedge, 0, header->input_count * sizeof(bool));
             FOR_N(j, 0, back_path_count) {
                 is_backedge[backedges[j]] = true;
             }
@@ -1309,7 +1411,14 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 set_input(f, un, entry_phi, 1);
                 set_input(f, un, back_phi, 2);
                 un->input_count = 3;
+
+                loop_set_ctrl(ctx, entry_phi, entry_region);
+                loop_set_ctrl(ctx, back_phi, back_region);
             }
+
+            loop_set_ctrl(ctx, entry_region, entry_region);
+            loop_set_ctrl(ctx, back_region, back_region);
+            nl_table_put(&ctx->loop_map, back_region, loop);
 
             // sort preds into regions
             size_t back_i = 0, entry_i = 0;
@@ -1372,13 +1481,18 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
 
                 latch = header_end;
                 int exit_loop_i = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeProj)->index;
-                TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
+                // TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
 
-                TB_Node** cloned;
                 size_t cloned_n = f->node_count;
-                CUIK_TIMED_BLOCK("alloc cloned table") {
-                    cloned = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(TB_Node*));
-                    memset(cloned, 0, f->node_count * sizeof(TB_Node*));
+                CUIK_TIMED_BLOCK("clone array init") {
+                    if (cloned_cap < cloned_n) {
+                        size_t old_cap = cloned_cap;
+                        cloned_cap = (cloned_n * 3) / 2;
+                        cloned = cuik_realloc(cloned, cloned_cap * sizeof(TB_Node*));
+
+                        log_debug("resizing clone array %zu -> %zu", old_cap, cloned_cap);
+                    }
+                    memset(cloned, 0, cloned_n * sizeof(TB_Node*));
                 }
 
                 // let's rotate the loop:
@@ -1393,6 +1507,7 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 //     exit:                      exit:
                 //
                 TB_Node* ztc_start = header->inputs[0];
+                TB_Node* header_succ = cfg_next_control(header);
                 // construct the ZTC's version of the branch (same as the original latch but
                 // uses the phi's inputs[1] edge instead of the phis directly)
                 ArenaArray(TB_Node*) cloned_list = loop_clone_ztc(ctx, tmp_ws, cloned_n, cloned, header, latch);
@@ -1402,8 +1517,8 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 TB_ASSERT(top_cloned->input_cap >= 1);
                 top_cloned->input_count = 1;
                 set_input(f, top_cloned, ztc_start, 0);
-                TB_Node* into_loop = branch_cproj(f, bot_cloned, 90, 0, 1 - exit_loop_i);
-                TB_Node* exit_loop = branch_cproj(f, bot_cloned, 10, 0, exit_loop_i);
+                TB_Node* into_loop = make_proj_node(f, TB_TYPE_CONTROL, bot_cloned, 1 - exit_loop_i);
+                TB_Node* exit_loop = make_proj_node(f, TB_TYPE_CONTROL, bot_cloned, exit_loop_i);
                 mark_node(f, into_loop), mark_node(f, exit_loop);
                 // connect up to the loop
                 set_input(f, header, into_loop, 0);
@@ -1433,12 +1548,12 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 TB_Node* into_loop2 = USERN(proj_with_index(latch, 1 - exit_loop_i));
                 {
                     // latch no longer connected to the top
-                    TB_User* after_into_loop2 = cfg_next_user(into_loop2);
-                    mark_node_n_users(f, USERN(after_into_loop2));
-                    set_input(f, USERN(after_into_loop2), latch->inputs[0], USERI(after_into_loop2));
+                    TB_User after_into_loop2 = *cfg_next_user(into_loop2);
+                    mark_node_n_users(f, USERN(&after_into_loop2));
                     // backedge has a lovely "new" latch
-                    set_input(f, latch,  header->inputs[1], 0);
-                    set_input(f, header, into_loop2,        1);
+                    set_input(f, USERN(&after_into_loop2), header, USERI(&after_into_loop2));
+                    set_input(f, header_succ, header->inputs[1], 0);
+                    set_input(f, header, into_loop2, 1);
 
                     mark_node_n_users(f, latch);
                     mark_node_n_users(f, header);
@@ -1446,6 +1561,19 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 // if we were ctrl-dependent on successfully entering the
                 // loop body, we need to be hooked to the header now
                 loop_hoist_ops(f, into_loop2, header);
+
+                // set branch probabilities
+                {
+                    // the ZTC entrance probably will be 90%, same as the loop backedge's taken
+                    float taken = 0.9f;
+                    if (exit_loop_i == 0) {
+                        taken = 1.0f - taken;
+                    }
+
+                    TB_ASSERT(cfg_is_if(bot_cloned));
+                    TB_NodeIf* br = TB_NODE_GET_EXTRA(bot_cloned);
+                    br->prob = taken;
+                }
 
                 // insert phis at the join site since we've now got two sets
                 // of definitions for any nodes which are referenced outside the loop
@@ -1529,14 +1657,16 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 }
 
                 progress = true;
-                tb_arena_restore(&f->tmp_arena, sp2);
+
+                // the ctrl array is stored in the tmp arena... we can't free here
+                // tb_arena_restore(&f->tmp_arena, sp2);
 
                 TB_OPTDEBUG(PASSES)(printf("        * Added extra latch %%%u\n", latch->gvn));
                 TB_OPTDEBUG(PASSES)(printf("        * Added extra join %%%u\n", join->gvn));
 
                 #ifndef NDEBUG
-                TB_Node* exit_proj2 = get_simple_loop_exit(ctx, loop, header, header_end);
-                TB_ASSERT(exit_proj2->inputs[0] == latch);
+                TB_Node* exit_proj = get_simple_loop_exit(ctx, loop, header, header_end);
+                TB_ASSERT(exit_proj->inputs[0] == latch);
                 TB_ASSERT(into_loop2->inputs[0] == latch);
                 TB_ASSERT(header->inputs[1] == into_loop2 && header->inputs[1]->user_count == 1);
                 #endif
@@ -1545,7 +1675,7 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 // the loop is already rotated if there's a latch at the bottom, maybe
                 // it's marked, maybe it's not.
                 if (cfg_is_cproj(header->inputs[1])) {
-                    TB_Node* exit_proj = get_simple_loop_exit(ctx, loop, header, header->inputs[1]->inputs[0]);
+                    exit_proj = get_simple_loop_exit(ctx, loop, header, header->inputs[1]->inputs[0]);
                     if (exit_proj) {
                         TB_OPTDEBUG(PASSES)(printf("      * Found rotated loop %%%u\n", header->gvn));
                         latch = exit_proj->inputs[0];
@@ -1607,6 +1737,24 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 if (type == TB_AFFINE_LOOP) {
                     header->inputs[1]->inputs[0]->type = TB_AFFINE_LATCH;
                     mark_node_n_users(f, header->inputs[1]->inputs[0]);
+                }
+
+                // set branch probabilities
+                if (cfg_is_natural_loop(header) && header->inputs[1]->type == TB_PROJ && cfg_is_if(header->inputs[1]->inputs[0])) {
+                    float taken = 0.9f;
+
+                    int cont_loop_i = TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
+                    TB_NodeIf* br = TB_NODE_GET_EXTRA(header->inputs[1]->inputs[0]);
+                    br->prob = cont_loop_i ? taken : 1.0f - taken;
+                } else if (latch == NULL && cfg_is_if(header_end)) {
+                    exit_proj = get_simple_loop_exit(ctx, loop, header, header_end);
+                    if (exit_proj) {
+                        float taken = 0.9f;
+                        int cont_loop_i = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeProj)->index;
+
+                        TB_NodeIf* br = TB_NODE_GET_EXTRA(header_end);
+                        br->prob = cont_loop_i ? taken : 1.0f - taken;
+                    }
                 }
             }
         }

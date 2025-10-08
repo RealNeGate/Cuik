@@ -260,10 +260,10 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
         while (scc->stk[--head] != f) {}
 
         if (is_cycle || scc->stk_cnt - head > 1) {
-            printf("Call cycle (depth=%d, %zu):\n", depth, scc->stk_cnt - head);
+            // printf("Call cycle (depth=%d, %zu):\n", depth, scc->stk_cnt - head);
 
             is_cycle = true;
-            f->no_inline = true;
+            f->attrs |= TB_FUNCTION_NOINLINE;
         }
 
         TB_Function* kid_f;
@@ -272,7 +272,7 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
             kid_f = scc->stk[--scc->stk_cnt];
 
             if (is_cycle) {
-                printf("  %s\n", kid_f->super.name);
+                // printf("  %s\n", kid_f->super.name);
             }
 
             SCCNode* kid_n = nl_table_get(&scc->nodes, kid_f);
@@ -336,7 +336,7 @@ void tb_dump_stats(void) {
             int frac_p = fmodf(percent * 10.0, 10.0);
             int int_p  = floorf(percent);
 
-            printf("  %.4f (%3d.%1d%%)   %s\n", tb_stats[i] / 1000000.0, int_p, frac_p, stats_get_name(i));
+            printf("  %10.4f (%3d.%1d%%)   %s\n", tb_stats[i] / 1000000.0, int_p, frac_p, stats_get_name(i));
         }
         printf("\n");
     }
@@ -347,7 +347,7 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
     mtx_init(&aaa, mtx_plain);
 
     #if TB_OPTDEBUG_SERVER
-    startup_server(m);
+    dbg_startup_server(m);
     #endif
 
     CUIK_TIMED_BLOCK("resize barrier") {

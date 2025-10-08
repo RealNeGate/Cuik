@@ -355,10 +355,6 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 return (ValDesc){ RVALUE, .n = tb_builder_uint(g, dt, e->int_lit.lit) };
             }
         }
-        case EXPR_SIZEOF: {
-            Cuik_Type* src = cuik_canonical_type(args[0].type);
-            return (ValDesc){ RVALUE, .n = tb_builder_sint(g, TB_TYPE_I64, src->size) };
-        }
         case EXPR_SIZEOF_T: {
             Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
             return (ValDesc){ RVALUE, .n = tb_builder_sint(g, TB_TYPE_I64, src->size) };
@@ -409,10 +405,9 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 assert(stmt->backing.s != NULL);
                 return (ValDesc){ LVALUE, .n = tb_builder_symbol(g, stmt->backing.s) };
             } else {
-                if (stmt->backing.n == NULL) {
+                /* if (stmt->backing.n == NULL) {
                     stmt->backing.n = tb_builder_label_make2(g, tb_builder_label_get(g), true);
-                }
-
+                } */
                 return (ValDesc){ LVALUE, .mem_var = stmt->decl.local_ordinal, .n = stmt->backing.n };
             }
         }
@@ -950,7 +945,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 func_type = cuik_canonical_type(func_type->ptr_to);
             }
 
-            if (func_type->func.has_varargs) {
+            if (func_type->has_varargs) {
                 varargs_cutoff = 1 + func_type->func.param_count;
             }
 
@@ -993,7 +988,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             TB_Node** out = tb_builder_call(g, call_prototype, 0, target_node, real_arg_count, ir_args);
             tb_arena_free(muh_tmp_arena, ir_args, real_arg_count * sizeof(TB_Node*));
 
-            if (func_type->func.noret) {
+            if (func_type->noret) {
                 tb_builder_unreachable(g, 0);
             }
 
@@ -1056,6 +1051,7 @@ static ValDesc cg_expr(TranslationUnit* tu, TB_GraphBuilder* g, Cuik_Expr* restr
     Subexpr* exprs = e->exprs;
     for (; i < e->count; i++) {
         Subexpr* s = &exprs[i];
+        if (s->op == EXPR_NONE) { continue; }
 
         // once we know this we can organize the top slice of the stack as the inputs
         int arity = cuik_get_expr_arity(s);
@@ -1135,18 +1131,12 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                 // Static initialization
                 TB_ArenaSavepoint sp = tb_arena_save(muh_tmp_arena);
 
-                char* name = tb_arena_alloc(muh_tmp_arena, 1024);
-                int name_len = snprintf(name, 1024, "%s.%s", function_name, s->decl.name);
-                if (name_len < 0 || name_len >= 1024) {
-                    assert(0 && "temporary global name too long!");
-                }
-
                 TB_DebugType* dbg_type = NULL;
                 if (tu->has_tb_debug_info) {
                     dbg_type = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(s->decl.type));
                 }
 
-                TB_Global* g = tb_global_create(tu->ir_mod, name_len, name, dbg_type, TB_LINKAGE_PRIVATE);
+                TB_Global* g = tb_global_create(tu->ir_mod, -1, s->decl.name, dbg_type, TB_LINKAGE_PRIVATE);
                 tb_arena_restore(muh_tmp_arena, sp);
 
                 TB_ModuleSectionHandle section = get_variable_storage(tu->ir_mod, &attrs, s->decl.type.raw & CUIK_QUAL_CONST);
@@ -1258,7 +1248,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             for (size_t i = 0; i < count; i++) {
                 if (kids[i]->op == STMT_DECL) {
                     Cuik_Type* decl_type = cuik_canonical_type(kids[i]->decl.type);
-                    if (decl_type->kind == KIND_PTR && (decl_type->ptr_to.raw & CUIK_QUAL_RESTRICT)) {
+                    if (decl_type->kind == KIND_PTR && (kids[i]->decl.type.raw & CUIK_QUAL_RESTRICT)) {
                         split_count += 1;
                     }
                 }
@@ -1271,7 +1261,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                 for (size_t i = 0; i < count; i++) {
                     if (kids[i]->op == STMT_DECL) {
                         Cuik_Type* decl_type = cuik_canonical_type(kids[i]->decl.type);
-                        if (decl_type->kind == KIND_PTR && (decl_type->ptr_to.raw & CUIK_QUAL_RESTRICT)) {
+                        if (decl_type->kind == KIND_PTR && (kids[i]->decl.type.raw & CUIK_QUAL_RESTRICT)) {
                             kids[i]->decl.local_ordinal = split_i + split_count;
                             split_count += 1;
                         }
@@ -1592,6 +1582,10 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         TB_Function* func = s->backing.f;
         tb_function_set_features(func, features);
 
+        if (s->decl.attrs.is_noinline) {
+            tb_function_set_attrs(func, TB_FUNCTION_NOINLINE);
+        }
+
         // we'll be using the debug info to construct our ABI compliant prototype
         TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, type);
         TB_DebugType** dbg_params = tb_debug_func_params(dbg_type);
@@ -1696,41 +1690,6 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
             function_name = NULL;
             function_type = 0;
         }
-
-        #if 0
-        if (tu->has_tb_debug_info) {
-            emit_location(tu, func, s->decl.initial_as_stmt->loc.start);
-
-            // mark where the return site is
-            SourceLoc loc = s->decl.initial_as_stmt->loc.end;
-            ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
-            if (rloc.file->filename[0] != '<') {
-                TB_SourceFile* f = tb_get_source_file(tu->ir_mod, -1, rloc.file->filename);
-                tb_inst_set_exit_location(func, f, rloc.line, 0); // rloc.column);
-            }
-        }
-
-        // compile body
-        {
-            function_type = type;
-            function_name = s->decl.name;
-
-            irgen_stmt(tu, g, s->decl.initial_as_stmt);
-
-            function_name = NULL;
-            function_type = 0;
-        }
-
-        // append return if none exists
-        if (tb_inst_get_control(func) != NULL) {
-            if (strcmp(s->decl.name, "main") == 0) {
-                TB_Node* exit_status = tb_inst_uint(func, TB_TYPE_I32, 0);
-                tb_inst_ret(func, 1, &exit_status);
-            } else {
-                tb_inst_ret(func, 0, NULL);
-            }
-        }
-        #endif
 
         return (TB_Symbol*) func;
     } else if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) && s->backing.s) {

@@ -35,7 +35,7 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
         out[out_i++] = '\0';
     }
 
-    Lexer pragma_lex = { 0, out, out };
+    Lexer pragma_lex = { 0, 0, out, out };
     String pragma_name = lexer_read(&pragma_lex).content;
     if (string_equals_cstr(&pragma_name, "comment")) {
         // https://learn.microsoft.com/en-us/cpp/preprocessor/comment-c-cpp?view=msvc-170
@@ -148,15 +148,21 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             tokens_next(s);
 
             expect_closing_paren(s, opening_loc);
+        } else if (tokens_match(s, sizeof("noinline")-1, "noinline")) {
+            attr.is_noinline = true;
+            tokens_next(s);
+
+            expect_closing_paren(s, opening_loc);
         } else {
             // TODO(NeGate): Correctly parse declspec instead of
             // ignoring them.
             int depth = 1;
             while (depth) {
-                if (tokens_get(s)->type == '(')
+                if (tokens_get(s)->type == '(') {
                     depth++;
-                else if (tokens_get(s)->type == ')')
+                } else if (tokens_get(s)->type == ')') {
                     depth--;
+                }
 
                 tokens_next(s);
             }
@@ -200,7 +206,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
         dyn_array_put(parser->top_level_stmts, n);
 
-        if (attr.is_noret) {
+        if (attr.is_noinline || attr.is_noret) {
             if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
                 diag_err(s, decl.loc, "this declaration isn't a function, it can't be no-return");
             } else {
@@ -209,7 +215,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     type_clone(&parser->types, cuik_canonical_type(n->decl.type), decl.name),
                     cuik_get_quals(n->decl.type)
                 );
-                cuik_canonical_type(n->decl.type)->clone.noret = true;
+                cuik_canonical_type(n->decl.type)->noret = attr.is_noret;
             }
         }
 
@@ -249,7 +255,15 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
         bool has_body = false;
         if (!attr.is_typedef) {
-            n->attr_list = parse_attributes(parser, s, n->attr_list);
+            n->attr_list = parse_attributes(parser, s, attribute_list);
+
+            bool is_root = false;
+            for (Cuik_Attribute* a = n->attr_list; a; a = a->prev) {
+                if (a->name && strcmp(a->name, "used") == 0) {
+                    is_root = true;
+                    break;
+                }
+            }
 
             if (decl.name != NULL) {
                 // declaration endings
@@ -267,7 +281,8 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     if (n->decl.attrs.is_inline) {
                         diag_err(s, decl.loc, "non-function declarations cannot be inline");
                     }
-                    n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
+
+                    n->decl.attrs.is_root = is_root || (!attr.is_extern && !attr.is_static);
 
                     if (tokens_get(s)->type == '{') {
                         expr_start = skip_brackets(s, decl.loc, true, &expr_end);
@@ -281,7 +296,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     }
 
                     n->op = STMT_FUNC_DECL;
-                    n->decl.attrs.is_root = attr.is_tls || !(attr.is_static || attr.is_inline);
+                    n->decl.attrs.is_root = is_root || attr.is_tls || !(attr.is_static || attr.is_inline);
 
                     expr_start = skip_brackets(s, decl.loc, false, &expr_end);
                     if (expr_start < 0) {

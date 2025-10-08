@@ -42,8 +42,10 @@ static Block* create_block(TB_Arena* arena, TB_Function* f, TB_Node* n) {
     TB_Node* end = end_of_bb(n);
 
     size_t succ_count = 0;
-    if (end->type == TB_BRANCH) {
+    if (cfg_is_branch(end)) {
         succ_count = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count;
+    } else if (cfg_is_if(end)) {
+        succ_count = 2;
     } else if (end->dt.type == TB_TAG_TUPLE) {
         FOR_USERS(u, end) if (cfg_is_cproj(USERN(u))) {
             succ_count += 1;

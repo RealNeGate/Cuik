@@ -2,6 +2,9 @@
 
 int cuik_get_expr_arity(Subexpr* e) {
     switch (e->op) {
+        case EXPR_NONE:
+        return 0;
+
         case EXPR_INT:
         case EXPR_CHAR:
         case EXPR_WCHAR:

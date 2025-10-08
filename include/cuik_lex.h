@@ -108,9 +108,10 @@ typedef struct {
 
 typedef struct Token {
     // it's a TknType but GCC doesn't like incomplete enums
-    int type     : 30;
-    int expanded : 1;
-    int hit_line : 1;
+    uint32_t type      : 29;
+    uint32_t expanded  : 1;
+    uint32_t hit_line  : 1;
+    uint32_t has_space : 1;
 
     SourceLoc location;
     String content;
@@ -120,6 +121,7 @@ typedef struct Token {
 typedef struct MacroInvoke {
     String name;
 
+    uint32_t depth;
     // 0 means it's got no parent
     uint32_t parent;
 
@@ -299,8 +301,8 @@ CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char key[]
 CUIK_API void cuikpp_define_cstr(Cuik_CPP* ctx, const char key[], const char value[]);
 CUIK_API void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char key[], size_t vallen, const char value[]);
 // Basically just `#undef key`
-CUIK_API bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key);
-CUIK_API bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
+CUIK_API void cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key);
+CUIK_API void cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
 
 ////////////////////////////////
 // Preprocessor includes

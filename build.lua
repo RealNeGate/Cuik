@@ -47,6 +47,11 @@ local modules = {
             "cuik_c/targets/mips_desc.c", "cuik_c/targets/wasm_desc.c",
         }, flags="-DCONFIG_HAS_CUIKC", deps={"common", "cuik_pp"}
     },
+    --   Go frontend
+    cuik_go = { srcs={
+            "cuik_go/parser.c"
+        }, flags="-DCONFIG_HAS_CUIKGO", deps={"common", "cuik_pp"}
+    },
     --   TildeBackend
     tb = { srcs={
             "tb/libtb.c",
@@ -216,6 +221,7 @@ function walk(name)
 end
 
 walk("mimalloc")
+walk("cuik_go")
 
 if options.cuik then
     walk("cuik_c")
@@ -275,17 +281,20 @@ rule("run", {
 -- TB's DSL
 if added["tb"] then
     if in_use_archs["x64"] then
-        command("tb/x64/x64_gen.h", "meta/dsl.lua", arg[-1].." $in x86 tb/x64/x64.machine tb/x64/x64_gen.h", "tb/x64/x64.machine")
+        command("tb/x64/x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine tb/x64/x64_gen.h", "tb/x64/x64.machine")
     end
 
     if in_use_archs["a64"] then
-        command("tb/aarch64/a64_gen.h", "meta/dsl.lua", arg[-1].." $in a64 tb/aarch64/a64.machine tb/aarch64/a64_gen.h", "tb/aarch64/a64.machine")
+        command("tb/aarch64/a64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/aarch64/a64.machine tb/aarch64/a64_gen.h", "tb/aarch64/a64.machine")
     end
 end
 
+-- New lexgen
+command("cuik_pp/keywords.h cuik_pp/dfa.h", "meta/lexgen.lua", arg[-1].. " $in", "")
+
 -- lexer metaprogram
-command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
-command("cuik_pp/keywords.h cuik_pp/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
+-- command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
+-- command("cuik_pp/keywords.h cuik_pp/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
 
 -- package freestanding headers into C file
 function list_files(path)
