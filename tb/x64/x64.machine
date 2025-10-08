@@ -286,32 +286,36 @@ pat (TB_TRUNCATE dt=$dt ___ $src)
 => (TB_MACH_COPY dt=$dt ___ $src def="ctx->normie_mask[REG_CLASS_GPR]" use="ctx->normie_mask[REG_CLASS_GPR]")
 
 // 32 -> 64
-pat (TB_SIGN_EXT dt=$dt ___ $src)
-where "$dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32"
-=> (x86_movsx32 dt=TB_TYPE_I64 ___ ___ $src)
-
-// 32 -> 64
-pat (TB_ZERO_EXT dt=$dt ___ $src)
-where "$dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32"
-=> (x86_mov dt=TB_TYPE_I64 ___ ___ $src)
+pat (TB_SIGN_EXT dt=$dt ___ $src) where "$dt.type == TB_TAG_I64 && $src->dt.type == TB_TAG_I32" => (x86_movsx32 dt=TB_TYPE_I64 ___ ___ $src extra_dt="TB_TYPE_I64")
+pat (TB_ZERO_EXT dt=$dt ___ $src) where "$dt.type == TB_TAG_I64 && $src->dt.type == TB_TAG_I32" => (x86_mov     dt=TB_TYPE_I64 ___ ___ $src extra_dt="TB_TYPE_I32")
 
 // 1/8 -> 32/64
 pat (TB_SIGN_EXT dt=$dt ___ $src)
-where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
-=> (x86_movsx8 dt=$dt ___ ___ $src)
+where "($dt.type == TB_TAG_I16 || $dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
+=> (x86_movsx8 dt=$dt ___ ___ $src extra_dt="$src->dt")
 
-// 1/8 -> 32/64
+// 1/8 -> 16/32/64
 pat (TB_ZERO_EXT dt=$dt ___ $src)
-where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
-=> (x86_movzx8 dt=$dt ___ ___ $src)
+where "($dt.type == TB_TAG_I16 || $dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
+=> (x86_movzx8 dt=$dt ___ ___ $src extra_dt="TB_TYPE_I32")
 
+// 1/8 -> 16/32/64
 pat (TB_ZERO_EXT dt=$dt ___ ($src: TB_LOAD $ctrl $mem $addr))
-where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
-=> (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD)
+where "($dt.type == TB_TAG_I16 || $dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
+=> (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD extra_dt="TB_TYPE_I32")
 
+// 1/8 -> 16/32/64
 pat (TB_ZERO_EXT dt=$dt ___ ($src: TB_LOAD $ctrl $mem ($addr: MEMORY ...)))
-where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
-=> (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD)
+where "($dt.type == TB_TAG_I16 || $dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
+=> (x86_movzx8 dt=$dt $ctrl $mem $addr mode=MODE_LD extra_dt="TB_TYPE_I32")
+
+pat (TB_ZERO_EXT dt=$dt ___ $src)
+where "$dt.type == TB_TAG_I8 && $src->dt.type == TB_TAG_BOOL"
+=> (TB_MACH_COPY dt=$dt ___ $src def="ctx->normie_mask[REG_CLASS_GPR]" use="ctx->normie_mask[REG_CLASS_GPR]")
+
+// 16 -> 32
+pat (TB_SIGN_EXT dt=$dt ___ $src) where "$src->dt.type == TB_TAG_I16" => (x86_movsx16 dt=$dt ___ ___ $src extra_dt="TB_TYPE_I16")
+pat (TB_ZERO_EXT dt=$dt ___ $src) where "$src->dt.type == TB_TAG_I16" => (x86_movzx16 dt=$dt ___ ___ $src extra_dt="TB_TYPE_I16")
 
 #if 0
 (pipeline A57

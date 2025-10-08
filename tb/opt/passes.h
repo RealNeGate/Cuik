@@ -370,7 +370,9 @@ bool cfg_is_endpoint(TB_Node* n);
 bool tb_node_is_compare(TB_Node* n);
 
 // debug server
+void dbg_startup_server(TB_Module* m);
 void dbg_submit_event(TB_Function* f, const char* desc, ...);
+void dbg_submit_event_sched(TB_CFG* cfg, TB_Function* f, const char* desc, ...);
 
 // internal debugging mostly
 void tb_print_dumb_node(Lattice** types, TB_Node* n);
@@ -433,7 +435,7 @@ void tb_integrated_dbg(TB_Function* f, TB_Node* n);
 Lattice* latuni_get(TB_Function* f, TB_Node* n);
 float tb_edge_prob(TB_Node* n);
 
-void tb__print_regmask(RegMask* mask);
+void tb__print_regmask(OutStream* s, RegMask* mask);
 
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);

@@ -2,43 +2,32 @@
 //   https://github.com/SeaOfNodes/Simple/blob/main/chapter23/src/main/java/com/seaofnodes/simple/print/SimpleWebSocket.java
 #include "../sandbird/sha1.c"
 
-#if 0
-typedef struct InternalFile InternalFile;
-struct InternalFile {
-    InternalFile* next;
-    const char* name;
-    size_t size;
-    char data[];
-};
-
-extern InternalFile* tb__ifiles_root;
-
-static InternalFile* find_internal_file(const char* name) {
-    InternalFile* f = tb__ifiles_root;
-    for (; f != NULL; f = f->next) {
-        if (strcmp(name, f->name) == 0) return f;
-    }
-
-    return NULL;
-}
-#endif
-
 static sb_Stream* dbg_client;
 static sb_Server* dbg_server;
 
 static void write_bytes(sb_Stream* stream, const void* data, size_t len) {
     const char* bytes = data;
-    uint8_t header[4];
+    uint8_t header[10];
     header[0] = 129; // FIN, opcode 1 - whole text message
     if (len <= 125) {
         header[1] = len;
         sb_write(stream, header, 2);
-    } else {
-        TB_ASSERT(len <= 65535);
+    } else if (len <= 65535) {
         header[1] = 126;
         header[2] = len >> 8;
         header[3] = len & 0xFF;
         sb_write(stream, header, 4);
+    } else {
+        header[1] = 127;
+        header[2] = (len >> 56) & 0xFF;
+        header[3] = (len >> 48) & 0xFF;
+        header[4] = (len >> 40) & 0xFF;
+        header[5] = (len >> 32) & 0xFF;
+        header[6] = (len >> 24) & 0xFF;
+        header[7] = (len >> 16) & 0xFF;
+        header[8] = (len >> 8)  & 0xFF;
+        header[9] = (len >> 0)  & 0xFF;
+        sb_write(stream, header, 10);
     }
     sb_write(stream, data, len);
 }
@@ -64,6 +53,47 @@ void dbg_submit_event(TB_Function* f, const char* desc, ...) {
     va_end(ap);
 
     s_writef(&s.header, "\", \"content\":\"");
+    tb_print_to_stream(f, &s.header);
+    s_writef(&s.header, "\" }");
+
+    // printf("%.*s\n", (int) s.cnt, s.data);
+
+    write_bytes(dbg_client, s.data, s.cnt);
+    sb_poll_server(dbg_server, 0);
+    cuik_free(s.data);
+    #endif
+}
+
+void dbg_submit_event_sched(TB_CFG* cfg, TB_Function* f, const char* desc, ...) {
+    #if TB_OPTDEBUG_SERVER
+    if (dbg_server == NULL) {
+        return;
+    }
+
+    // if we're acting as a debug server, submit the latest copy of the
+    // IR to the list of events. The viewer will organize the timeline
+    // on it's end
+    int t = f->dbg_server_t++;
+
+    BufferOutStream s = bos_make();
+    s.header.quoted = true;
+    s_writef(&s.header, "{ \"type\":\"OPT\", \"name\":\"%s\", \"time\":%d, \"desc\":\"", f->super.name, t);
+
+    va_list ap;
+    va_start(ap, desc);
+    s.header.writef(&s.header, desc, ap);
+    va_end(ap);
+
+    s_writef(&s.header, "\", \"content\":\"");
+    aarray_for(i, cfg->blocks) {
+        TB_BasicBlock* bb = &cfg->blocks[i];
+        s_writef(&s.header, "BB %zu:\\n", i);
+        aarray_for(j, bb->items) {
+            s_writef(&s.header, "  ");
+            tb_print_dumb_node_raw(NULL, bb->items[j], &s.header);
+            s_writef(&s.header, "\\n");
+        }
+    }
     tb_print_to_stream(f, &s.header);
     s_writef(&s.header, "\" }");
 
@@ -147,11 +177,11 @@ static int event_handler(sb_Event *e) {
     return SB_RES_OK;
 }
 
-static void close_dbg_server() {
+static void dbg_close_server(void) {
     sb_close_server(dbg_server);
 }
 
-static void startup_server(TB_Module* m) {
+void dbg_startup_server(TB_Module* m) {
     sb_Options opt = { .port = "8000", .handler = event_handler };
     dbg_server = sb_new_server(&opt);
     if (!dbg_server) {
@@ -159,7 +189,7 @@ static void startup_server(TB_Module* m) {
         exit(EXIT_FAILURE);
     }
 
-    atexit(close_dbg_server);
+    atexit(dbg_close_server);
     printf("Server running at http://localhost:%s\n", opt.port);
 
     // wait until we've connected, after that we only punt messages to the

@@ -628,102 +628,125 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
     }
     #endif
 
-    size_t len = 0;
-    FOR_N(i, 0, dyn_array_length(schedule)) {
-        VectorOp* op = schedule[i];
-        TB_Node* first = op->ops[0];
+    bool progress;
+    size_t len = dyn_array_length(schedule);
+    do {
+        progress = false;
 
-        // classify the vector width and see if it's good
-        bool bad = false;
-        TB_DataType elem_dt = slp_node_data_type(first);
-        if (!TB_IS_INTEGER_TYPE(elem_dt) && !TB_IS_FLOAT_TYPE(elem_dt)) {
-            TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this type. %%%u ", first->gvn), print_type(&OUT_STREAM_DEFAULT, elem_dt), printf("\n"));
-            bad = true;
-            goto done;
-        }
+        // prune based on inputs
+        FOR_N(i, 0, dyn_array_length(schedule)) {
+            VectorOp* op = schedule[i];
+            if (op == NULL) {
+                continue;
+            }
 
-        if (!codegen->is_pack_op_supported(f, elem_dt, op->ops[0], op->width)) {
-            TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this operation. %%%u [", first->gvn), print_type(&OUT_STREAM_DEFAULT, elem_dt), printf(" x %d]\n", op->width));
-            bad = true;
-            goto done;
-        }
+            TB_Node* first = op->ops[0];
 
-        int elem_bits = tb_data_type_bit_size(f->super.module, elem_dt.type);
-        int vector_bits = elem_bits * op->width;
-        TB_DataType v_dt = TB_TYPE_VOID;
-        switch (vector_bits) {
-            // case 64:  v_dt = (TB_DataType){ { TB_TAG_V64,  .elem_or_addrspace = elem_dt.type } }; break;
-
-            case 32:  v_dt = TB_TYPE_I32; break;
-            case 64:  v_dt = TB_TYPE_I64; break;
-
-            case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
-            case 256: v_dt = (TB_DataType){ { TB_TAG_V256, .elem_or_addrspace = elem_dt.type } }; break;
-            case 512: v_dt = (TB_DataType){ { TB_TAG_V512, .elem_or_addrspace = elem_dt.type } }; break;
-            default: tb_todo();
-        }
-        op->v_dt = v_dt;
-
-        // check if the vector ops can legally be connected up
-        if (first->type == TB_STORE) {
-            if (!viable_vector(f, &ops, v_dt, op, 3)) {
-                TB_OPTDEBUG(SLP)(printf("    SLP failed: Store value of %%%u isn't a viable vector\n", first->gvn));
+            // classify the vector width and see if it's good
+            bool bad = false;
+            TB_DataType elem_dt = slp_node_data_type(first);
+            if (!TB_IS_INTEGER_TYPE(elem_dt) && !TB_IS_FLOAT_TYPE(elem_dt)) {
+                TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this type. %%%u ", first->gvn), print_type(&OUT_STREAM_DEFAULT, elem_dt), printf("\n"));
                 bad = true;
+                goto done;
             }
-        } else {
-            if (first->type != TB_LOAD) {
-                if (!viable_vector(f, &ops, v_dt, op, 1)) {
-                    TB_OPTDEBUG(SLP)(printf("    SLP failed: LHS of %%%u isn't a viable vector\n", first->gvn));
-                    bad = true;
-                }
 
-                if (first->input_count > 2 && !viable_vector(f, &ops, v_dt, op, 2)) {
-                    TB_OPTDEBUG(SLP)(printf("    SLP failed: RHS of %%%u isn't a viable vector\n", first->gvn));
+            if (!codegen->is_pack_op_supported(f, elem_dt, op->ops[0], op->width)) {
+                TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this operation. %%%u [", first->gvn), print_type(&OUT_STREAM_DEFAULT, elem_dt), printf(" x %d]\n", op->width));
+                bad = true;
+                goto done;
+            }
+
+            int elem_bits = tb_data_type_bit_size(f->super.module, elem_dt.type);
+            int vector_bits = elem_bits * op->width;
+            TB_DataType v_dt = TB_TYPE_VOID;
+            switch (vector_bits) {
+                // case 64:  v_dt = (TB_DataType){ { TB_TAG_V64,  .elem_or_addrspace = elem_dt.type } }; break;
+
+                case 32:  v_dt = TB_TYPE_I32; break;
+                case 64:  v_dt = TB_TYPE_I64; break;
+
+                case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
+                case 256: v_dt = (TB_DataType){ { TB_TAG_V256, .elem_or_addrspace = elem_dt.type } }; break;
+                case 512: v_dt = (TB_DataType){ { TB_TAG_V512, .elem_or_addrspace = elem_dt.type } }; break;
+                default: tb_todo();
+            }
+            op->v_dt = v_dt;
+
+            // check if the vector ops can legally be connected up
+            if (first->type == TB_STORE) {
+                if (!viable_vector(f, &ops, v_dt, op, 3)) {
+                    TB_OPTDEBUG(SLP)(printf("    SLP failed: Store value of %%%u isn't a viable vector\n", first->gvn));
                     bad = true;
                 }
+            } else {
+                if (first->type != TB_LOAD) {
+                    if (!viable_vector(f, &ops, v_dt, op, 1)) {
+                        TB_OPTDEBUG(SLP)(printf("    SLP failed: LHS of %%%u isn't a viable vector\n", first->gvn));
+                        bad = true;
+                    }
+
+                    if (first->input_count > 2 && !viable_vector(f, &ops, v_dt, op, 2)) {
+                        TB_OPTDEBUG(SLP)(printf("    SLP failed: RHS of %%%u isn't a viable vector\n", first->gvn));
+                        bad = true;
+                    }
+                }
+            }
+
+            // prune out
+            done:;
+            if (bad) {
+                FOR_N(j, 0, op->width) {
+                    nl_table_remove(&ops, op->ops[j]);
+                }
+                schedule[i] = NULL;
+                len -= 1;
+                progress = true;
             }
         }
 
-        // prune out
-        done:;
-        if (bad) {
-            FOR_N(i, 0, op->width) {
-                nl_table_remove(&ops, op->ops[i]);
-            }
-        } else {
-            schedule[len++] = op;
-        }
-    }
-    dyn_array_set_length(schedule, len);
+        // prune based on users
+        FOR_N(i, 0, dyn_array_length(schedule)) {
+            VectorOp* op = schedule[i];
+            if (op == NULL) { continue; }
+            FOR_N(j, 0, op->width) {
+                bool dead = true;
+                bool bad_use = false;
+                FOR_USERS(u, op->ops[j]) {
+                    if (USERN(u)->dt.type == TB_TAG_MEMORY) {
+                        dead = false;
+                        continue;
+                    }
 
-    size_t bad = 0;
-    FOR_REV_N(i, 0, len) {
-        // all uses must also point to a pack... for now
-        VectorOp* op = schedule[i];
-        FOR_N(j, 0, op->width) {
-            FOR_USERS(u, op->ops[j]) {
-                if (USERN(u)->dt.type == TB_TAG_MEMORY) {
-                    continue;
+                    VectorOp* use_op = nl_table_get(&ops, USERN(u));
+                    if (use_op == NULL) {
+                        TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize %%%u, user %%%u isn't vector.\n", op->ops[j]->gvn, USERN(u)->gvn));
+                        bad_use = true;
+                        dead = true;
+                        break;
+                    }
                 }
 
-                VectorOp* use_op = nl_table_get(&ops, USERN(u));
-                if (use_op == NULL) {
-                    TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize %%%u, user %%%u isn't vector.\n", op->ops[j]->gvn, USERN(u)->gvn));
+                if (dead) {
+                    if (!bad_use) {
+                        TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize %%%u, no users...\n", op->ops[j]->gvn));
+                    }
 
                     FOR_N(k, 0, op->width) {
                         nl_table_remove(&ops, op->ops[k]);
                     }
                     schedule[i] = NULL;
-                    bad++;
-                    goto done2;
+                    len -= 1;
+                    progress = true;
+                    break;
                 }
             }
+            done2:;
         }
-        done2:;
-    }
+    } while (len > 0 && progress);
 
     // nothing left which is valid, bail out
-    if (len == bad) {
+    if (len == 0) {
         return false;
     }
 

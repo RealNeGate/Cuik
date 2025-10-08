@@ -552,7 +552,11 @@ static uint32_t node_flags(TB_Node* n) {
         return NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT | NODE_EFFECT;
     }
 
-    return n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_PINNED) : NODE_MEMORY_IN;
+    uint32_t flags = n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_PINNED) : NODE_MEMORY_IN;
+    if (n->type == x86_cmp || n->type == x86_test) {
+        flags |= NODE_ALWAYS_SINK;
+    }
+    return flags;
 }
 
 static size_t extra_bytes(TB_Node* n) {
@@ -627,7 +631,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         printf(" = ");
         print_pretty_edge(ctx, n->inputs[0]);
         printf(", %d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
-        tb__print_regmask(TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def);
+        tb__print_regmask(&OUT_STREAM_DEFAULT, TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def);
     } else if (n->type == TB_MACH_SYMBOL) {
         printf("  mach_symbol %%%u", n->gvn);
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
@@ -640,7 +644,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         printf("  temp ");
         print_pretty_edge(ctx, n);
         printf(" = ");
-        tb__print_regmask(TB_NODE_GET_EXTRA_T(n, TB_NodeMachTemp)->def);
+        tb__print_regmask(&OUT_STREAM_DEFAULT, TB_NODE_GET_EXTRA_T(n, TB_NodeMachTemp)->def);
     } else if (n->type == TB_BRANCH_PROJ) {
         TB_Node* succ = cfg_next_control(n);
         int index = n->type == TB_MACH_JUMP ? 0 : TB_NODE_GET_EXTRA_T(succ, TB_NodeProj)->index;
@@ -715,11 +719,11 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             printf("  copy%d ", bytes);
             print_pretty_edge(ctx, n);
             printf(": ");
-            tb__print_regmask(cpy->def);
+            tb__print_regmask(&OUT_STREAM_DEFAULT, cpy->def);
             printf(" = ");
             print_pretty_edge(ctx, n->inputs[1]);
             printf(": ");
-            tb__print_regmask(cpy->use);
+            tb__print_regmask(&OUT_STREAM_DEFAULT, cpy->use);
         }
     } else if (n->type == TB_ICONST) {
         int bytes;
@@ -2438,13 +2442,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 MOVSXD,
             };
 
-            TB_X86_DataType dt = legalize_int(n->inputs[2]->dt);
-            if (n->type == x86_movzx8 || n->type == x86_movzx16) {
-                dt = TB_X86_DWORD;
-            } else if (n->type == x86_movsx32) {
-                dt = TB_X86_QWORD;
-            }
-
+            TB_X86_DataType dt = legalize_int(TB_NODE_GET_EXTRA_T(n, X86MemOp)->extra_dt);
             Val dst = op_at(ctx, n);
             Val src = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
 

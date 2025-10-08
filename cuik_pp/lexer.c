@@ -337,6 +337,7 @@ Token lexer_read(Lexer* restrict l) {
 
         case 54: {
             t.type = TOKEN_INTEGER;
+            current -= 1;
 
             // we've gotten through the simple integer stuff, time for floats
             for (;;) {

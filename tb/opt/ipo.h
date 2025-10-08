@@ -347,7 +347,7 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
     mtx_init(&aaa, mtx_plain);
 
     #if TB_OPTDEBUG_SERVER
-    startup_server(m);
+    dbg_startup_server(m);
     #endif
 
     CUIK_TIMED_BLOCK("resize barrier") {

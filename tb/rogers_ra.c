@@ -170,7 +170,7 @@ static double rogers_get_spill_cost(Ctx* restrict ctx, Rogers* restrict ra, VReg
 static void rogers_print_vreg(Ctx* restrict ctx, Rogers* restrict ra, VReg* vreg) {
     double cost = rogers_get_spill_cost(ctx, ra, vreg);
     printf("# V%-4"PRIdPTR" cost=%.2f ", vreg - ctx->vregs, cost);
-    tb__print_regmask(vreg->mask);
+    tb__print_regmask(&OUT_STREAM_DEFAULT, vreg->mask);
     printf("\n");
 }
 
@@ -515,6 +515,19 @@ static void mark_node_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, uint32_t failed
     }
 }
 
+static int compare_split(void* ctx, const void* a, const void* b) {
+    VReg* vregs = ctx;
+    VReg* aa = &vregs[((const SplitDecision*) a)->target];
+    VReg* bb = &vregs[((const SplitDecision*) b)->target];
+
+    float as = aa->spill_cost - aa->area*0.2;
+    float bs = bb->spill_cost - bb->area*0.2;
+    if (as != bs) {
+        return as > bs ? -1 : 1;
+    }
+    return 0;
+}
+
 void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     Rogers ra = { .ctx = ctx, .arena = arena };
     TB_Function* f = ctx->f;
@@ -814,13 +827,14 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     }
 
     int rounds = 0;
+    size_t last_spills = 0;
     cuikperf_region_start("main loop", NULL);
     for (;;) {
         TB_ArenaSavepoint sp = tb_arena_save(arena);
 
         rounds++;
         TB_OPTDEBUG(REGALLOC)(printf("# ========= Round %d =========\n", rounds));
-        TB_ASSERT(rounds < 100);
+        TB_ASSERT(rounds < 50);
 
         // reset HRP regions
         FOR_N(i, 0, ctx->bb_count) {
@@ -968,7 +982,28 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
         // printf("  %zu\n", dyn_array_length(ra.splits));
 
-        if (dyn_array_length(ra.splits)) {
+        size_t num_spills = dyn_array_length(ra.splits);
+        if (num_spills) {
+            /* if (rounds == 1) {
+                printf("AAA %d %zu\n", rounds, num_spills);
+            } else {
+                printf("AAA %d %zu (%+d)\n", rounds, num_spills, (int)num_spills - (int)last_spills);
+            }
+            last_spills = num_spills;*/
+
+            // reset assignment, but don't try to split them this round
+            if (num_spills > 64) {
+                qsort_s(ra.splits, num_spills, sizeof(SplitDecision), compare_split, ctx->vregs);
+
+                for (size_t i = 64; i < num_spills; i++) {
+                    SplitDecision split = ra.splits[i];
+                    VReg* v = &ctx->vregs[split.target];
+                    v->class = 0;
+                    v->assigned = -1;
+                }
+                dyn_array_set_length(ra.splits, 64);
+            }
+
             tb__insert_splits(ctx, &ra);
             dyn_array_clear(ra.splits);
         }
@@ -1471,10 +1506,7 @@ static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 }
             }
 
-            #if TB_OPTDEBUG_REGALLOC4
-            printf("# BB%zu\n", i);
-            #endif
-
+            TB_OPTDEBUG(REGALLOC_AREA)(printf("# BB%zu\n", i));
             FOR_REV_N(j, 0, aarray_length(bb->items)) {
                 TB_Node* n = bb->items[j];
 
@@ -1486,9 +1518,7 @@ static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                     array[n->gvn] = -1;
                 }
 
-                #if TB_OPTDEBUG_REGALLOC4
-                printf("# ");
-                #endif
+                TB_OPTDEBUG(REGALLOC_AREA)(printf("# "));
 
                 // accumulate area (don't do so on projections and temps)
                 if (n->type != TB_MACH_TEMP && !is_proj(n)) {
@@ -1497,15 +1527,11 @@ static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                         VReg* v = &ctx->vregs[ctx->vreg_map[stack[k]]];
                         v->area += freq;
 
-                        #if TB_OPTDEBUG_REGALLOC4
-                        printf("%%%u ", stack[k]);
-                        #endif
+                        TB_OPTDEBUG(REGALLOC_AREA)(printf("%%%u ", stack[k]));
                     }
                 }
 
-                #if TB_OPTDEBUG_REGALLOC4
-                printf("\n");
-                #endif
+                TB_OPTDEBUG(REGALLOC_AREA)(printf("\n"));
 
                 // start intervals
                 if (n->type != TB_PHI) {

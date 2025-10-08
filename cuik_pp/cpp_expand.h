@@ -489,7 +489,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                 String b = ctx->tokens.list.tokens[i+1].content;
 
                 // Literally join the data
-                unsigned char* out = tb_arena_alloc(&ctx->tmp_arena, a.length + b.length + 16);
+                unsigned char* out = tb_arena_alloc(&ctx->perm_arena, a.length + b.length + 16);
                 memcpy(out, a.data, a.length);
                 memcpy(out + a.length, b.data, b.length);
                 memset(&out[a.length + b.length], 0, 16);

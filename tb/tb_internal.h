@@ -592,6 +592,7 @@ enum {
     NODE_PINNED     = 512,
     // "necessary" CFG node (in the context of the optimistic solver)
     NODE_EFFECT     = 1024,
+    NODE_ALWAYS_SINK = 2048,
 };
 
 typedef struct OutStream {

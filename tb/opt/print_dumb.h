@@ -37,15 +37,15 @@ void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, OutStream* s) {
         } else if (n->type == TB_MACH_PROJ) {
             TB_NodeMachProj* p = TB_NODE_GET_EXTRA(n);
             s_writef(s, ", mask=");
-            tb__print_regmask(p->def);
+            tb__print_regmask(s, p->def);
         }
         s_writef(s, " ");
     } else if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
         s_writef(s, "def=");
-        tb__print_regmask(cpy->def);
+        tb__print_regmask(s, cpy->def);
         s_writef(s, ", use=");
-        tb__print_regmask(cpy->use);
+        tb__print_regmask(s, cpy->use);
         s_writef(s, " ");
     } else if (n->type == TB_IF) {
         TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
@@ -53,7 +53,7 @@ void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, OutStream* s) {
     } else if (n->type == TB_MACH_TEMP) {
         TB_NodeMachTemp* tmp = TB_NODE_GET_EXTRA(n);
         s_writef(s, "def=");
-        tb__print_regmask(tmp->def);
+        tb__print_regmask(s, tmp->def);
         s_writef(s, " ");
     } else if (n->type == TB_VSHUFFLE) {
         TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);

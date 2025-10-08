@@ -510,19 +510,27 @@ static bool safe_to_dup(TB_Node* n) {
         return false;
     } else if (n->type == TB_ROOT || (cfg_flags(n) & (NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT))) {
         return false;
+    } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
+        // don't dedup compares, it's basically always gonna fail
+        return false;
+    } else if (n->type == TB_ICONST || n->type == TB_F32CONST || n->type == TB_F64CONST || n->type == TB_SYMBOL || n->type == TB_LOCAL) {
+        // constants always dup
+        return true;
     } else if (n->user_count > 3) {
-        // at some point we'd rather just dedup... unless it's a constant
-        // those can always fold in
-        if (n->type != TB_ICONST && n->type != TB_F32CONST && n->type != TB_F64CONST && n->type != TB_SYMBOL && n->type != TB_LOCAL) {
-            return false;
-        }
+        // share if there's a lot of users
+        return false;
+    } else {
+        return true;
     }
-    return true;
 }
 
 static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
     #if TB_OPTDEBUG_ISEL
     tb_print_dumb(f);
+    #endif
+
+    #if TB_OPTDEBUG_SERVER
+    dbg_startup_server(f->super.module);
     #endif
 
     if (0) {
@@ -891,6 +899,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         ctx.vregs = aarray_create(&f->arena, VReg, tb_next_pow2(vreg_count + 16));
         aarray_set_length(ctx.vregs, vreg_count);
         STATS_EXIT(MACH_LCM);
+
+        dbg_submit_event_sched(&ctx.cfg, f, "ISel+Sched");
     }
 
     CUIK_TIMED_BLOCK("gather RA constraints") {

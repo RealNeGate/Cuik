@@ -25,6 +25,11 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
         }
     }
 
+    uint32_t flags = cfg_flags(n);
+    if (flags & NODE_ALWAYS_SINK) {
+        return late;
+    }
+
     TB_BasicBlock* best = late;
     for (;;) {
         if (late->freq < best->freq) {

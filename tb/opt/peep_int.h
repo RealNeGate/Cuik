@@ -463,6 +463,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
         int64_t bmin = b->_int.min & mask;
         int64_t bmax = b->_int.max & mask;
 
+        int widen = TB_MAX(a->_int.widen, b->_int.widen);
         switch (n->type) {
             case TB_SHL: {
                 if (bmin == bmax) {
@@ -486,7 +487,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                             max = lattice_int_max(bits);
                         }
 
-                        return lattice_gimme_int3(f, min, max, zeros, ones, bits, TB_MAX(a->_int.widen, b->_int.widen));
+                        return lattice_gimme_int3(f, min, max, zeros, ones, bits, widen);
                     }
                 } else {
                     // we at least shifted this many bits therefore we
@@ -496,7 +497,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
 
                 min = lattice_int_min(bits);
                 max = lattice_int_max(bits);
-                return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+                return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones, widen } });
             }
 
             case TB_SHR: {
@@ -526,7 +527,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     max = lattice_int_max(bits);
                 }
 
-                return lattice_gimme_int3(f, min, max, zeros, ones, bits, TB_MAX(a->_int.widen, b->_int.widen));
+                return lattice_gimme_int3(f, min, max, zeros, ones, bits, widen);
             }
 
             case TB_SAR: {
@@ -537,7 +538,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     min = tb__sxt(min >> b->_int.min, bits - b->_int.min, 64);
                     max = tb__sxt(max >> b->_int.min, bits - b->_int.min, 64);
 
-                    return lattice_gimme_int3(f, min, max, zeros, ones, bits, TB_MAX(a->_int.widen, b->_int.widen));
+                    return lattice_gimme_int3(f, min, max, zeros, ones, bits, widen);
                 }
 
                 break;

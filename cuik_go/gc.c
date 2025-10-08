@@ -1,6 +1,9 @@
 
 enum {
-    GC_PAGE_SIZE = 2*1024*1024
+    GC_PAGE_SIZE = 2*1024*1024,
+    // how many bits are in the alloc bitmap (a bitmap
+    // that tracks the first word of an allocation).
+    GC_ALLOC_BITMAP_SIZE = GC_PAGE_SIZE / 8,
 };
 
 static void* alloc_page(void) {
@@ -114,12 +117,12 @@ typedef struct {
 
     // Acceleration structure for finding
     // allocations from interior ptrs.
-    struct {
-        uint32_t cap, cnt;
-        uint32_t* arr;
-    } allocs;
+    uint64_t alloc_bits[GC_ALLOC_BITMAP_SIZE / 64];
 
-    _Alignas(16) char data[];
+    // Card table per page
+    uint8_t card_table[GC_PAGE_SIZE / 512];
+
+    char data[];
 } GC_Page;
 
 static void* gc_page_push(size_t size) {
@@ -137,16 +140,11 @@ static GC_Ref gc_alloc(size_t size, uint32_t tag) {
 
     if (gc_tlab == NULL || gc_tlab->used + size >= GC_PAGE_SIZE - sizeof(GC_Page)) {
         gc_tlab = alloc_page();
-        gc_tlab->allocs.cap = 1024;
-        gc_tlab->allocs.arr = cuik_malloc(1024 * sizeof(uint32_t));
     }
 
-    // submit to sorted alloc records
-    if (gc_tlab->allocs.cnt == gc_tlab->allocs.cap) {
-        gc_tlab->allocs.cap *= 2;
-        gc_tlab->allocs.arr = cuik_realloc(gc_tlab->allocs.arr, gc_tlab->allocs.cap * sizeof(uint32_t));
-    }
-    gc_tlab->allocs.arr[gc_tlab->allocs.cnt++] = gc_tlab->used;
+    // submit to alloc bitmap
+    uintptr_t offset = gc_tlab->used / 8;
+    gc_tlab->alloc_bits[offset / 64] |= 1ull << (offset % 64);
 
     // bump alloc
     GC_Object* obj = (GC_Object*) &gc_tlab->data[gc_tlab->used];
@@ -162,17 +160,23 @@ static void* gc_rawptr(GC_Ref ref) {
 
 static GC_Object* gc_find_obj(uintptr_t addr) {
     GC_Page* page = (GC_Page*) (addr & -GC_PAGE_SIZE);
-    uint32_t key  = (char*)addr - page->data;
+    size_t start = ((char*)addr - page->data) / 8;
 
-    size_t left = 0, right = page->allocs.cnt;
-    while (left != right) {
-        size_t i = (left + right) / 2;
-        if (page->allocs.arr[i] >= key) { right = i; }
-        else { left = i + 1; }
+    // skip backwards until we find the next word with bits
+    size_t i = start/64;
+    while (i && page->alloc_bits[i] == 0) {
+        i -= 1;
     }
 
-    key = page->allocs.arr[left];
-    return (GC_Object*) &page->data[key];
+    uint64_t word = page->alloc_bits[i];
+    if (i == start/64) {
+        // mask bits above the mid point
+        word &= UINT64_MAX >> (64 - (start % 64));
+    }
+    TB_ASSERT(word);
+
+    size_t offset = __builtin_clzll(word) ^ 63;
+    return (GC_Object*) &page->data[i*512 + offset*8];
 }
 
 ////////////////////////////////

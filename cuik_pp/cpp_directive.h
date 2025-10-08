@@ -404,7 +404,6 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     if (search >= 0) {
         IncludeGuardEntry* guard = &ctx->include_once[search].v;
         if (guard->name.length == 0 || is_defined(ctx, guard->name.data, guard->name.length) == guard->expected) {
-            // printf("AAA %s\n", canonical.data);
             if (cuikperf_is_active()) {
                 cuikperf_region_end();
             }
@@ -412,6 +411,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
         }
     }
 
+    // printf("AAA %s\n", canonical.data);
     Cuik_Path* alloced_filepath = alloc_path(ctx, canonical.data);
 
     // insert incomplete new stack slot
