@@ -826,6 +826,8 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         ra.hrp[i].end[0]   = -1;
     }
 
+    TB_OPTDEBUG(REGALLOC3)(rogers_dump_sched(ctx, f->node_count));
+
     int rounds = 0;
     size_t last_spills = 0;
     cuikperf_region_start("main loop", NULL);
@@ -1709,7 +1711,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             RegMask** kills = ctx->ins;
             int kill_count = ctx->constraint_kill(ctx, n, kills);
             FOR_N(k, 0, kill_count) {
-                TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mCLOBBERING "), tb__print_regmask(kills[k]), printf("\x1b[0m\n"));
+                TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mCLOBBERING "), tb__print_regmask(&OUT_STREAM_DEFAULT, kills[k]), printf("\x1b[0m\n"));
 
                 bool hrp_point = false;
                 int kill_class = kills[k]->class;

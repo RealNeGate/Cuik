@@ -934,22 +934,22 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                 #if TB_OPTDEBUG_REGALLOC
                 if (vreg_id > 0) {
-                    printf("    OUT    = "), tb__print_regmask(def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
+                    printf("    OUT    = "), tb__print_regmask(&OUT_STREAM_DEFAULT, def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
                 }
 
                 FOR_N(k, 1, n->input_count) {
                     if (n->inputs[k]) {
                         if (n->inputs[k]->type == TB_MACH_TEMP) {
-                            printf("    TMP[%zu] = ", k), tb__print_regmask(ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
+                            printf("    TMP[%zu] = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
                         } else if (ctx.ins[k] != &TB_REG_EMPTY) {
-                            printf("    IN[%zu]  = ", k), tb__print_regmask(ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
+                            printf("    IN[%zu]  = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
                         }
                     }
                 }
 
                 int kill_count = node_constraint_kill(&ctx, n, ctx.ins);
                 FOR_N(k, 0, kill_count) {
-                    printf("    KILL[%zu] = ", k), tb__print_regmask(ctx.ins[k]), printf("\n");
+                    printf("    KILL[%zu] = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf("\n");
                 }
                 #endif
             }

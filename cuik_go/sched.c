@@ -37,6 +37,7 @@ static void foobar(void) {
 
         // printf("go_stuff(%p, %p)\n", gc_rawptr(a.base), gc_rawptr(b.base));
         go_stuff(&a, &b);
+        thrd_sleep(&(struct timespec){ .tv_nsec = 200000000 }, NULL);
     }
 }
 
@@ -82,18 +83,14 @@ TB_Stacklet* c_checkpoint(TB_Stacklet* stack) {
             uint32_t ref_type = sfpt->refs[i] & 0xFF;
             // printf("    R%-2u : %4u\n", reg_num, ref_type);
 
-            if (ref_type == 1) { // loaded accessible pointer, might be forwarded
-                GC_Ref addr = g->state.gprs[reg_num];
-                // printf("[GC]   R(1) %"PRIXPTR"\n", addr);
-
-                // Remap/Mark
+            if (ref_type == 1) {
+                // loaded accessible pointer, might be forwarded
+                GC_Ref addr = remap_ptr(g->state.gprs[reg_num]);
                 gc_mark_obj(addr);
-            } else if (ref_type == 2) { // unloaded ref, run LVB
+            } else if (ref_type == 2) {
+                // unloaded ref, run LVB
                 _Atomic(GC_Ref)* ref = (_Atomic(GC_Ref)*) g->state.gprs[reg_num];
-
-                // Double-check that things didn't stop being a trap
                 GC_Ref old = *ref;
-                // printf("[GC]   R(2) %"PRIXPTR"\n", old);
                 if (bit_test(exp, old & 63)) {
                     GC_Ref new = visit_ref(old, exp);
                     // self-heal, might fail due to a fellow writer

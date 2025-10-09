@@ -329,8 +329,39 @@ static void gc_mark_obj(GC_Ref addr) {
     }
 }
 
+static GC_Ref remap_ptr(GC_Ref addr) {
+    _Atomic(uintptr_t)* fwd = (_Atomic(uintptr_t)*) nl_table_getp(&fwd_table, ((GC_Object*) addr) - 1);
+    if (fwd != NULL) {
+        // bottom two bits represent some states:
+        //   00 - Unmoved
+        //   01 - Moving
+        //   10 - Moved
+        uintptr_t dst_ptr = atomic_load_explicit(fwd, memory_order_relaxed);
+        __debugbreak();
+
+        // if the object is unmoved, do that
+        if ((dst_ptr & 3) == 0b00) {
+            // try to move it
+            uintptr_t moving_ptr = dst_ptr | 0b10;
+            if (atomic_compare_exchange_strong(fwd, &dst_ptr, moving_ptr)) {
+                // winner must copy
+                GC_Object* src_ptr = ((GC_Object*) addr) - 1;
+                memcpy((void*) dst_ptr, src_ptr, src_ptr->size);
+                atomic_store_explicit(fwd, dst_ptr | 0b10, memory_order_release);
+            } else {
+                // losers must wait... futex?
+                while ((atomic_load_explicit(fwd, memory_order_acquire) & 3) == 0b10) {
+                }
+            }
+        }
+
+        return dst_ptr & -4ull;
+    }
+    return addr;
+}
+
 static GC_Ref visit_ref(GC_Ref old, GC_Ref exp) {
-    GC_Ref addr = old >> 4ull;
+    GC_Ref addr = remap_ptr(old >> 4ull);
 
     uint64_t space    = (old >> 2) & 3;
     uint64_t expected = ~(exp >> (space*4)) & 0xF;
@@ -462,26 +493,29 @@ static int gc_main(void* arg) {
         ////////////////////////////////
         // find free space
         nl_table_clear(&fwd_table);
+
+        GC_Page* to_page = alloc_page();
         nl_hashset_for(e, &gc_all_pages) {
             GC_Page* page = *e;
-
             GC_Object* obj   = (GC_Object*) page->data;
             GC_Object* limit = (GC_Object*) (page->data + page->used);
 
-            size_t live = 0;
-            while (obj != limit) {
-                bool obj_live = heap_bitmap_test(&mark_bitmap, (uintptr_t) obj);
-                if (obj_live) {
+            // move objects into the to_page
+            float live_space = ((float) page->live / (float) page->used);
+            if (live_space < 0.5f) {
+                printf("[GC] COMPACT PAGE %p (%u / %u, %.1f%% live)\n", page, page->live, page->used, live_space * 100.0f);
 
+                size_t live = 0;
+                while (obj != limit) {
+                    bool obj_live = heap_bitmap_test(&mark_bitmap, (uintptr_t) obj);
+                    if (obj_live) {
+                        // alloc to_page
+                        GC_Object* dst_obj = (GC_Object*) &to_page->data[to_page->used];
+                        printf("  %p -> %p\n", obj, dst_obj);
+                        nl_table_put(&fwd_table, obj, dst_obj);
+                    }
+                    obj += obj->size / sizeof(GC_Object);
                 }
-                obj += obj->size / sizeof(GC_Object);
-            }
-
-            float frag = 1.0f - ((float) page->live / (float) page->used);
-            printf("[GC] PAGE %p (frag=%.1f%%)\n", page, frag * 100.0f);
-
-            if (frag > 0.2f) {
-                // compact page
             }
         }
 
@@ -492,12 +526,12 @@ static int gc_main(void* arg) {
 
         // before the relocation can actually happen, we need to
         // make sure all threads acknowledge the NMT flip... they'll
-        // LVB storm up for a bit but we'll tank
+        // LVB storm up for a bit but we'll tank it
         gc_mid_reloc = 1;
         gc_cross_checkpoint(false);
         gc_mid_reloc = 0;
 
-        // sleep 500ms
-        thrd_sleep(&(struct timespec){ .tv_nsec = 500000000 }, NULL);
+        // sleep 100ms
+        thrd_sleep(&(struct timespec){ .tv_nsec = 100000000 }, NULL);
     }
 }
