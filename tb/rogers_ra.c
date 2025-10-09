@@ -914,18 +914,21 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                             }
 
                             if (cfg_flags(n) & NODE_SAFEPOINT) {
-                                printf("# ");
-                                tb_print_dumb_node(NULL, n);
-                                printf("\n  Live:\n");
+                                TB_Safepoint* sfpt = tb_arena_alloc(ctx->emit.arena, sizeof(TB_Safepoint) + aarray_length(stack)*sizeof(int32_t));
+                                sfpt->func = ctx->f;
+                                sfpt->node = n;
+                                sfpt->count = aarray_length(stack);
 
                                 aarray_for(k, stack) {
                                     TB_ASSERT(ctx->vreg_map[stack[k]] > 0);
                                     VReg* v = &ctx->vregs[ctx->vreg_map[stack[k]]];
-
-                                    printf("  ");
-                                    tb_print_dumb_node(NULL, ra.gvn2node[stack[k]]);
-                                    printf("\n");
+                                    int ref_type = ra.gvn2node[stack[k]]->dt.elem_or_addrspace;
+                                    sfpt->refs[k] = (v->class << 24u) | (v->assigned << 8u) | ref_type;
                                 }
+
+                                TB_NodeSafepoint* n_sfpt = TB_NODE_GET_EXTRA(n);
+                                sfpt->userdata = n_sfpt->userdata;
+                                n_sfpt->sfpt = sfpt;
                             }
 
                             // start intervals

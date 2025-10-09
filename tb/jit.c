@@ -456,6 +456,13 @@ static const uint8_t tb_jit__trampoline[] = {
 
 size_t tb_jit_thread_userdata(void) { return offsetof(TB_Stacklet, user_data); }
 
+TB_Safepoint* tb_jit_get_safepoint(TB_JIT* jit, void* pc) {
+    mtx_lock(&jit->lock);
+    TB_Safepoint* sp = nl_table_get(&jit->safepoints, pc);
+    mtx_unlock(&jit->lock);
+    return sp;
+}
+
 #ifdef _WIN32
 static _Thread_local TB_Stacklet* active_stack;
 static LONG except_handler(EXCEPTION_POINTERS* e) {
@@ -488,7 +495,11 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
 #endif
 
 TB_Stacklet* tb_jit_thread_create(TB_JIT* jit, size_t ud_size, size_t limit) {
-    TB_Stacklet* stack = tb_platform_valloc(limit);
+    TB_Stacklet* stack = tb_platform_valloc(limit*2);
+
+    uintptr_t addr = (uintptr_t) stack;
+    stack = (TB_Stacklet*) ((addr + limit - 1) & -limit);
+
     stack->ud_size = ud_size;
     stack->limit = limit;
     stack->jit = jit;

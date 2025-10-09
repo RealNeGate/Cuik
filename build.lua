@@ -264,12 +264,15 @@ rule("cc", {
     command = cc.." $in $cflags -MD -MF $out.d -c -o $out",
     description = "CC $out"
 })
+rule("as", {
+    command = "nasm $in -f win64 -o $out",
+    description = "ASM $out"
+})
 rule("link", {
     command = ld.." $in $ldflags$out",
     description = "LINK $out"
 })
 rule("lib", {
-    depfile = "$out.d",
     command = ar.." -rcs $out $in",
     description = "LIB $out"
 })
@@ -341,8 +344,10 @@ for i, f in ipairs(src) do
     objs[#objs + 1] = out
 end
 
-local obj_names = table.concat(objs, " ")
+ninja:write("build bin/objs/checkpoint.o: as cuik_go/checkpoint.s\n")
+objs[#objs + 1] = "bin/objs/checkpoint.o"
 
+local obj_names = table.concat(objs, " ")
 local exe_name = "cuik"
 if not added["cuik_c"] then exe_name = "tb" end
 
