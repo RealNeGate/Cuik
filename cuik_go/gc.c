@@ -229,7 +229,8 @@ typedef struct {
 
 typedef struct GC_Page {
     struct GC_Page* next;
-    uint32_t live, used;
+    _Atomic(uint32_t) live;
+    uint32_t used;
 
     // Acceleration structure for finding
     // allocations from interior ptrs.
@@ -247,6 +248,32 @@ static NL_HashSet gc_all_pages;
 
 // TLAB (thread-local allocation buffer)
 static thread_local GC_Page* gc_tlab;
+static void* gc_rawptr(GC_Ref ref) {
+    return (void*) (ref >> 4ull);
+}
+
+static GC_Object* gc_find_obj(uintptr_t addr) {
+    GC_Page* page = (GC_Page*) (addr & -GC_PAGE_SIZE);
+    size_t start = ((char*)addr - page->data) / 8;
+
+    // skip backwards until we find the next word with bits
+    size_t i = start/64;
+    while (i && page->alloc_bits[i] == 0) {
+        i -= 1;
+    }
+
+    uint64_t word = page->alloc_bits[i];
+    if (i == start/64) {
+        // mask bits above the mid point
+        word &= UINT64_MAX >> (64 - (start % 64));
+    }
+    TB_ASSERT(word);
+
+    size_t offset = __builtin_clzll(word) ^ 63;
+    return (GC_Object*) &page->data[i*512 + offset*8];
+}
+
+static GC_Marklist marklist_n;
 static GC_Ref gc_alloc(size_t size, uint32_t tag) {
     size += sizeof(GC_Object);
     // should be aligned to 8B by default
@@ -276,34 +303,12 @@ static GC_Ref gc_alloc(size_t size, uint32_t tag) {
     obj->tag  = tag;
     obj->size = size;
 
+    // objects begin life marked
+    heap_bitmap_set(&mark_bitmap, (uintptr_t) obj);
+
     GC_Ref ref = (((GC_Ref) obj->data) << 4ull) | (GC_SPACE_YOUNG<<2ull) | nmt;
     printf("[GC] Alloc object: %016"PRIXPTR"\n", ref);
     return ref;
-}
-
-static void* gc_rawptr(GC_Ref ref) {
-    return (void*) (ref >> 4ull);
-}
-
-static GC_Object* gc_find_obj(uintptr_t addr) {
-    GC_Page* page = (GC_Page*) (addr & -GC_PAGE_SIZE);
-    size_t start = ((char*)addr - page->data) / 8;
-
-    // skip backwards until we find the next word with bits
-    size_t i = start/64;
-    while (i && page->alloc_bits[i] == 0) {
-        i -= 1;
-    }
-
-    uint64_t word = page->alloc_bits[i];
-    if (i == start/64) {
-        // mask bits above the mid point
-        word &= UINT64_MAX >> (64 - (start % 64));
-    }
-    TB_ASSERT(word);
-
-    size_t offset = __builtin_clzll(word) ^ 63;
-    return (GC_Object*) &page->data[i*512 + offset*8];
 }
 
 ////////////////////////////////
@@ -313,33 +318,44 @@ static uintptr_t bit_test(uintptr_t x, uintptr_t y) {
     return (x >> y) & 1;
 }
 
-static GC_Marklist marklist_n;
-GC_Ref c_lvb(_Atomic(GC_Ref)* ref) {
-    GC_Ref old = *ref;
+static void gc_mark_obj(GC_Ref addr) {
+    GC_Object* base = gc_find_obj(addr);
+    if (heap_bitmap_set(&mark_bitmap, (uintptr_t) base)) {
+        printf("[GC]   mark obj: %p\n", base);
 
-    GC_Ref new = old;
+        GC_Page* page = (GC_Page*) (addr & -GC_PAGE_SIZE);
+        page->live += base->size;
+        gc_marklist_push(&marklist_n, base);
+    }
+}
+
+static GC_Ref visit_ref(GC_Ref old, GC_Ref exp) {
     GC_Ref addr = old >> 4ull;
 
-    GC_Ref exp = *expected_nmt;
-    if (bit_test(exp, old & 63)) {
-        uint64_t space    = (old >> 2) & 3;
-        uint64_t expected = __builtin_ctzll(~(exp >> (space*4)) & 0xF);
+    uint64_t space    = (old >> 2) & 3;
+    uint64_t expected = ~(exp >> (space*4)) & 0xF;
+    uint64_t trigger  = __builtin_ffsll(expected) - 1;
+    // FLIP NMT+PROT
+    GC_Ref new = (old & -4ull) | trigger;
+    // printf("[GC]   LVB() %"PRIXPTR" => %"PRIXPTR" (%#"PRIx64")\n", old, new, trigger);
 
-        // FLIP NMT+PROT
-        new ^= expected;
-
-        // mark object, if it's not marked yet push to marklist
-        if (heap_bitmap_set(&mark_bitmap, addr)) {
-            void* base = gc_find_obj(addr);
-            printf("[GC]   mark obj: %p\n", base);
-
-            gc_marklist_push(&marklist_n, base);
-        }
-    }
-
-    // self-heal, might fail due to a fellow writer
-    atomic_compare_exchange_strong(ref, &old, new);
+    // mark object, if it's not marked yet push to marklist
+    gc_mark_obj(addr);
     return new;
+}
+
+GC_Ref c_lvb(_Atomic(GC_Ref)* ref) {
+    GC_Ref old = *ref;
+    GC_Ref exp = *expected_nmt;
+
+    // Double-check that things didn't stop being a trap
+    if (bit_test(exp, old & 63)) {
+        GC_Ref new = visit_ref(old, exp);
+        // self-heal, might fail due to a fellow writer
+        atomic_compare_exchange_strong(ref, &old, new);
+        return new;
+    }
+    return old;
 }
 
 static GC_Marklist marklist_gc;
@@ -366,9 +382,7 @@ static void gc_cross_checkpoint(bool mark_roots) {
 // traps if bits don't match pattern, NULL space never traps
 static void set_expected_nmt(int space, int prot, int nmt) {
     uint64_t pattern  = (space << 2) | (prot << 1) | nmt;
-    uint64_t expected = ~((1ull << pattern) | 0b1111);
-
-    // we're matching 4bits, that means there
+    uint64_t expected = ~((1ull << pattern) | 0b1111) & 0xFFFF;
     atomic_store_explicit(expected_nmt, expected * 0x0001000100010001, memory_order_release);
 }
 
@@ -391,7 +405,7 @@ static int gc_main(void* arg) {
             // mutator threads which leads to some NMT "throbbing"
             nmt_target = !nmt_target;
             set_expected_nmt(GC_SPACE_YOUNG, prot_expected, nmt_target);
-            printf("\n[GC] Flip NMT! %d\n", nmt_target);
+            printf("\n\n[GC] Phase shift: PROT=%d, NMT=%d\n", prot_expected, nmt_target);
 
             bool progress;
             do {
@@ -421,7 +435,7 @@ static int gc_main(void* arg) {
 
                     // walk whatever is on our marklist
                     while (obj = gc_marklist_pop(&marklist_gc), obj != NULL) {
-                        printf("[GC] mark %p\n", obj);
+                        // printf("[GC] mark %p\n", obj);
                     }
 
                     if (added) {
@@ -430,7 +444,6 @@ static int gc_main(void* arg) {
                 } while (added);
 
                 mark_time = cuik_time_in_nanos() - mark_time;
-                printf("[GC] marked all!\n");
             } while (progress);
 
             // Acknowledge any fresh pages, we do this late to avoid accidentally missing
@@ -440,6 +453,8 @@ static int gc_main(void* arg) {
             for (; list; list = list->next) {
                 nl_hashset_put(&gc_all_pages, list);
             }
+
+            printf("[GC] marked all!\n");
         }
 
         ////////////////////////////////
@@ -449,18 +464,30 @@ static int gc_main(void* arg) {
         nl_table_clear(&fwd_table);
         nl_hashset_for(e, &gc_all_pages) {
             GC_Page* page = *e;
-            printf("PAGE: %p\n", page);
 
             GC_Object* obj   = (GC_Object*) page->data;
             GC_Object* limit = (GC_Object*) (page->data + page->used);
+
+            size_t live = 0;
             while (obj != limit) {
-                printf("  OBJ: %p (%s)\n", obj, heap_bitmap_test(&mark_bitmap, (uintptr_t) obj) ? "LIVE" : "DEAD");
+                bool obj_live = heap_bitmap_test(&mark_bitmap, (uintptr_t) obj);
+                if (obj_live) {
+
+                }
                 obj += obj->size / sizeof(GC_Object);
+            }
+
+            float frag = 1.0f - ((float) page->live / (float) page->used);
+            printf("[GC] PAGE %p (frag=%.1f%%)\n", page, frag * 100.0f);
+
+            if (frag > 0.2f) {
+                // compact page
             }
         }
 
         // Trap on wrong-PROT
         prot_expected = !prot_expected;
+        printf("[GC] Phase shift: PROT=%d, NMT=%d\n", prot_expected, nmt_target);
         set_expected_nmt(GC_SPACE_YOUNG, prot_expected, nmt_target);
 
         // before the relocation can actually happen, we need to

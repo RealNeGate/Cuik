@@ -52,7 +52,7 @@ lvb_handler:
   pop rdx
   ret
 .early_out:
-  mov rax, rcx
+  mov rax, [rcx]
   ret
 
 checkpoint_handler:
@@ -100,5 +100,6 @@ checkpoint_handler:
   mov r14, [rcx + 112]
   mov r15, [rcx + 120]
   fxrstor  [rcx + 128]
-  pop rcx
+  mov rcx, [rcx + 8]
+  add rsp, 8
   ret

@@ -11,6 +11,7 @@ Sched_G* sched_g_get(TB_Stacklet* stacklet) {
 TB_Stacklet* go_spawn(TB_JIT* jit) {
     TB_Stacklet* stack = tb_jit_thread_create(jit, sizeof(Sched_G), 16384);
     Sched_G* g = sched_g_get(stack);
+    g->state.cookie = 0xBAADF00D;
 
     // attach to scheduler
     g->next = first_task;
@@ -21,19 +22,19 @@ TB_Stacklet* go_spawn(TB_JIT* jit) {
 static void (*go_stuff)(Slice*, Slice*);
 
 static void foobar(void) {
-    Slice a = { gc_alloc(1024, 0), 1024/8, 1024/8 };
-    Slice b = { gc_alloc(1024, 0), 1024/8, 1024/8 };
-
-    // initialize data
-    double* aa = gc_rawptr(a.base);
-    double* bb = gc_rawptr(b.base);
-    FOR_N(i, 0, 1024/8) {
-        aa[i] = i*0.25;
-        bb[i] = i*0.5 - 6.0;
-        // printf("[%zu] %f, %f\n", i, aa[i], bb[i]);
-    }
-
     for (;;) {
+        Slice a = { gc_alloc(1024, 0), 1024/8, 1024/8 };
+        Slice b = { gc_alloc(1024, 0), 1024/8, 1024/8 };
+
+        // initialize data
+        double* aa = gc_rawptr(a.base);
+        double* bb = gc_rawptr(b.base);
+        FOR_N(i, 0, 1024/8) {
+            aa[i] = i*0.25;
+            bb[i] = i*0.5 - 6.0;
+            // printf("[%zu] %f, %f\n", i, aa[i], bb[i]);
+        }
+
         // printf("go_stuff(%p, %p)\n", gc_rawptr(a.base), gc_rawptr(b.base));
         go_stuff(&a, &b);
     }
@@ -59,17 +60,48 @@ TB_Stacklet* c_checkpoint(TB_Stacklet* stack) {
     Sched_G* g = sched_g_get(stack);
     g->pause = 0;
 
+    GC_Ref exp = *expected_nmt;
     void** rsp = (void**) g->state.gprs[4];
     void* rpc  = rsp[1];
+
+    // fixup because we used it for scratch and saved it elsewhere
+    g->state.gprs[1] = (uint64_t) rsp[0];
 
     TB_Safepoint* sfpt;
     while (sfpt = tb_jit_get_safepoint(jit, rpc), sfpt) {
         TB_Function* f = sfpt->func;
 
-        printf("CHECKPOINT: rsp = %p, [rsp+8] = %p\n", rsp, rpc);
-        printf("  %s+%#x\n", ((TB_Symbol*) f)->name, sfpt->ip);
+        // printf("CHECKPOINT: rsp = %p, [rsp+8] = %p\n", rsp, rpc);
+        // printf("  %s+%#x\n", ((TB_Symbol*) f)->name, sfpt->ip);
         FOR_N(i, 0, sfpt->count) {
-            printf("    R%-2u : %4u\n", (sfpt->refs[i] >> 8) & 0xFF, sfpt->refs[i] & 0xFF);
+            if ((sfpt->refs[i] >> 24u) != 1) {
+                continue;
+            }
+
+            uint32_t reg_num  = (sfpt->refs[i] >> 8) & 0xFFFF;
+            uint32_t ref_type = sfpt->refs[i] & 0xFF;
+            // printf("    R%-2u : %4u\n", reg_num, ref_type);
+
+            if (ref_type == 1) { // loaded accessible pointer, might be forwarded
+                GC_Ref addr = g->state.gprs[reg_num];
+                // printf("[GC]   R(1) %"PRIXPTR"\n", addr);
+
+                // Remap/Mark
+                gc_mark_obj(addr);
+            } else if (ref_type == 2) { // unloaded ref, run LVB
+                _Atomic(GC_Ref)* ref = (_Atomic(GC_Ref)*) g->state.gprs[reg_num];
+
+                // Double-check that things didn't stop being a trap
+                GC_Ref old = *ref;
+                // printf("[GC]   R(2) %"PRIXPTR"\n", old);
+                if (bit_test(exp, old & 63)) {
+                    GC_Ref new = visit_ref(old, exp);
+                    // self-heal, might fail due to a fellow writer
+                    atomic_compare_exchange_strong(ref, &old, new);
+                }
+            } else if (ref_type == 3) {
+                g->state.gprs[reg_num] = exp;
+            }
         }
 
         // pop frame

@@ -5,6 +5,7 @@
 typedef struct {
     uint64_t gprs[16];
     uint8_t fxsave[512];
+    uint64_t cookie;
 } CPUState;
 
 typedef struct Sched_G {
