@@ -3,6 +3,7 @@
 #include "codegen.h"
 #include <limits.h>
 #include <float.h>
+#include <stdlib.h>
 
 #if USE_INTRIN && CUIK__IS_X64
 #include <x86intrin.h>
@@ -515,8 +516,9 @@ static void mark_node_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, uint32_t failed
     }
 }
 
-static int compare_split(void* ctx, const void* a, const void* b) {
-    VReg* vregs = ctx;
+static thread_local VReg* compare_split__vregs;
+static int compare_split(const void* a, const void* b) {
+    VReg* vregs = compare_split__vregs;
     VReg* aa = &vregs[((const SplitDecision*) a)->target];
     VReg* bb = &vregs[((const SplitDecision*) b)->target];
 
@@ -993,7 +995,8 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
             // reset assignment, but don't try to split them this round
             if (num_spills > 64) {
-                qsort_s(ra.splits, num_spills, sizeof(SplitDecision), compare_split, ctx->vregs);
+				compare_split__vregs = ctx->vregs;
+                qsort(ra.splits, num_spills, sizeof(SplitDecision), compare_split);
 
                 for (size_t i = 64; i < num_spills; i++) {
                     SplitDecision split = ra.splits[i];
