@@ -280,13 +280,9 @@ rule("run", {
 
 -- TB's DSL
 if added["tb"] then
-    if in_use_archs["x64"] then
-        command("tb/x64/x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine tb/x64/x64_gen.h", "tb/x64/x64.machine")
-    end
-
-    if in_use_archs["a64"] then
-        command("tb/aarch64/a64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/aarch64/a64.machine tb/aarch64/a64_gen.h", "tb/aarch64/a64.machine")
-    end
+    -- need to generate even if arch not added
+    command("tb/x64/x64_gen.h include/tb_x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine tb/x64/x64_gen.h include/tb_x64_gen.h", "tb/x64/x64.machine")
+    -- TODO: reenable; command("tb/aarch64/a64_gen.h include/tb_a64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/aarch64/a64.machine tb/aarch64/a64_gen.h include/tb_a64_gen.h", "tb/aarch64/a64.machine")
 end
 
 -- New lexgen
@@ -334,8 +330,21 @@ local objs = {}
 for i, f in ipairs(src) do
     local out = "bin/objs/"..filename(f)..".o"
     ninja:write("build "..out..": cc "..f)
+    local extra = {}
     if added["cuik_pp"] then
-        ninja:write(" | cuik_pp/keywords.h cuik_pp/dfa.h")
+        extra[#extra+1] = "cuik_pp/keywords.h"
+        extra[#extra+1] = "cuik_pp/dfa.h"
+    end
+    if added["tb"] then
+        extra[#extra+1] = "include/tb_x64_gen.h"
+        -- extra[#extra+1] = "include/tb_a64_gen.h"
+    end
+    if #extra > 0 then
+        ninja:write(" | ")
+        for _, x in ipairs(extra) do
+            ninja:write(" ")
+            ninja:write(x)
+        end
     end
     ninja:write("\n")
     objs[#objs + 1] = out

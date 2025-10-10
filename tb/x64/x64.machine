@@ -1,5 +1,52 @@
 (namespace x86)
 
+(arch_features
+    // (_parse-prefix tb_rv_parse_feature_prefix)
+    //                ^^^^^^
+    //             char* example(char* str, TB_RV_FeatureSet* feats) {
+    //               if (*str == 'i' && ++str) TB_RV_FeatureSet__set(feats, TB_RV_FEATURE_I);
+    //               if (*str == 'm' && ++str) TB_RV_FeatureSet__set(feats, TB_RV_FEATURE_M);
+    //               if (*str == 'a' && ++str) TB_RV_FeatureSet__set(feats, TB_RV_FEATURE_A);
+    //               if (*str == 'c' && ++str) TB_RV_FeatureSet__set(feats, TB_RV_FEATURE_C);
+    //               // ...
+    //               return str;
+    //             }  
+
+	// riscv would use (_format "_")
+	// x86 can't do that, because the profiles contain underscores
+	(_format "+")
+
+    // (a)            feature a
+    // (a => x y z)   feature a, which implies x, y, z
+
+    (sse2)
+    (sse3 => sse2)
+    (sse41 => sse3)
+    (sse42 => sse3)
+
+    (popcnt)
+    (lzcnt)
+
+    (clmul)
+    (f16c)
+
+    (bmi1)
+    (bmi2)
+
+    (avx)
+    (avx2 => avx)
+
+    // profiles
+    ("x86_64-v1" =>
+        sse2)
+    ("x86_64-v2" => "x86_64-v1"
+        sse3 sse41 sse42
+        popcnt)
+    ("x86_64-v3" => "x86_64-v2"
+        avx avx2 bmi1 bmi2 lzcnt)
+    ("x86_64-v4" => "x86_64-v3")
+)
+
 // *******************************
 // registers
 // *******************************
@@ -168,8 +215,8 @@ pat (TB_VA_START ...) => "isel_va_start(ctx, f, n)"
 // *******************************
 #define BMI2_OP(op_name, mnemonic) \
 (node mnemonic X86MemOp) \
-pat (op_name dt=$dt ___ $lhs $rhs) where "ctx->features.x64 & TB_FEATURE_X64_BMI2" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
-pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: MEMORY ...)) $rhs) where "ctx->features.x64 & TB_FEATURE_X64_BMI2" => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD) \
+pat (op_name dt=$dt ___ $lhs $rhs) where "ctx->features.x86.bmi2" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
+pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: MEMORY ...)) $rhs) where "ctx->features.x86.bmi2" => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD) \
 
 BMI2_OP(TB_SHL, shlx)
 BMI2_OP(TB_SHR, shrx)
