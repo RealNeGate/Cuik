@@ -36,8 +36,10 @@ static void foobar(void) {
         }
 
         // printf("go_stuff(%p, %p)\n", gc_rawptr(a.base), gc_rawptr(b.base));
-        go_stuff(&a, &b);
-        thrd_sleep(&(struct timespec){ .tv_nsec = 200000000 }, NULL);
+        FOR_N(i, 0, 10) {
+            go_stuff(&a, &b);
+            thrd_sleep(&(struct timespec){ .tv_nsec = 100000000 }, NULL);
+        }
     }
 }
 
@@ -61,49 +63,56 @@ TB_Stacklet* c_checkpoint(TB_Stacklet* stack) {
     Sched_G* g = sched_g_get(stack);
     g->pause = 0;
 
-    GC_Ref exp = *expected_nmt;
-    void** rsp = (void**) g->state.gprs[4];
-    void* rpc  = rsp[1];
-
-    // fixup because we used it for scratch and saved it elsewhere
-    g->state.gprs[1] = (uint64_t) rsp[0];
-
-    TB_Safepoint* sfpt;
-    while (sfpt = tb_jit_get_safepoint(jit, rpc), sfpt) {
-        TB_Function* f = sfpt->func;
-
-        // printf("CHECKPOINT: rsp = %p, [rsp+8] = %p\n", rsp, rpc);
-        // printf("  %s+%#x\n", ((TB_Symbol*) f)->name, sfpt->ip);
-        FOR_N(i, 0, sfpt->count) {
-            if ((sfpt->refs[i] >> 24u) != 1) {
-                continue;
-            }
-
-            uint32_t reg_num  = (sfpt->refs[i] >> 8) & 0xFFFF;
-            uint32_t ref_type = sfpt->refs[i] & 0xFF;
-            // printf("    R%-2u : %4u\n", reg_num, ref_type);
-
-            if (ref_type == 1) {
-                // loaded accessible pointer, might be forwarded
-                GC_Ref addr = remap_ptr(g->state.gprs[reg_num]);
-                gc_mark_obj(addr);
-            } else if (ref_type == 2) {
-                // unloaded ref, run LVB
-                _Atomic(GC_Ref)* ref = (_Atomic(GC_Ref)*) g->state.gprs[reg_num];
-                GC_Ref old = *ref;
-                if (bit_test(exp, old & 63)) {
-                    GC_Ref new = visit_ref(old, exp);
-                    // self-heal, might fail due to a fellow writer
-                    atomic_compare_exchange_strong(ref, &old, new);
-                }
-            } else if (ref_type == 3) {
-                g->state.gprs[reg_num] = exp;
-            }
+    if (gc_mid_reloc) {
+        // Reset TLAB
+        if (gc_tlab && gc_tlab->from_space) {
+            gc_tlab = NULL;
         }
+    } else {
+        GC_Ref exp = *expected_nmt;
+        void** rsp = (void**) g->state.gprs[4];
+        void* rpc  = rsp[1];
 
-        // pop frame
-        rsp += sfpt->frame_size / 8;
-        rpc = rsp[0];
+        // fixup because we used it for scratch and saved it elsewhere
+        g->state.gprs[1] = (uint64_t) rsp[0];
+
+        TB_Safepoint* sfpt;
+        while (sfpt = tb_jit_get_safepoint(jit, rpc), sfpt) {
+            TB_Function* f = sfpt->func;
+
+            // printf("CHECKPOINT: rsp = %p, [rsp+8] = %p\n", rsp, rpc);
+            // printf("  %s+%#x\n", ((TB_Symbol*) f)->name, sfpt->ip);
+            FOR_N(i, 0, sfpt->count) {
+                if ((sfpt->refs[i] >> 24u) != 1) {
+                    continue;
+                }
+
+                uint32_t reg_num  = (sfpt->refs[i] >> 8) & 0xFFFF;
+                uint32_t ref_type = sfpt->refs[i] & 0xFF;
+                // printf("    R%-2u : %4u\n", reg_num, ref_type);
+
+                if (ref_type == 1) {
+                    // loaded accessible pointer, might be forwarded
+                    GC_Ref addr = remap_ptr(g->state.gprs[reg_num]);
+                    gc_mark_obj(addr);
+                } else if (ref_type == 2) {
+                    // unloaded ref, run LVB
+                    _Atomic(GC_Ref)* ref = (_Atomic(GC_Ref)*) g->state.gprs[reg_num];
+                    GC_Ref old = *ref;
+                    if (bit_test(exp, old & 63)) {
+                        GC_Ref new = visit_ref(old, exp);
+                        // self-heal, might fail due to a fellow writer
+                        atomic_compare_exchange_strong(ref, &old, new);
+                    }
+                } else if (ref_type == 3) {
+                    g->state.gprs[reg_num] = exp;
+                }
+            }
+
+            // pop frame
+            rsp += sfpt->frame_size / 8;
+            rpc = rsp[0];
+        }
     }
 
     // notify that we've done our root scanning

@@ -14,7 +14,7 @@
 #include <stdint.h>
 #include <time.h>
 
-#define TB_ENABLE_LOG 0
+#define TB_ENABLE_LOG 1
 #define LOG_VERSION "0.1.0"
 
 typedef struct {
@@ -51,6 +51,7 @@ enum { LOG_TRACE, LOG_DEBUG, LOG_INFO, LOG_WARN, LOG_ERROR, LOG_FATAL };
 #endif
 
 const char* log_level_string(int level);
+void log_flush(void);
 void log_set_level(int level);
 void log_set_quiet(bool enable);
 int log_add_callback(log_LogFn fn, void *udata, int level);

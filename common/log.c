@@ -19,15 +19,11 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  *
- * Modified by NeGate to enforce C11 mutexes
+ * Modified by NeGate for lovely reasons
  */
-
 #include "log.h"
-#include <inttypes.h>
-
-#if CUIK_ALLOW_THREADS
 #include <threads.h>
-#endif
+#include <inttypes.h>
 
 #ifdef _WIN32
 #ifdef _POSIX_C_SOURCE
@@ -48,18 +44,29 @@ typedef struct {
 } Callback;
 
 static struct {
-    #if CUIK_ALLOW_THREADS
-    mtx_t lock;
     once_flag init;
-    #else
-    bool init;
-    #endif
-
-    void *udata;
     int level;
     bool quiet;
     Callback callbacks[MAX_CALLBACKS];
 } L;
+
+// https://synergy.cs.vt.edu/pubs/papers/scogland-queues-icpe15.pdf
+enum {
+    LOG_BUFFER_CAPACITY = 2048,
+
+    QUEUE_SIZE = 64,
+    MAX_ID = UINT32_MAX / (QUEUE_SIZE*2),
+};
+
+static struct {
+    _Atomic uint32_t head, tail;
+    _Atomic Futex ids[QUEUE_SIZE];
+    struct {
+        void* base;
+        size_t len;
+        Futex* status;
+    } items[QUEUE_SIZE];
+} queue;
 
 static const char *level_strings[] = {
     "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
@@ -73,35 +80,22 @@ static const char *level_colors[] = {
 
 static uint64_t log_time_start;
 
+// Each thread has a buffer which is split into two halves (double-buffering)
+static thread_local bool log_buffer_to_write;
+static thread_local int log_buffer_used;
+static thread_local char* log_buffer;
+
+static thread_local Futex log_buffer_writer_status;
+
+// Auxillary thread just does writing so that our threads aren't disturbed
+static thrd_t aux_thread;
+
+static void log_enqueue(char* dst);
+
 static uint64_t get_nanos(void) {
     struct timespec ts;
     timespec_get(&ts, TIME_UTC);
     return ((uint64_t)ts.tv_sec * UINT64_C(1000000000)) + ts.tv_nsec;
-}
-
-static void stdout_callback(log_Event *ev) {
-    #ifdef LOG_USE_COLOR
-    fprintf(
-        ev->udata, "Thread-%d %.4f s %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
-        ev->tid, ev->time / 1000000.0, level_colors[ev->level], level_strings[ev->level],
-        ev->file, ev->line);
-    #else
-    fprintf(
-        ev->udata, "Thread-%d %.4f s %-5s %s:%d: ",
-        ev->tid, ev->time / 1000000.0, level_strings[ev->level], ev->file, ev->line);
-    #endif
-    vfprintf(ev->udata, ev->fmt, ev->ap);
-    fprintf(ev->udata, "\n");
-    fflush(ev->udata);
-}
-
-static void file_callback(log_Event *ev) {
-    fprintf(
-        ev->udata, "Thread-%d %.4f s %-5s %s:%d: ",
-        ev->tid, ev->time / 1000000.0, level_strings[ev->level], ev->file, ev->line);
-    vfprintf(ev->udata, ev->fmt, ev->ap);
-    fprintf(ev->udata, "\n");
-    fflush(ev->udata);
 }
 
 const char* log_level_string(int level) {
@@ -116,6 +110,72 @@ void log_set_quiet(bool enable) {
     L.quiet = enable;
 }
 
+static _Atomic bool log_running = true;
+static Futex log_done = 0;
+static int aux_work(void* arg) {
+    while (log_running) {
+        uint32_t ticket = atomic_fetch_add(&queue.head, 1);
+        uint32_t target = ticket % QUEUE_SIZE;
+        uint32_t id = ((ticket / QUEUE_SIZE) * 2) + 1;
+        // wait for slot to be ready
+        int64_t old;
+        while (old = queue.ids[target], old != id) {
+            // wait for changes
+            futex_wait(&queue.ids[target], old);
+            // did log_thread_flush cancel waiting? ok let's just dip out then
+            if (!log_running) {
+                goto dip;
+            }
+        }
+        // read the slice we're gonna write out (we can write after we've freed up the queue slot)
+        char* base    = queue.items[target].base;
+        size_t len    = queue.items[target].len;
+        Futex* status = queue.items[target].status;
+        // slot's empty again
+        atomic_store(&queue.ids[target], (id+1) % MAX_ID);
+        futex_broadcast(&queue.ids[target]);
+        assert(base[len-1] == '\n');
+        fwrite(base, len, 1, stdout);
+        // notify that we're done with writing (so that the thread can reuse it)
+        *status = 0;
+        futex_signal(status);
+    }
+
+    dip:
+    log_done = 1;
+    futex_signal(&log_done);
+
+    return 0;
+}
+
+static void log_thread_flush(void* ptr) {
+    // wait for all the pending aux thread writes, then pop off
+    if (log_done == 0) {
+        if (atomic_compare_exchange_strong(&log_running, &(bool){ true }, false)) {
+            // now we forcibly wake up every id
+            FOR_N(i, 0, QUEUE_SIZE) {
+                queue.ids[i] = 0;
+                futex_broadcast(&queue.ids[i]);
+            }
+        }
+
+        futex_wait(&log_done, 0);
+    }
+
+    char* dst = &log_buffer[log_buffer_to_write ? LOG_BUFFER_CAPACITY : 0];
+    fwrite(dst, log_buffer_used, 1, stdout);
+}
+
+static tss_t log_exit_key;
+static void log_init(void) {
+    log_time_start = get_nanos() / 1000;
+    thrd_create(&aux_thread, aux_work, NULL);
+
+    if (tss_create(&log_exit_key, log_thread_flush) != thrd_success) {
+        abort();
+    }
+}
+
 int log_add_callback(log_LogFn fn, void *udata, int level) {
     for (int i = 0; i < MAX_CALLBACKS; i++) {
         if (!L.callbacks[i].fn) {
@@ -126,65 +186,87 @@ int log_add_callback(log_LogFn fn, void *udata, int level) {
     return -1;
 }
 
-int log_add_fp(FILE *fp, int level) {
-    return log_add_callback(file_callback, fp, level);
-}
-
-static void init_event(log_Event *ev, void *udata) {
-    if (!ev->time) {
-        ev->time = (get_nanos() / 1000) - log_time_start;
-    }
-    ev->udata = udata;
-}
-
-static void log_init(void) {
-    log_time_start = get_nanos() / 1000;
-    #if CUIK_ALLOW_THREADS
-    mtx_init(&L.lock, mtx_plain);
-    #endif
-}
-
 void log_log(int level, const char *file, int line, const char *fmt, ...) {
-    log_Event ev = {
-        .fmt   = fmt,
-        .file  = file,
-        .line  = line,
-        .level = level,
-        #if _WIN32
-        .tid = GetCurrentThreadId(),
-        #else
-        .tid = getpid(),
-        #endif
-    };
-
-    #if CUIK_ALLOW_THREADS
-    call_once(&L.init, log_init);
-    mtx_lock(&L.lock);
+    #if _WIN32
+    int tid = GetCurrentThreadId();
     #else
-    if (!L.init) {
-        L.init = true;
-        log_init();
-    }
+    int tid = getpid();
     #endif
 
-    if (!L.quiet && level >= L.level) {
-        init_event(&ev, stderr);
-        va_start(ev.ap, fmt);
-        stdout_callback(&ev);
-        va_end(ev.ap);
+    call_once(&L.init, log_init);
+
+    if (log_buffer == NULL) {
+        log_buffer = cuik__valloc(2 * LOG_BUFFER_CAPACITY);
+        tss_set(log_exit_key, log_buffer);
     }
 
-    for (int i = 0; i < MAX_CALLBACKS && L.callbacks[i].fn; i++) {
-        Callback *cb = &L.callbacks[i];
-        if (level >= cb->level) {
-            init_event(&ev, cb->udata);
-            va_start(ev.ap, fmt);
-            cb->fn(&ev);
-            va_end(ev.ap);
+    for (;;) {
+        uint64_t time = (get_nanos() / 1000) - log_time_start;
+        char* dst = &log_buffer[log_buffer_to_write ? LOG_BUFFER_CAPACITY : 0];
+
+        // begin writing to log buffer (if we can't complete the entire line we'll revert it).
+        // this way all log buffer writes contain only complete lines.
+        int used = log_buffer_used;
+        #ifdef LOG_USE_COLOR
+        int len = snprintf(
+            &dst[used], LOG_BUFFER_CAPACITY - used, "T%-5d %-10.4f %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
+            tid, time / 1000000.0, level_colors[level], level_strings[level], file, line
+        );
+        #else
+        int len = snprintf(
+            &dst[used], LOG_BUFFER_CAPACITY - used, "T%-5d %-10.4f %-5s %s:%d: ",
+            tid, time / 1000000.0, level_strings[level], file, line
+        );
+        #endif
+
+        if (len >= 0 && len < LOG_BUFFER_CAPACITY - used) {
+            used += len;
+
+            va_list ap;
+            va_start(ap, fmt);
+            len = vsnprintf(&dst[used], LOG_BUFFER_CAPACITY - used, fmt, ap);
+            va_end(ap);
+
+            if (len >= 0 && len+1 < LOG_BUFFER_CAPACITY - used) {
+                dst[used + len] = '\n';
+
+                // success log write, we're happy now
+                log_buffer_used = used + len + 1;
+                log_enqueue(dst);
+                return;
+            }
         }
-    }
 
-    #if CUIK_ALLOW_THREADS
-    mtx_unlock(&L.lock);
-    #endif
+        log_enqueue(dst);
+    }
+}
+
+void log_flush(void) {
+    char* dst = &log_buffer[log_buffer_to_write ? LOG_BUFFER_CAPACITY : 0];
+    log_enqueue(dst);
+}
+
+static void log_enqueue(char* dst) {
+    // we need this to be 0 for us to queue up more IO, that way we know that the chunk
+    // we flip to is ready for use.
+    futex_wait_eq(&log_buffer_writer_status, 0);
+    log_buffer_writer_status = 1;
+
+    // queue up this chunk
+    uint32_t ticket = atomic_fetch_add(&queue.tail, 1);
+    uint32_t target = ticket % QUEUE_SIZE;
+    uint32_t id = (ticket / QUEUE_SIZE) * 2;
+    // wait for slot to open up
+    futex_wait_eq(&queue.ids[target], id);
+    // pretty sure this doesn't need to be atomic, until "target"
+    // is changed these writes shouldn't need to be acknowledged.
+    queue.items[target].base   = dst;
+    queue.items[target].len    = log_buffer_used;
+    queue.items[target].status = &log_buffer_writer_status;
+    // writer thread can now see what we enqueued
+    atomic_store(&queue.ids[target], (id+1) % MAX_ID);
+    futex_broadcast(&queue.ids[target]);
+
+    log_buffer_used = 0;
+    log_buffer_to_write = !log_buffer_to_write;
 }
