@@ -245,3 +245,20 @@ function add_if_new(set, v)
     return #set
 end
 
+function shr1(x)
+    return math.floor(x / 2)
+end
+
+function xor8(a,b)
+    local out = 0
+    for i=0,7 do
+        local ab = math.fmod(a, 2) == 1
+        local bb = math.fmod(b, 2) == 1
+        local ob = (ab or bb) and not (ab and bb)
+        if ob then out = out + 2^i end
+        a = shr1(a)
+        b = shr1(b)
+    end
+    return out
+end
+

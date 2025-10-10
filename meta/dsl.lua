@@ -2,6 +2,8 @@ local inspect = require "meta/inspect"
 
 require "meta/prelude"
 
+local unpack = unpack or table.unpack
+
 local node_enum_types = {}
 do
     function magiclines(s)
@@ -46,6 +48,7 @@ local lex = lexer(source)
 --    print(source)
 
 local lines = {}
+local pub_lines = {}
 local reg_classes = {}
 
 local state_count = 1
@@ -72,6 +75,7 @@ end
 
 lines[#lines + 1] = "#include \"../emitter.h\""
 lines[#lines + 1] = "#include \"../tb_internal.h\""
+lines[#lines + 1] = "#include <strings.h>"
 lines[#lines + 1] = ""
 
 function decl_type(n)
@@ -158,6 +162,225 @@ while true do
 
             operand_map:put(mach_prefix.."MEMORY", mach_prefix.."MEMORY")
             operand_map:put(mach_prefix.."COND", mach_prefix.."COND")
+        elseif n[1] == "arch_features" then
+            local set_tyname = "TB_" .. mach_prefix:upper() .. "FeatureSet"
+            local enum_tyname = "TB_" .. mach_prefix:upper() .. "Feature"
+            local entnamepfx = "TB_" .. mach_prefix:upper() .. "FEATURE_"
+
+            local function mangle(x)
+                return x:gsub("[-]","_"):gsub("[.]","_")
+            end
+
+            local implies_map = {}
+            local pfx_parser
+            local tg_fmt
+            for i=2, #n do
+                local feat = n[i]
+
+                if feat[1] == "_format" then
+                    tg_fmt = feat[2]
+                    if #feat ~= 2 then
+                        print("wrong syntax for _prefix-parser")
+                        os.exit(1)
+                    end
+                    goto continue
+                end
+
+                if feat[1] == "_prefix-parser" then
+                    pfx_parser = feat[2]
+                    if #feat ~= 2 then
+                        print("wrong syntax for _prefix-parser")
+                        os.exit(1)
+                    end
+                    goto continue
+                end
+
+                local feat_name = feat[1]
+                if not feat_name then
+                    print(inspect(feat))
+                    print("wrong syntax for arch_features")
+                    os.exit(1)
+                end
+                if implies_map[feat_name] then
+                    print(string.format("arch feature '%s' has already been defined", feat_name))
+                    os.exit(1)
+                end
+                if feat[2] then
+                    if feat[2] == "=>" then
+                        implies_map[feat_name] = { unpack(feat, 3) }
+                    else
+                        print(inspect(feat))
+                        print("wrong syntax for arch_features")
+                        os.exit(1)
+                    end
+                else
+                    implies_map[feat_name] = {}
+                end
+            ::continue::
+            end
+
+            if not tg_fmt then
+                print("missing (arch_features (_format \"_\"))")
+                os.exit(1)
+            end
+
+            local function collect_implied_feats(feat_name, out)
+                out = out or {}
+
+                for _, x in ipairs(out) do
+                    if x == feat_name then
+                        return
+                    end
+                end 
+                out[#out + 1] = feat_name
+
+                local li = implies_map[feat_name]
+                if not li then
+                    print(string.format("implied arch feature '%s' not defined", feat_name))
+                    os.exit(1)
+                end
+                for _, other in ipairs(li) do
+                    collect_implied_feats(other, out)
+                end
+                return out
+            end
+
+            -- we will have more than 64 features so we can't use nice bit enums, instead we do this:
+
+            local sig
+
+            -- generate enum --
+            pub_lines[#pub_lines + 1] = "typedef enum {"
+            for feat, _ in pairs(implies_map) do
+                pub_lines[#pub_lines + 1] = "    " .. entnamepfx .. mangle(feat):upper() .. ","
+            end
+            pub_lines[#pub_lines + 1] = "} " .. enum_tyname .. ";"
+            pub_lines[#pub_lines + 1] = ""
+
+            -- generate featureset --
+            pub_lines[#pub_lines + 1] = "typedef struct {"
+            for feat, _ in pairs(implies_map) do
+                pub_lines[#pub_lines + 1] = "    bool " .. mangle(feat) .. " : 1" .. ";"
+            end
+            pub_lines[#pub_lines + 1] = "} " .. set_tyname .. ";"
+            pub_lines[#pub_lines + 1] = ""
+
+            -- generate featureset_set --
+            sig = "void "..set_tyname.."__set("..set_tyname.."* out, "..enum_tyname.." ent)"
+            pub_lines[#pub_lines + 1] = sig..";"
+            lines[#lines + 1] = sig.." {"
+            lines[#lines + 1] = "    switch (ent) {"
+            for feat, _ in pairs(implies_map) do
+                lines[#lines + 1] = "    case "..entnamepfx..mangle(feat):upper()..":"
+                for _, x in ipairs(collect_implied_feats(feat)) do
+                    lines[#lines + 1] = "        out->"..mangle(x).." = true;"
+                end
+                lines[#lines + 1] = "        break;"
+            end
+            lines[#lines + 1] = "    default:"
+            lines[#lines + 1] = "        tb_unreachable();"
+            lines[#lines + 1] = "        break;"
+            lines[#lines + 1] = "    }"
+            lines[#lines + 1] = "}"
+            lines[#lines + 1] = ""
+
+            -- generate featureset_get --
+            -- don't worry, this gets optimized by llvm; at least before llvm 18...
+            -- see https://github.com/llvm/llvm-project/issues/162832
+
+            sig = "bool "..set_tyname.."__get("..set_tyname.." const* out, "..enum_tyname.." ent)"
+            pub_lines[#pub_lines + 1] = sig..";"
+            lines[#lines + 1] = sig.." {"
+            lines[#lines + 1] = "    switch (ent) {"
+            for feat, _ in pairs(implies_map) do
+                lines[#lines + 1] = "    case "..entnamepfx..mangle(feat):upper()..":"
+                lines[#lines + 1] = "        return out->"..mangle(feat)..";"
+            end
+            lines[#lines + 1] = "    default:"
+            lines[#lines + 1] = "        tb_unreachable();"
+            lines[#lines + 1] = "        return false;"
+            lines[#lines + 1] = "    }"
+            lines[#lines + 1] = "}"
+            lines[#lines + 1] = ""
+
+            -- generate each_toggled --
+            sig = "void "..set_tyname.."__each_toggled("..set_tyname.." const* set, void (*consumer)("..enum_tyname..", void*), void* userptr)"
+            pub_lines[#pub_lines + 1] = sig..";"
+            lines[#lines + 1] = sig.." {"
+            for feat, _ in pairs(implies_map) do
+                lines[#lines + 1] = "    if (set->"..mangle(feat)..") consumer("..entnamepfx..mangle(feat):upper()..", userptr);"
+            end
+            lines[#lines + 1] = "}"
+            lines[#lines + 1] = ""
+
+            -- generate enum as_str --
+            sig = "char const* "..enum_tyname.."__as_str("..enum_tyname.." ent)"
+            pub_lines[#pub_lines + 1] = sig..";"
+            lines[#lines + 1] = sig.." {"
+            lines[#lines + 1] = "    switch (ent) {"
+            for feat, _ in pairs(implies_map) do
+                lines[#lines + 1] = "    case "..entnamepfx..mangle(feat):upper()..":"
+                lines[#lines + 1] = "        return \""..mangle(feat).."\";"
+            end
+            lines[#lines + 1] = "    default:"
+            lines[#lines + 1] = "        tb_unreachable();"
+            lines[#lines + 1] = "        return 0;"
+            lines[#lines + 1] = "    }"
+            lines[#lines + 1] = "}"
+            lines[#lines + 1] = ""
+
+            -- generate enum from_str --
+            sig = "int "..enum_tyname.."__from_str("..enum_tyname.."* out, char const* str, unsigned int str_len)"
+            pub_lines[#pub_lines + 1] = "// returns 0 on success"
+            pub_lines[#pub_lines + 1] = sig..";"
+            lines[#lines + 1] = sig.." {"
+            lines[#lines + 1] = "    if (!str || str_len == 0) return 1;"
+            lines[#lines + 1] = "    unsigned char hash = (str[0] ^ str[str_len-1]) % 8;" -- 2 bytes because of rv Zbb, Zcond, ...
+            lines[#lines + 1] = "    switch (hash) {"
+            for i=0,7 do
+                lines[#lines + 1] = "    case "..i..":"
+                for feat, _ in pairs(implies_map) do
+                    local hash = math.fmod(xor8(feat:byte(1), feat:byte(#feat)), 8)
+                    if hash == i then
+                        lines[#lines + 1] = "        if (str_len == "..#feat.." && !strncasecmp(str, \""..feat.."\", "..#feat..")) {"
+                        lines[#lines + 1] = "            *out = "..entnamepfx..mangle(feat):upper()..";"
+                        lines[#lines + 1] = "            return 0;"
+                        lines[#lines + 1] = "        }"
+                    end
+                end
+                lines[#lines + 1] = "        break;"
+            end
+            lines[#lines + 1] = "        default:"
+            lines[#lines + 1] = "            tb_unreachable();"
+            lines[#lines + 1] = "            return 1;"
+            lines[#lines + 1] = "    }"
+            lines[#lines + 1] = "    return 1;"
+            lines[#lines + 1] = "}"
+            lines[#lines + 1] = ""
+
+            -- generate parser --
+            sig = "int "..set_tyname.."__parse("..set_tyname.."* out, char const* str)"
+            pub_lines[#pub_lines + 1] = "// returns 0 on success"
+            pub_lines[#pub_lines + 1] = sig..";"
+            lines[#lines + 1] = sig.." {"
+            lines[#lines + 1] = "    memset(out, 0, sizeof("..set_tyname.."));"
+            lines[#lines + 1] = "    if (!str) return 0;"
+            if pfx_parser then
+                lines[#lines + 1] = "    str = "..pfx_parser.."(str,  out);"
+            end
+            lines[#lines + 1] = "    for (; str && *str; ) {"
+            lines[#lines + 1] = "        char const* next = strchr(str, '"..tg_fmt.."');"
+            lines[#lines + 1] = "        unsigned int len = next ? next - str : strlen(str);"
+            lines[#lines + 1] = "        "..enum_tyname.." x;"
+            lines[#lines + 1] = "        if ("..enum_tyname.."__from_str(&x, str, len)) return 1;"
+            lines[#lines + 1] = "        "..set_tyname.."__set(out, x);"
+            lines[#lines + 1] = "        if (next) {str = next + 1;} else {break;}"
+            lines[#lines + 1] = "    }"
+            lines[#lines + 1] = "    return 0;"
+            lines[#lines + 1] = "}"
+            lines[#lines + 1] = ""
+
+            pub_lines[#pub_lines + 1] = ""
         elseif n[1] == "reg_class" then
             reg_classes[#reg_classes + 1] = { n[2], math.max(1, #n - 2) }
 
@@ -1582,12 +1805,13 @@ if true then
     lines[#lines + 1] = ""
 end
 
-local final_src = table.concat(lines, "\n")
--- print(final_src)
-
 if true then
     local f = io.open(arg[2], "w")
-    f:write(final_src)
+    f:write(table.concat(lines, "\n"))
+    f:close()
+
+    local f = io.open(arg[3], "w")
+    f:write(table.concat(pub_lines, "\n"))
     f:close()
 end
 
