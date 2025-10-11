@@ -11,6 +11,7 @@
 #include <dyn_array.h>
 #include <cuik_lex.h>
 #include <cuik_symtab.h>
+#include <unistd.h>
 
 #include <tb.h>
 
