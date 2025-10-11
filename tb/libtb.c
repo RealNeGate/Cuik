@@ -1,3 +1,4 @@
+#include <stddef.h>
 // This is the TB unity build
 void* tb_jit_stack_create(size_t);
 
