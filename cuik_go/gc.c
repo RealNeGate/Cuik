@@ -60,6 +60,96 @@ typedef struct {
 } Slice;
 
 ////////////////////////////////
+// GC logging
+////////////////////////////////
+typedef struct {
+    uint64_t type : 8;
+    uint64_t time : 56;
+    uint64_t x, y;
+} GC_LogEntry;
+
+typedef enum GC_LogEnum {
+    GC_LOG_MARK_PHASE,
+    GC_LOG_RELOCATE_PHASE,
+
+    GC_LOG_CROSS_CHECKPOINT,
+    GC_LOG_PHASE_SHIFT,
+    GC_LOG_CLEAR_MARK,
+    GC_LOG_CHECKPOINT,
+
+    GC_LOG_ALLOC_PAGE,
+    GC_LOG_RECYCLE_PAGE,
+    GC_LOG_FREE_PAGE,
+    GC_LOG_KILL_PAGE,
+    GC_LOG_UNSEE_PAGE,
+    GC_LOG_SEE_PAGE,
+    GC_LOG_COMPACT_PAGE,
+
+    GC_LOG_LVB,
+    GC_LOG_ALLOC_OBJ,
+    GC_LOG_MARK_OBJ,
+    GC_LOG_REMAP_OBJ,
+    GC_LOG_FWD_OBJ,
+    GC_LOG_COPY_OBJ,
+} GC_LogEnum;
+
+static const char* gc_log_fmts[] = {
+    "==== MARK/REMAP ====",
+    "===== RELOCATE =====",
+
+    "cross",
+    "phase-shift: PROT=%zu, NMT=%zu",
+    "clear mark",
+    "checkpoint",
+
+    "alloc page %p",
+    "recycle page %p",
+    "free page %p",
+    "kill page %p",
+    "unsee page %p",
+    "see page %p",
+    "compact page %p",
+
+    "alloc %p",
+    "LVB   %p",
+    "mark  %p",
+    "remap %p => %p",
+    "fwd   %p",
+    "copy  %p (%zu bytes)",
+};
+
+GC_LogEnum keep_alive;
+
+thread_local size_t entry_tail;
+thread_local GC_LogEntry entries[256];
+
+static void gc_log_flush(void) {
+    #if _WIN32
+    int tid = GetCurrentThreadId();
+    #else
+    int tid = getpid();
+    #endif
+
+    int head = entry_tail > 255 ? ((entry_tail+1) % 256) : 0;
+    int tail = entry_tail;
+    for (int i = head; i != tail; i = (i + 1) % 256) {
+        printf("%-5d,%-10.5f,", tid, entries[i].time / 1000000000.0);
+        printf(gc_log_fmts[entries[i].type], entries[i].x, entries[i].y);
+        printf("\n");
+    }
+    entry_tail = 0;
+}
+
+static void gc_log_submit(int type, uint64_t x, uint64_t y) {
+    #if 0
+    uint64_t t = cuik_time_in_nanos();
+    int i = entry_tail++ % 256;
+    entries[i] = (GC_LogEntry){ type, t, x, y };
+    // log_debug(gc_log_fmts[type], x, y);
+    #endif
+}
+
+////////////////////////////////
 // Mark bitmap
 ////////////////////////////////
 // 256GiB max heap size
@@ -268,12 +358,12 @@ static GC_Page* gc_alloc_page(void) {
     for (;;) {
         if (top == NULL) {
             top = alloc_page();
-            log_debug("[GC] Alloc page %p", top);
+            gc_log_submit(GC_LOG_ALLOC_PAGE, (uintptr_t) top, 0);
             break;
         }
 
         if (atomic_compare_exchange_weak(&gc_recycled_pages, &top, top->next)) {
-            log_debug("[GC] Recycled page %p", top);
+            gc_log_submit(GC_LOG_RECYCLE_PAGE, (uintptr_t) top, 0);
             memset(top, 0, sizeof(GC_Page));
             break;
         }
@@ -289,7 +379,7 @@ static GC_Page* gc_alloc_page(void) {
 }
 
 static void gc_free_page(GC_Page* page) {
-    log_debug("[GC] Free page %p", page);
+    gc_log_submit(GC_LOG_FREE_PAGE, (uintptr_t) page, 0);
 
     // append to be freed
     GC_Page* head = atomic_load_explicit(&gc_freed_pages, memory_order_relaxed);
@@ -348,7 +438,7 @@ static GC_Ref gc_alloc(size_t size, uint32_t tag) {
     heap_bitmap_set(&mark_bitmap, (uintptr_t) obj);
 
     GC_Ref ref = (((GC_Ref) obj->data) << 4ull) | (GC_SPACE_YOUNG<<2ull) | nmt;
-    log_debug("[GC] Alloc object: %016"PRIXPTR, ref);
+    gc_log_submit(GC_LOG_ALLOC_OBJ, ref, 0);
     return ref;
 }
 
@@ -362,7 +452,7 @@ static uintptr_t bit_test(uintptr_t x, uintptr_t y) {
 static void gc_mark_obj(GC_Ref addr) {
     GC_Object* base = gc_find_obj(addr);
     if (heap_bitmap_set(&mark_bitmap, (uintptr_t) base)) {
-        log_debug("[GC] Mark object: %p", base);
+        gc_log_submit(GC_LOG_MARK_OBJ, (uintptr_t) base, 0);
 
         GC_Page* page = (GC_Page*) (addr & -GC_PAGE_SIZE);
         size_t live = atomic_fetch_add(&page->live, base->size);
@@ -371,41 +461,40 @@ static void gc_mark_obj(GC_Ref addr) {
     }
 }
 
+static int TO_BE_FORWARDED;
 static GC_Ref remap_ptr(GC_Ref addr) {
     _Atomic(uintptr_t)* fwd = (_Atomic(uintptr_t)*) nl_table_getp(&fwd_table, ((GC_Object*) addr) - 1);
     if (fwd != NULL) {
-        // bottom two bits represent some states:
-        //   00 - Unmoved
-        //   01 - Moving
-        //   10 - Moved
-        uintptr_t dst_ptr = atomic_load_explicit(fwd, memory_order_relaxed);
-
         // if the object is unmoved, do that
-        if ((dst_ptr & 3) == 0b00) {
-            // try to move it
-            uintptr_t moving_ptr = dst_ptr | 0b10;
-            if (atomic_compare_exchange_strong(fwd, &dst_ptr, moving_ptr)) {
-                // winner must copy
-                GC_Object* src_ptr = ((GC_Object*) addr) - 1;
-                TB_ASSERT(src_ptr->size <= 64*1024);
-                log_debug("[GC] Copying %p (%u bytes)", addr, src_ptr->size);
-                memcpy((void*) dst_ptr, src_ptr, src_ptr->size);
-                atomic_store_explicit(fwd, dst_ptr | 0b10, memory_order_release);
+        uintptr_t fwd_ptr = atomic_load_explicit(fwd, memory_order_relaxed);
 
-                // once the last object is moved the page, we can relocate
-                GC_Page* page = (GC_Page*) (addr & -GC_PAGE_SIZE);
-                if (atomic_fetch_sub(&page->refs, 1) == 1) {
-                    gc_free_page(page);
-                }
-            } else {
-                // losers must wait... futex?
-                while ((atomic_load_explicit(fwd, memory_order_acquire) & 3) == 0b10) {
-                }
+        // try to move it
+        if (fwd_ptr == (uintptr_t) &TO_BE_FORWARDED && atomic_compare_exchange_strong(fwd, &fwd_ptr, 1)) {
+            // winner must copy
+            GC_Object* src_ptr = ((GC_Object*) addr) - 1;
+            TB_ASSERT(src_ptr->size <= 64*1024);
+            gc_log_submit(GC_LOG_COPY_OBJ, addr, src_ptr->size);
+
+            void* dst_ptr = gc_rawptr(gc_alloc(src_ptr->size, src_ptr->tag));
+            memcpy(dst_ptr, src_ptr, src_ptr->size - sizeof(GC_Object));
+
+            // notify the other threads that we've moved
+            atomic_store_explicit(fwd, (uintptr_t) dst_ptr, memory_order_release);
+            fwd_ptr = (uintptr_t) dst_ptr;
+
+            // once the last object is moved the page, we can recycle it
+            GC_Page* page = (GC_Page*) (addr & -GC_PAGE_SIZE);
+            if (atomic_fetch_sub(&page->refs, 1) == 1) {
+                gc_free_page(page);
+            }
+        } else if (fwd_ptr == 1) {
+            // losers must wait... futex?
+            while (fwd_ptr = atomic_load_explicit(fwd, memory_order_acquire), fwd_ptr == 1) {
             }
         }
 
-        log_debug("[GC] Remap object %p => %p", (void*) addr, (void*) (dst_ptr & -4ull));
-        return dst_ptr & -4ull;
+        gc_log_submit(GC_LOG_REMAP_OBJ, addr, fwd_ptr);
+        return fwd_ptr;
     }
     return addr;
 }
@@ -413,23 +502,21 @@ static GC_Ref remap_ptr(GC_Ref addr) {
 static GC_Ref visit_ref(GC_Ref old, GC_Ref exp) {
     GC_Ref addr = remap_ptr(old >> 4ull);
 
+    // mark object, if it's not marked yet push to marklist
+    gc_mark_obj(addr);
+
+    // transition NMT+PROT to the current good state
     uint64_t space    = (old >> 2) & 3;
     uint64_t expected = ~(exp >> (space*4)) & 0xF;
     uint64_t trigger  = __builtin_ffsll(expected) - 1;
-    // FLIP NMT+PROT
-    GC_Ref new = (old & -4ull) | trigger;
-    // printf("[GC]   LVB() %"PRIXPTR" => %"PRIXPTR" (%#"PRIx64")\n", old, new, trigger);
-
-    // mark object, if it's not marked yet push to marklist
-    gc_mark_obj(addr);
-    return new;
+    return (old & -4ull) | trigger;
 }
 
 GC_Ref c_lvb(_Atomic(GC_Ref)* ref) {
     GC_Ref old = *ref;
     GC_Ref exp = *expected_nmt;
+    gc_log_submit(GC_LOG_LVB, old, 0);
 
-    log_debug("[GC] LVB(%p)", old);
     // Double-check that things didn't stop being a trap
     if (bit_test(exp, old & 63)) {
         GC_Ref new = visit_ref(old, exp);
@@ -442,7 +529,6 @@ GC_Ref c_lvb(_Atomic(GC_Ref)* ref) {
 
 static GC_Marklist marklist_gc;
 static void gc_cross_checkpoint(bool mark_roots) {
-    gc_checkpoint_time = 0;
     gc_checkpoint_trigger = 0;
 
     uint64_t total_checkpoints = 0;
@@ -458,11 +544,13 @@ static void gc_cross_checkpoint(bool mark_roots) {
         // printf("Checkpoint: %"PRId64" %"PRId64"\n", old, total_checkpoints);
     }
 
-    log_debug("[GC] Time in checkpoints: %.4f ms", gc_checkpoint_time / 1000000.0);
+    gc_log_submit(GC_LOG_CROSS_CHECKPOINT, 0, 0);
 }
 
 // traps if bits don't match pattern, NULL space never traps
 static void set_expected_nmt(int space, int prot, int nmt) {
+    gc_log_submit(GC_LOG_PHASE_SHIFT, prot, nmt);
+
     uint64_t pattern  = (space << 2) | (prot << 1) | nmt;
     uint64_t expected = ~((1ull << pattern) | 0b1111) & 0xFFFF;
     atomic_store_explicit(expected_nmt, expected * 0x0001000100010001, memory_order_release);
@@ -470,14 +558,13 @@ static void set_expected_nmt(int space, int prot, int nmt) {
 
 static bool prot_expected = false;
 static void gc_mark_remap(void) {
-    log_debug("[GC] === MARK/REMAP ===");
+    gc_log_submit(GC_LOG_MARK_PHASE, 0, 0);
 
     // Flip NMT, the LUT will trap if NMT is nmt_dir.
     // This event might not be acknowledged immediately by
     // mutator threads which leads to some NMT "throbbing"
     nmt_target = !nmt_target;
     set_expected_nmt(GC_SPACE_YOUNG, prot_expected, nmt_target);
-    log_debug("[GC] Phase shift: PROT=%d, NMT=%d", prot_expected, nmt_target);
 
     bool progress;
     do {
@@ -520,11 +607,13 @@ static void gc_mark_remap(void) {
 }
 
 static void gc_relocate(void) {
-    log_debug("[GC] === RELOCATE ===");
+    gc_log_submit(GC_LOG_RELOCATE_PHASE, 0, 0);
 
     // make freed pages in the last phase available to the new relocations
-    for (GC_Page* page = atomic_exchange(&gc_freed_pages, NULL); page; page = page->next) {
-        log_debug("[GC] Unsee page %p", page);
+    GC_Page* page = atomic_exchange(&gc_freed_pages, NULL);
+    while (page) {
+        GC_Page* next = page->next;
+        gc_log_submit(GC_LOG_UNSEE_PAGE, (uintptr_t) page, 0);
         nl_hashset_remove(&gc_all_pages, page);
 
         // append to be freed
@@ -532,16 +621,19 @@ static void gc_relocate(void) {
         do {
             page->next = head;
         } while (!atomic_compare_exchange_weak(&gc_recycled_pages, &head, page));
+        page = next;
     }
 
     // if all objects die in a page, no relocation is needed
     // but we'd like to reuse that page now.
     nl_hashset_for(e, &gc_all_pages) {
-        GC_Page* page    = *e;
+        GC_Page* page = *e;
         if (page->live == 0) {
-            log_debug("[GC] Kill page %p", page);
+            gc_log_submit(GC_LOG_KILL_PAGE, (uintptr_t) page, 0);
             *e = NL_HASHSET_TOMB;
             gc_all_pages.count -= 1;
+
+            page->from_space = true;
 
             // append to be freed
             GC_Page* head = atomic_load_explicit(&gc_recycled_pages, memory_order_relaxed);
@@ -566,26 +658,14 @@ static void gc_relocate(void) {
 
         // move objects into the to_page if the page is fragmented enough
         if (live_space < 0.5f) {
-            log_debug("[GC] Compact page %p", page);
+            gc_log_submit(GC_LOG_COMPACT_PAGE, (uintptr_t) page, 0);
 
             size_t refs = 0;
             while (obj != limit) {
                 bool obj_live = heap_bitmap_test(&mark_bitmap, (uintptr_t) obj);
                 if (obj_live) {
-                    if (to_page == NULL || to_page->used + obj->size >= GC_PAGE_SIZE - sizeof(GC_Page)) {
-                        to_page = gc_alloc_page();
-                    }
-
-                    // submit to alloc bitmap
-                    uintptr_t offset = to_page->used / 8;
-                    to_page->alloc_bits[offset / 64] |= 1ull << (offset % 64);
-
-                    // alloc to_page
-                    GC_Object* dst_obj = (GC_Object*) &to_page->data[to_page->used];
-                    to_page->used += obj->size;
-
-                    log_debug("[GC] FWD %p -> %p [%zu][%zu]", obj, dst_obj, offset/64, offset%64);
-                    nl_table_put(&fwd_table, obj, dst_obj);
+                    gc_log_submit(GC_LOG_FWD_OBJ, (uintptr_t) obj, 0);
+                    nl_table_put(&fwd_table, obj, &TO_BE_FORWARDED);
                     refs += 1;
                 }
                 obj += obj->size / sizeof(GC_Object);
@@ -606,7 +686,6 @@ static void gc_relocate(void) {
     // LVB storm up for a bit but we'll tank it
     gc_mid_reloc = 1;
     {
-        log_debug("[GC] Phase shift: PROT=%d, NMT=%d", prot_expected, nmt_target);
         set_expected_nmt(GC_SPACE_YOUNG, prot_expected, nmt_target);
         gc_cross_checkpoint(false);
 
@@ -614,27 +693,32 @@ static void gc_relocate(void) {
         // and recognize any new pages
         GC_Page* list = atomic_exchange(&gc_fresh_pages, NULL);
         for (; list; list = list->next) {
-            log_debug("[GC] See page %p", list);
+            gc_log_submit(GC_LOG_SEE_PAGE, (uintptr_t) list, 0);
 
             list->live = 0;
             nl_hashset_put(&gc_all_pages, list);
         }
 
         heap_bitmap_clear(&mark_bitmap);
+        gc_log_submit(GC_LOG_CLEAR_MARK, 0, 0);
     }
     gc_mid_reloc = 0;
 }
 
 static int gc_main(void* arg) {
+    keep_alive = GC_LOG_COPY_OBJ;
+
     marklist_gc = gc_marklist_init();
     fwd_table = nl_table_alloc(4096);
     gc_all_pages = nl_hashset_alloc(256);
 
     for (;;) {
         uint64_t start = cuik_time_in_nanos();
+
+        gc_checkpoint_time = 0;
         gc_mark_remap();
         gc_relocate();
-        log_debug("[GC] Cycle took %.4f ms", (cuik_time_in_nanos() - start) / 1000000.0);
+        log_debug("[GC] Cycle took %.4fms (%.4fms blocked)", (cuik_time_in_nanos() - start) / 1000000.0, gc_checkpoint_time / 1000000.0);
 
         // sleep 100ms
         thrd_sleep(&(struct timespec){ .tv_nsec = 100000000 }, NULL);

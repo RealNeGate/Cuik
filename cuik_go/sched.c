@@ -38,7 +38,7 @@ static void foobar(void) {
         // printf("go_stuff(%p, %p)\n", gc_rawptr(a.base), gc_rawptr(b.base));
         FOR_N(i, 0, 10) {
             go_stuff(&a, &b);
-            thrd_sleep(&(struct timespec){ .tv_nsec = 100000000 }, NULL);
+            thrd_sleep(&(struct timespec){ .tv_nsec = 50000000 }, NULL);
         }
     }
 }
@@ -89,8 +89,6 @@ TB_Stacklet* c_checkpoint(TB_Stacklet* stack) {
 
                 uint32_t reg_num  = (sfpt->refs[i] >> 8) & 0xFFFF;
                 uint32_t ref_type = sfpt->refs[i] & 0xFF;
-                // printf("    R%-2u : %4u\n", reg_num, ref_type);
-
                 if (ref_type == 1) {
                     // loaded accessible pointer, might be forwarded
                     GC_Ref addr = remap_ptr(g->state.gprs[reg_num]);

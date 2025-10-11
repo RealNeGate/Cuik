@@ -232,7 +232,7 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
 
                 // success log write, we're happy now
                 log_buffer_used = used + len + 1;
-                log_enqueue(dst);
+                // log_enqueue(dst);
                 return;
             }
         }

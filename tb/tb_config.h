@@ -20,12 +20,12 @@
 #define TB_OPTDEBUG_INLINE2          0
 #define TB_OPTDEBUG_INLINE3          0
 #define TB_OPTDEBUG_INLINE4          0
-#define TB_OPTDEBUG_REGSPLIT         1
-#define TB_OPTDEBUG_REGALLOC         1
+#define TB_OPTDEBUG_REGSPLIT         0
+#define TB_OPTDEBUG_REGALLOC         0
 #define TB_OPTDEBUG_REGALLOC2        0
-#define TB_OPTDEBUG_REGALLOC3        1
+#define TB_OPTDEBUG_REGALLOC3        0
 #define TB_OPTDEBUG_REGALLOC_AREA    0
-#define TB_OPTDEBUG_REGALLOC5        1
+#define TB_OPTDEBUG_REGALLOC5        0
 #define TB_OPTDEBUG_REGALLOC6        0
 #define TB_OPTDEBUG_COMPACT          0
 #define TB_OPTDEBUG_SCHED1           0
