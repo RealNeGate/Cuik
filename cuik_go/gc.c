@@ -145,7 +145,8 @@ static void gc_log_submit(int type, uint64_t x, uint64_t y) {
     uint64_t t = cuik_time_in_nanos();
     int i = entry_tail++ % 256;
     entries[i] = (GC_LogEntry){ type, t, x, y };
-    // log_debug(gc_log_fmts[type], x, y);
+    #else
+    log_debug(gc_log_fmts[type], x, y);
     #endif
 }
 
@@ -654,7 +655,7 @@ static void gc_relocate(void) {
         GC_Object* limit = (GC_Object*) (page->data + page->used);
 
         float live_space = ((float) page->live / (float) page->used);
-        log_debug("[GC] Page %p (%u / %u, %.1f%% live)", page, page->live, page->used, live_space * 100.0f);
+        // log_debug("[GC] Page %p (%u / %u, %.1f%% live)", page, page->live, page->used, live_space * 100.0f);
 
         // move objects into the to_page if the page is fragmented enough
         if (live_space < 0.5f) {
@@ -718,7 +719,9 @@ static int gc_main(void* arg) {
         gc_checkpoint_time = 0;
         gc_mark_remap();
         gc_relocate();
-        log_debug("[GC] Cycle took %.4fms (%.4fms blocked)", (cuik_time_in_nanos() - start) / 1000000.0, gc_checkpoint_time / 1000000.0);
+
+        printf("%.4f;%.4f\n", (cuik_time_in_nanos() - start) / 1000000.0, gc_checkpoint_time / 1000000.0);
+        // log_debug("[GC] Cycle took %.4fms (%.4fms blocked)", (cuik_time_in_nanos() - start) / 1000000.0, gc_checkpoint_time / 1000000.0);
 
         // sleep 100ms
         thrd_sleep(&(struct timespec){ .tv_nsec = 100000000 }, NULL);

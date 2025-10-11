@@ -19,7 +19,7 @@ TB_Stacklet* go_spawn(TB_JIT* jit) {
     return stack;
 }
 
-static void (*go_stuff)(Slice*, Slice*);
+static void (*go_stuff)(void);
 
 static void foobar(void) {
     for (;;) {
@@ -37,13 +37,13 @@ static void foobar(void) {
 
         // printf("go_stuff(%p, %p)\n", gc_rawptr(a.base), gc_rawptr(b.base));
         FOR_N(i, 0, 10) {
-            go_stuff(&a, &b);
+            // go_stuff(&a, &b);
             thrd_sleep(&(struct timespec){ .tv_nsec = 50000000 }, NULL);
         }
     }
 }
 
-// This thread mostly just waits for timer interrupts
+// This thread mostly just notifies other threads to pause
 static int sched_main(void* arg) {
     for (;;) {
 
@@ -53,7 +53,7 @@ static int sched_main(void* arg) {
 // This thread maps to an OS-thread, it's main job is just run goroutines
 static int sched_n_main(void* arg) {
     marklist_n = gc_marklist_init();
-    tb_jit_thread_call(first_task, foobar, NULL, 0, NULL);
+    tb_jit_thread_call(first_task, go_stuff, NULL, 0, NULL);
     printf("Done!\n");
     return 0;
 }

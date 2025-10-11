@@ -1228,10 +1228,12 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             EMITA(&ctx.emit, "// %s = [rsp + %d]\n", s->name, (ctx.stack_usage - ctx.stack_header) + s->storage.offset);
             TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[0m"));
         }
-        aarray_for(i, func_out->safepoints) {
-            TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[32m"));
-            EMITA(&ctx.emit, "// SFPT[%d] = ...\n", func_out->safepoints[i]->ip);
-            TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[0m"));
+        if (func_out->safepoints) {
+            aarray_for(i, func_out->safepoints) {
+                TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[32m"));
+                EMITA(&ctx.emit, "// SFPT[%d] = ...\n", func_out->safepoints[i]->ip);
+                TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[0m"));
+            }
         }
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 

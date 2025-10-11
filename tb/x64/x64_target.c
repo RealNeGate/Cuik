@@ -1877,8 +1877,9 @@ static void stub_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_CodeStub* stub) {
     // we need a scratch reg
     EMIT1(e, 0x50); // PUSH RAX
     EMIT1(e, 0x51); // PUSH RCX
-    TB_ASSERT(lvb->src.type == VAL_MEM);
-    if (lvb->src.reg != RCX || lvb->src.index != GPR_NONE || lvb->src.imm != 0) {
+    if (lvb->src.type == VAL_GPR) {
+        __(MOV, TB_X86_QWORD, Vgpr(RCX), &lvb->src);
+    } else if (lvb->src.reg != RCX || lvb->src.index != GPR_NONE || lvb->src.imm != 0) {
         __(LEA, TB_X86_QWORD, Vgpr(RCX), &lvb->src);
     }
     __(CALL, TB_X86_QWORD, &sym);
@@ -2090,6 +2091,28 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 }
             } else {
                 TB_OPTDEBUG(REGALLOC2)(EMIT1(e, 0x90));
+            }
+
+            // PTR2 -> PTR1
+            if (
+                n->dt.type == TB_TAG_PTR && n->dt.elem_or_addrspace == 1 &&
+                n->inputs[1]->dt.type == TB_TAG_PTR && n->inputs[1]->dt.elem_or_addrspace == 2
+            ) {
+                COMMENT("LVB %s, %s", GPR_NAMES[dst.reg], GPR_NAMES[src.reg]);
+
+                Stub_LVB* stub = add_code_stub(ctx, 0, sizeof(Stub_LVB));
+                stub->src = src;
+                stub->dst = dst;
+
+                // LOADED VALUE BARRIER (LVB)
+                Val global_nmt = op_at(ctx, n->inputs[n->input_count - 1]);
+                // bt global_nmt, addr
+                __(BT,  TB_X86_QWORD, &global_nmt, &dst);
+                // jb gc_trap_stub
+                EMIT1(e, 0x0F); EMIT1(e, 0x82); EMIT4(e, 0);
+                stub->header.pos = e->count-4;
+                // shr addr, 4
+                __(SHR, TB_X86_QWORD, &dst, Vimm(4));
             }
             break;
         }
