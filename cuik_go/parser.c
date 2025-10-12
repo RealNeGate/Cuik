@@ -95,6 +95,10 @@ static Token cuikgo_lex(Lexer* l) {
         l->flags = LEXER_END_STMT;
         break;
 
+        case '=':
+        case '!':
+        case '>':
+        case '<':
         case ':':
         current += (*current == '=');
         break;
@@ -178,6 +182,7 @@ struct CuikGo_Type {
 
         // complex types
         CUIKGO_PTR,
+        CUIKGO_FUNC,
         CUIKGO_MAP,
         CUIKGO_STRUCT,
     } tag;
@@ -196,6 +201,9 @@ struct CuikGo_Type {
     CuikGo_Type* key_type;
     CuikGo_Type* val_type;
 
+    int param_count;
+
+    // fields in a struct, params in a function
     DynArray(CuikGo_Field) fields;
 };
 
@@ -208,6 +216,7 @@ struct CuikGo_Word {
         ////////////////////////////////
         // Expressions
         ////////////////////////////////
+        WORD_NIL,
         WORD_INT,
         // immediately define and push to stack
         WORD_DECL_REF,
@@ -218,6 +227,7 @@ struct CuikGo_Word {
         // aggregate ops
         WORD_INDEX,
         WORD_FIELD,
+        WORD_CALL,
         // alloc
         WORD_NEW,
         // binary ops
@@ -247,11 +257,13 @@ struct CuikGo_Word {
         WORD_STMTS_PAST_THIS,
 
         WORD_CONSUME,
+        WORD_RETURN,
 
         WORD_FUNC,
         WORD_PARAM,
         WORD_DECL,
         WORD_TYPE_DECL,
+        WORD_FOR,
         WORD_FOR_RANGE,
         // if false, we skip to the word "ref"
         WORD_IF,
@@ -356,6 +368,10 @@ static void dump_words(CuikGo_Parser* ctx) {
             printf("FIELD(%s) ", w->name);
             break;
 
+            case WORD_FOR:
+            printf("FOR(%p) ", w->ref);
+            break;
+
             case WORD_FOR_RANGE:
             printf("FOR-RANGE(%p) ", w->ref);
             break;
@@ -384,9 +400,19 @@ static void dump_words(CuikGo_Parser* ctx) {
             printf("\nFUNC(%p) ", w->ref);
             break;
 
+            case WORD_CALL: printf("CALL "); break;
+            case WORD_NIL: printf("NIL "); break;
+            case WORD_PLUS: printf("PLUS "); break;
+            case WORD_MINUS: printf("MINUS "); break;
             case WORD_INDEX: printf("INDEX "); break;
+            case WORD_CMPEQ: printf("CMPEQ "); break;
+            case WORD_CMPNE: printf("CMPNE "); break;
+            case WORD_CMPLT: printf("CMPLT "); break;
             case WORD_CMPGT: printf("CMPGT "); break;
+            case WORD_CMPGE: printf("CMPGE "); break;
+            case WORD_CMPLE: printf("CMPLE "); break;
             case WORD_ASSIGN: printf("ASSIGN "); break;
+            case WORD_RETURN: printf("RETURN "); break;
             case WORD_CONSUME: printf("CONSUME "); break;
 
             default:
@@ -549,7 +575,9 @@ CuikGo_Word* cuikgo_name_list(CuikGo_Parser* ctx, Lexer* l, int tag, int* out_co
 void cuikgo_expr(CuikGo_Parser* ctx, Lexer* l);
 void cuikgo_atom(CuikGo_Parser* ctx, Lexer* l) {
     Token t = cuikgo_lex(l);
-    if (token_isa(t, "new")) {
+    if (token_isa(t, "nil")) {
+        submit_word(ctx, WORD_NIL);
+    } else if (token_isa(t, "new")) {
         cuikgo_eat(l, '(');
         CuikGo_Word* w = submit_word(ctx, WORD_NEW);
         w->src_type = cuikgo_type(ctx, l);
@@ -584,6 +612,12 @@ void cuikgo_atom(CuikGo_Parser* ctx, Lexer* l) {
 
             CuikGo_Word* w = submit_word(ctx, WORD_INDEX);
             w->arity = 2;
+            goto retry;
+        } else if (t.type == '(') {
+            cuikgo_eat(l, ')');
+
+            CuikGo_Word* w = submit_word(ctx, WORD_CALL);
+            w->arity = 1;
             goto retry;
         }
 
@@ -653,19 +687,19 @@ void cuikgo_expr(CuikGo_Parser* ctx, Lexer* l) {
     }
 }
 
-void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l);
+void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l, bool simple);
 void cuikgo_block(CuikGo_Parser* ctx, Lexer* l) {
     cuik_scope_open(syms);
     cuikgo_eat(l, '{');
     while (cuikgo_peek(l).type != '}') {
-        cuikgo_stmt(ctx, l);
+        cuikgo_stmt(ctx, l, false);
         cuikgo_eat(l, ';');
     }
     cuikgo_eat(l, '}');
     cuik_scope_close(syms);
 }
 
-void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l) {
+void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l, bool simple) {
     Lexer saved = *l;
     Token t = cuikgo_lex(l);
     if (token_isa(t, "if")) {
@@ -689,29 +723,109 @@ void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l) {
 
         CuikGo_Word* end_w = submit_word(ctx, WORD_CONSUME);
         else_w->ref = end_w;
+    } else if (token_isa(t, "return")) {
+        cuikgo_expr(ctx, l);
+
+        CuikGo_Word* w = submit_word(ctx, WORD_RETURN);
+        w->arity = 1;
     } else if (token_isa(t, "for")) {
         cuik_scope_open(syms);
 
-        int count;
-        CuikGo_Word* top = cuikgo_name_list(ctx, l, WORD_DECL_REF, &count);
-        TB_ASSERT(count == 2);
-
+        saved = *l;
         t = cuikgo_lex(l);
-        if (t.type == 0x3D3A) {
-            // := range EXPR
-            cuikgo_eat_str(l, "range");
-            cuikgo_expr(ctx, l);
 
-            CuikGo_Word* w = submit_word(ctx, WORD_FOR_RANGE);
-            w->arity = 3;
+        Token ahead = cuikgo_lex(l);
+        if (t.type == TOKEN_IDENTIFIER && (ahead.type == ',' || ahead.type == 0x3D3A)) {
+            // identifier list? we're either an init stmt or range clause
+            int count = 1;
+            Atom names[16];
+            names[0] = atoms_put(t.content.length, t.content.data);
+
+            if (ahead.type == ',') {
+                do {
+                    t = cuikgo_lex(l);
+                    TB_ASSERT(t.type == TOKEN_IDENTIFIER);
+                    TB_ASSERT(count != 16);
+                    names[count++] = atoms_put(t.content.length, t.content.data);
+                } while (cuikgo_try_eat(l, ','));
+                cuikgo_eat(l, 0x3D3A);
+            }
+
+            if (cuikgo_try_eat_str(l, "range")) {
+                FOR_N(i, 0, count) {
+                    CuikGo_Word* w = submit_word(ctx, WORD_DECL_REF);
+                    w->name = names[i];
+
+                    CuikGo_Symbol* sym = cuik_symtab_put(syms, names[i], sizeof(CuikGo_Symbol));
+                    sym->def_word = w;
+                }
+
+                cuikgo_expr(ctx, l);
+
+                CuikGo_Word* w = submit_word(ctx, WORD_FOR_RANGE);
+                w->arity = 1 + count;
+                cuikgo_block(ctx, l);
+
+                CuikGo_Word* end_w = submit_word(ctx, WORD_CONSUME);
+                w->ref = end_w;
+                cuik_scope_close(syms);
+                return;
+            }
+
+            // assign values to expressions
+            FOR_N(i, 0, count) {
+                cuikgo_expr(ctx, l);
+
+                CuikGo_Word* w = submit_word(ctx, WORD_DECL);
+                w->name  = names[i];
+                w->type  = NULL;
+                w->arity = 1;
+
+                CuikGo_Symbol* sym = cuik_symtab_put(syms, names[i], sizeof(CuikGo_Symbol));
+                sym->def_word = w;
+            }
+
+            cuikgo_eat(l, ';');
+        } else if (cuikgo_try_eat(l, '{')) {
+            // No Init, no post, just an infinite loop
+            CuikGo_Word* w = submit_word(ctx, WORD_INT);
+            w->iconst = 1;
+            w = submit_word(ctx, WORD_FOR);
+
             cuikgo_block(ctx, l);
 
             CuikGo_Word* end_w = submit_word(ctx, WORD_CONSUME);
             w->ref = end_w;
+            cuik_scope_close(syms);
+            return;
+        } else if (cuikgo_try_eat(l, ';')) {
+            // empty InitStmt
         } else {
             __debugbreak();
+
+            *l = saved;
+            cuikgo_stmt(ctx, l, true);
         }
 
+        // ForClause ::= InitStmt? ";" Condition? ";" PostStmt?
+        if (cuikgo_try_eat(l, ';')) {
+            // condition is just true
+            CuikGo_Word* w = submit_word(ctx, WORD_INT);
+            w->iconst = 1;
+        }
+
+        cuikgo_expr(ctx, l);
+        CuikGo_Word* w = submit_word(ctx, WORD_FOR);
+        w->arity = 1;
+
+        if (cuikgo_try_eat(l, ';')) {
+            cuikgo_stmt(ctx, l, true);
+        }
+
+        cuikgo_block(ctx, l);
+
+        CuikGo_Word* end_w = submit_word(ctx, WORD_CONSUME);
+        w->ref = end_w;
         cuik_scope_close(syms);
     } else {
         Token ahead = cuikgo_lex(l);
@@ -721,14 +835,13 @@ void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l) {
             Atom names[16];
             names[0] = atoms_put(t.content.length, t.content.data);
 
-            while (cuikgo_try_eat(l, ',')) {
-                t = cuikgo_lex(l);
-                TB_ASSERT(t.type == TOKEN_IDENTIFIER);
-                TB_ASSERT(count != 16);
-                names[count++] = atoms_put(t.content.length, t.content.data);
-            }
-
             if (ahead.type == ',') {
+                do {
+                    t = cuikgo_lex(l);
+                    TB_ASSERT(t.type == TOKEN_IDENTIFIER);
+                    TB_ASSERT(count != 16);
+                    names[count++] = atoms_put(t.content.length, t.content.data);
+                } while (cuikgo_try_eat(l, ','));
                 cuikgo_eat(l, 0x3D3A);
             }
 
@@ -805,7 +918,9 @@ void cuikgo_visit_type(CuikGo_Parser* ctx, CuikGo_Type* type) {
         }
         cuikgo_visit_type(ctx, type->val_type);
     } else {
-        __debugbreak();
+        dyn_array_for(i, type->fields) {
+            cuikgo_visit_type(ctx, type->fields[i].type);
+        }
     }
     type->status = CUIKGO_TYPE_STATUS_COMPLETE;
 }
@@ -831,6 +946,8 @@ CuikGo_Word* cuikgo_sema_word(CuikGo_Parser* ctx, CuikGo_Word* w, int arity, Cui
 
         case WORD_REF: {
             CuikGo_Word* src = w->ref;
+
+            cuikgo_visit_type(ctx, src->type);
             w->type = src->type;
             break;
         }
@@ -852,6 +969,8 @@ CuikGo_Word* cuikgo_sema_word(CuikGo_Parser* ctx, CuikGo_Word* w, int arity, Cui
             if (arity == 1) {
                 CuikGo_Type* src_type = args[0]->type;
                 TB_ASSERT(w->type == NULL || src_type == w->type);
+
+                cuikgo_visit_type(ctx, src_type);
                 w->type = src_type;
             }
             break;
@@ -859,9 +978,14 @@ CuikGo_Word* cuikgo_sema_word(CuikGo_Parser* ctx, CuikGo_Word* w, int arity, Cui
 
         case WORD_FOR_RANGE: {
             CuikGo_Type* container = args[2]->type;
-            TB_ASSERT(container->tag == CUIKGO_MAP);
-            args[0]->type = container->key_type ? container->key_type : &INT_TYPE;
-            args[1]->type = container->val_type;
+            if (w->arity == 2) {
+                TB_ASSERT(container->tag == CUIKGO_INT);
+                args[0]->type = &INT_TYPE;
+            } else if (w->arity == 3) {
+                TB_ASSERT(container->tag == CUIKGO_MAP);
+                args[0]->type = container->key_type ? container->key_type : &INT_TYPE;
+                args[1]->type = container->val_type;
+            }
             break;
         }
 
@@ -908,6 +1032,14 @@ CuikGo_Word* cuikgo_sema_word(CuikGo_Parser* ctx, CuikGo_Word* w, int arity, Cui
             break;
         }
 
+        case WORD_CALL: {
+            CuikGo_Type* target = args[0]->type;
+            TB_ASSERT(target->tag == CUIKGO_FUNC);
+
+            __debugbreak();
+            break;
+        }
+
         default: __debugbreak();
     }
     return next_word(w);
@@ -920,6 +1052,7 @@ void cuikgo_sema(CuikGo_Parser* ctx, CuikGo_Word* start, CuikGo_Word* end) {
     CuikGo_Word* w = start;
     while (w != end) {
         // once we know this we can organize the top slice of the stack as the inputs
+        TB_ASSERT(top >= w->arity);
         top -= w->arity;
         CuikGo_Word** args = &stack[top];
         CuikGo_Word* next = cuikgo_sema_word(ctx, w, w->arity, args);
@@ -949,6 +1082,7 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
         }
     }
 
+    cuikperf_region_start("parse", NULL);
     Lexer l = {
         .start = (unsigned char*) main_file.data,
         .current = (unsigned char*) main_file.data
@@ -968,7 +1102,16 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
         Token t = cuikgo_lex(&l);
         if (t.type == 0) { break; }
 
-        if (token_isa(t, "type")) {
+        if (token_isa(t, "var")) {
+            t = cuikgo_lex(&l);
+            TB_ASSERT(t.type == TOKEN_IDENTIFIER);
+
+            Cuik_Atom name = atoms_put(t.content.length, t.content.data);
+            CuikGo_Type* type = cuikgo_type(ctx, &l);
+
+            CuikGo_Word* w = def_name(ctx, WORD_DECL, t.content, type)->def_word;
+            w->ref  = w;
+        } else if (token_isa(t, "type")) {
             t = cuikgo_lex(&l);
             TB_ASSERT(t.type == TOKEN_IDENTIFIER);
 
@@ -997,15 +1140,34 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
             String name = cuikgo_lex(&l).content;
             CuikGo_Word* w = def_name(ctx, WORD_FUNC, name, NULL)->def_word;
 
+            CuikGo_Type* new_type = calloc(1, sizeof(CuikGo_Type));
+            new_type->tag = CUIKGO_FUNC;
+            new_type->size = 8, new_type->align = 8;
+            new_type->fields = dyn_array_create(CuikGo_Field, 4);
+
             // Params
             cuik_scope_open(syms);
             cuikgo_eat(&l, '(');
             if (!cuikgo_try_eat(&l, ')')) {
                 do {
-                    cuikgo_var_decl(ctx, &l, true);
+                    // Name list
+                    int count;
+                    CuikGo_Word* word = cuikgo_name_list(ctx, &l, WORD_PARAM, &count);
+
+                    CuikGo_Type* type = cuikgo_type(ctx, &l);
+                    FOR_N(i, 0, count) {
+                        dyn_array_put(new_type->fields, (CuikGo_Field){ word->name, type });
+
+                        word->type = type;
+                        word = next_word(word);
+                    }
                 } while (cuikgo_try_eat(&l, ','));
                 cuikgo_eat(&l, ')');
             }
+
+            new_type->name = w->name;
+            new_type->param_count = dyn_array_length(new_type->fields);
+            w->type = new_type;
 
             // Body
             cuikgo_block(ctx, &l);
@@ -1014,37 +1176,39 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
             continue;
         }
     }
-
     CuikGo_Word* end_word = submit_word(ctx, WORD_END_OF_FILE);
+    cuikperf_region_end();
+
     dump_words(ctx);
 
     ////////////////////////////////
     // Type checking
     ////////////////////////////////
+    cuikperf_region_start("sema", NULL);
     for (CuikGo_Word* w = &ctx->base->words[0]; w != end_word;) {
         CuikGo_Word* next = next_word(w->ref);
-        if (w->tag == WORD_TYPE_DECL) {
+        if (w->tag == WORD_TYPE_DECL || w->tag == WORD_DECL) {
             cuikgo_visit_type(ctx, w->type);
         } else if (w->tag == WORD_FUNC) {
-            // fill params
-            w = next_word(w);
-            while (w->tag == WORD_PARAM) {
-                cuikgo_visit_type(ctx, w->type);
+            cuikgo_visit_type(ctx, w->type);
+
+            // skip params
+            do {
                 w = next_word(w);
-            }
+            } while (w->tag == WORD_PARAM);
 
             cuikgo_sema(ctx, w, next);
-        } else if (w->tag == WORD_DECL) {
-            __debugbreak();
         } else {
             __debugbreak();
         }
         w = next;
     }
+    cuikperf_region_end();
 
     ////////////////////////////////
     // IR generation
     ////////////////////////////////
+    cuikperf_region_start("irgen", NULL);
     TB_Module* ir_mod = tb_module_create_for_host(true);
     jit = tb_jit_begin(ir_mod, 2*1024*1024);
 
@@ -1096,7 +1260,7 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
         CuikGo_Word* next = next_word(w->ref);
         if (w->tag == WORD_FUNC) {
             TB_FunctionPrototype* proto = tb_prototype_create(ir_mod, TB_STDCALL, 2, (TB_PrototypeParam[2]){ { TB_TYPE_GCREF }, { TB_TYPE_GCREF } }, 0, NULL, false);
-            bool is_main = strcmp(w->name, "main") == 0;
+            bool is_main = strcmp(w->name, "MaxArray") == 0;
 
             TB_Function* func = w->ir.f;
             TB_GraphBuilder* g = tb_builder_enter(func, tb_module_get_text(ir_mod), proto, NULL);
@@ -1119,34 +1283,19 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
             tb_opt(func, ws, false);
 
             TB_FunctionOutput* out = tb_codegen(func, TB_RA_ROGERS, ws, NULL, true);
-            tb_output_print_asm(out, NULL);
-
             void* fnptr = tb_jit_place_function(jit, func);
             if (is_main) {
                 go_stuff = fnptr;
             }
-            tb_function_destroy(func);
         } else if (w->tag != WORD_TYPE_DECL) {
             __debugbreak();
         }
         w = next;
     }
+    cuikperf_region_end();
 
     tb_jit_dump_heap(jit);
-    __debugbreak();
-
-    // Space+NMT
-    //    10 0 => TRAP
-    //    10 1 => TRAP
-    go_spawn(jit);
-
-    thrd_t n_thrds[1];
-    thrd_t sched_thrd;
-    FOR_N(i, 0, 1) {
-        thrd_create(&n_thrds[i], sched_n_main, NULL);
-    }
-    thrd_create(&sched_thrd, gc_main, NULL);
-    thrd_join(sched_thrd, NULL);
+    sched_main();
 
     // tb_jit_end(jit);
 }

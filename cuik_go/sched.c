@@ -19,10 +19,9 @@ TB_Stacklet* go_spawn(TB_JIT* jit) {
     return stack;
 }
 
-static void (*go_stuff)(void);
-
+static void (*go_stuff)(Slice*, Slice*);
 static void foobar(void) {
-    for (;;) {
+    FOR_N(j, 0, 10000) {
         Slice a = { gc_alloc(1024, 0), 1024/8, 1024/8 };
         Slice b = { gc_alloc(1024, 0), 1024/8, 1024/8 };
 
@@ -36,32 +35,70 @@ static void foobar(void) {
         }
 
         // printf("go_stuff(%p, %p)\n", gc_rawptr(a.base), gc_rawptr(b.base));
-        FOR_N(i, 0, 10) {
-            // go_stuff(&a, &b);
-            thrd_sleep(&(struct timespec){ .tv_nsec = 50000000 }, NULL);
+        FOR_N(i, 0, 5000) {
+            go_stuff(&a, &b);
         }
     }
 }
 
-// This thread mostly just notifies other threads to pause
-static int sched_main(void* arg) {
-    for (;;) {
+// This thread maps to an OS-thread, it's main job is just run goroutines
+static int sched_m_main(void* arg) {
+    cuikperf_thread_start();
+    marklist_n = gc_marklist_init();
+    tb_jit_thread_call(first_task, foobar, NULL, 0, NULL);
+    cuikperf_thread_stop();
 
-    }
+    main_complete = true;
+    return 0;
 }
 
-// This thread maps to an OS-thread, it's main job is just run goroutines
-static int sched_n_main(void* arg) {
-    marklist_n = gc_marklist_init();
-    tb_jit_thread_call(first_task, go_stuff, NULL, 0, NULL);
-    printf("Done!\n");
-    return 0;
+// This just notifies other threads to pause
+static void sched_main(void) {
+    thrd_t gc_thrd, m_thrd;
+    thrd_create(&gc_thrd, gc_main, NULL);
+    thrd_create(&m_thrd,  sched_m_main, NULL);
+
+    go_spawn(jit);
+
+    while (!main_complete) {
+        thrd_sleep(&(struct timespec){ .tv_nsec = 100000000 }, NULL);
+
+        // signal context switch
+        // printf("SIGNAL!!!\n");
+    }
+
+    thrd_join(gc_thrd, NULL);
+    printf("DEAD!!!\n");
 }
 
 TB_Stacklet* c_checkpoint(TB_Stacklet* stack) {
     uint64_t start = cuik_time_in_nanos();
     Sched_G* g = sched_g_get(stack);
+
+    cuikperf_region_start("chkpt", NULL);
     g->pause = 0;
+
+    // checkpoint -> running
+    /*uint64_t pause_reason = atomic_load_explicit(&g->pause, memory_order_acquire);
+    if (pause_reason == SCHED_G_ARM_CTX_SWITCH) {
+        TB_Stacklet* next;
+        uint64_t status = SCHED_G_IDLE;
+        do {
+            next = g->next ? g->next : first_task;
+            if (g == next) {
+                return g;
+            }
+
+            // we were asked to context switch, let's do that.
+            atomic_store_explicit(&g->pause, SCHED_G_IDLE, memory_order_release);
+
+            // "acquire" the next task, it's possible we need to wait for the GC lock
+            Sched_G* g_next = sched_g_get(next);
+            status = atomic_load_explicit(&g->pause, memory_order_acquire);
+        } while (!atomic_compare_exchange_strong(&g->pause, &status, memory_order_release));
+
+        return next;
+    }*/
 
     if (gc_mid_reloc) {
         // Reset TLAB
@@ -114,6 +151,7 @@ TB_Stacklet* c_checkpoint(TB_Stacklet* stack) {
     }
 
     // notify that we've done our root scanning
+    cuikperf_region_end();
     gc_checkpoint_time += cuik_time_in_nanos() - start;
     gc_checkpoint_trigger++;
     return stack;

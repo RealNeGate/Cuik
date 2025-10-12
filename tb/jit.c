@@ -496,18 +496,19 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
 
 TB_Stacklet* tb_jit_thread_create(TB_JIT* jit, size_t ud_size, size_t limit) {
     TB_Stacklet* stack = tb_platform_valloc(limit*2);
-
     uintptr_t addr = (uintptr_t) stack;
     stack = (TB_Stacklet*) ((addr + limit - 1) & -limit);
 
     stack->ud_size = ud_size;
     stack->limit = limit;
     stack->jit = jit;
-    #ifdef _WIN32
-    stack->except = AddVectoredExceptionHandler(1, except_handler);
-    #endif
-
     return stack;
+}
+
+void tb_jit_thread_init(TB_JIT* jit, TB_Stacklet* stack, size_t ud_size, size_t limit) {
+    stack->ud_size = ud_size;
+    stack->limit = limit;
+    stack->jit = jit;
 }
 
 void tb_jit_breakpoint(TB_JIT* jit, void* addr) {

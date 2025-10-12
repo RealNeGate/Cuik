@@ -8,6 +8,18 @@ typedef struct {
     uint64_t cookie;
 } CPUState;
 
+enum {
+    SCHED_G_IDLE,
+
+    SCHED_G_RUNNING,
+
+    SCHED_G_ARM_CHECKPOINT,
+    SCHED_G_ARM_CTX_SWITCH,
+
+    // idle and we need to scan roots?
+    SCHED_G_GC_LOCK,
+};
+
 typedef struct Sched_G {
     _Atomic(uint64_t) pause;
     uint64_t pad;

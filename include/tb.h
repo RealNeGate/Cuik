@@ -964,6 +964,7 @@ TB_API void tb_jit_tag_object(TB_JIT* jit, void* ptr, void* tag);
 
 // Debugger stuff
 TB_API TB_Stacklet* tb_jit_thread_create(TB_JIT* jit, size_t ud_size, size_t stack_limit);
+TB_API void tb_jit_thread_init(TB_JIT* jit, TB_Stacklet* stack, size_t ud_size, size_t stack_limit);
 
 // offsetof user_data in the TB_Stacklet
 TB_API size_t tb_jit_thread_userdata(void);
