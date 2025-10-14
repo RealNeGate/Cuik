@@ -221,7 +221,7 @@ function walk(name)
 end
 
 walk("mimalloc")
-walk("cuik_go")
+-- walk("cuik_go")
 
 if options.cuik then
     walk("cuik_c")
