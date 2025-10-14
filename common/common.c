@@ -107,6 +107,14 @@ bool string_equals_cstr(const String* a, const char* b) {
     return a->length == strlen(b) && memcmp(a->data, b, a->length) == 0;
 }
 
+// Musl's impl for this
+int tb_string_case_cmp(const char *_l, const char *_r, size_t n) {
+    const unsigned char *l=(void *)_l, *r=(void *)_r;
+    if (!n--) return 0;
+    for (; *l && *r && n && (*l == *r || tolower(*l) == tolower(*r)); l++, r++, n--);
+    return tolower(*l) - tolower(*r);
+}
+
 ////////////////////////////////
 // Arenas
 ////////////////////////////////

@@ -69,17 +69,9 @@ static bool process_comdat(int select, TB_LinkerSectionPiece* old_p, TB_LinkerSe
     }
 }
 
-// Musl's impl for this
-static int string_case_cmp(const char *_l, const char *_r, size_t n) {
-    const unsigned char *l=(void *)_l, *r=(void *)_r;
-    if (!n--) return 0;
-    for (; *l && *r && n && (*l == *r || tolower(*l) == tolower(*r)); l++, r++, n--);
-    return tolower(*l) - tolower(*r);
-}
-
 static bool strprefix(const char* str, const char* pre, size_t len) {
     size_t prelen = strlen(pre);
-    return string_case_cmp(pre, str, len < prelen ? len : prelen) == 0;
+    return tb_string_case_cmp(pre, str, len < prelen ? len : prelen) == 0;
 }
 
 static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* end_directive) {

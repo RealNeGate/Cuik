@@ -50,6 +50,9 @@
 #  endif
 #endif
 
+#include "tb_x64_gen.h"
+// TODO: #include "tb_a64_gen.h"
+
 // These are flags
 typedef enum TB_ArithmeticBehavior {
     TB_ARITHMATIC_NONE = 0,
@@ -74,33 +77,16 @@ typedef enum TB_CallingConv {
     TB_TRAPCALL,
 } TB_CallingConv;
 
-typedef enum TB_FeatureSet_X64 {
-    TB_FEATURE_X64_SSE2   = (1u << 0u),
-    TB_FEATURE_X64_SSE3   = (1u << 1u),
-    TB_FEATURE_X64_SSE41  = (1u << 2u),
-    TB_FEATURE_X64_SSE42  = (1u << 3u),
-
-    TB_FEATURE_X64_POPCNT = (1u << 4u),
-    TB_FEATURE_X64_LZCNT  = (1u << 5u),
-
-    TB_FEATURE_X64_CLMUL  = (1u << 6u),
-    TB_FEATURE_X64_F16C   = (1u << 7u),
-
-    TB_FEATURE_X64_BMI1   = (1u << 8u),
-    TB_FEATURE_X64_BMI2   = (1u << 9u),
-
-    TB_FEATURE_X64_AVX    = (1u << 10u),
-    TB_FEATURE_X64_AVX2   = (1u << 11u),
-} TB_FeatureSet_X64;
-
 typedef enum TB_FeatureSet_Generic {
     TB_FEATURE_FRAME_PTR  = (1u << 0u),
     TB_FEATURE_STACK_MAPS = (1u << 1u),
 } TB_FeatureSet_Generic;
 
 typedef struct TB_FeatureSet {
-    uint32_t gen; // TB_FeatureSet_Generic
-    uint32_t x64; // TB_FeatureSet_X64
+    uint64_t gen; // TB_FeatureSet_Generic
+    union {
+        TB_X86_FeatureSet x86;
+    };
 } TB_FeatureSet;
 
 typedef enum TB_Linkage {
@@ -1127,7 +1113,9 @@ TB_API void tb_function_set_features(TB_Function* f, const TB_FeatureSet* featur
 TB_API void tb_function_set_attrs(TB_Function* f, TB_FunctionAttribs attrs);
 TB_API void tb_function_destroy(TB_Function* f);
 
-TB_API TB_FeatureSet tb_features_from_profile_str(TB_Module* m, const char* name);
+// returns 0 on success
+TB_API int tb_features_parse(TB_FeatureSet* out, TB_Module* m, const char* str);
+
 TB_API TB_Arena* tb_function_get_arena(TB_Function* f, int i);
 
 // if len is -1, it's null terminated

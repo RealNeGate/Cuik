@@ -75,6 +75,8 @@ preprocessed.c
 # metaprogram artifacts
 tb/x64/x64_gen.h
 tb/aarch64/a64_gen.h
+include/tb_x64_gen.h
+include/tb_a64_gen.h
 
 project.4coder
 *.cache
