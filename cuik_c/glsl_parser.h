@@ -50,7 +50,7 @@ static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, Token
                     SourceLoc start = tokens_get_location(s);
 
                     Token* t = tokens_get(s);
-                    Atom key = atoms_put(t->content.length, t->content.data);
+                    Atom key = t->atom;
                     tokens_next(s);
 
                     intmax_t value = -1;
@@ -62,7 +62,7 @@ static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, Token
                     bool success = false;
                     SourceRange r = { start, tokens_get_last_location(s) };
 
-                    #define X(name) if (key == parser->glsl.name) { glsl->name = parse_glsl_layout_attrib(s, &r, #name, value); success = (glsl->name >= 0); }
+                    #define X(name) if (key == atom_ ## name) { glsl->name = parse_glsl_layout_attrib(s, &r, #name, value); success = (glsl->name >= 0); }
                     X(binding);
                     X(location);
                     X(offset);
@@ -128,7 +128,7 @@ static Cuik_Type* parse_glsl_type(Cuik_Parser* restrict parser, TokenStream* res
         case TOKEN_KW_ivec4: return cuik__new_vector2(&parser->types, int_type, 4);
 
         default:
-        diag_err(s, get_token_range(t), "unknown type name. https://www.khronos.org/opengl/wiki/Data_Type_(GLSL)", t->content);
+        diag_err(s, get_token_range(t), "unknown type name '%s'. https://www.khronos.org/opengl/wiki/Data_Type_(GLSL)", t->atom);
         return NULL;
     }
 }

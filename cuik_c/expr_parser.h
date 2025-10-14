@@ -163,7 +163,6 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             SourceLoc loc = tokens_get_location(s);
 
             Token* t = tokens_get(s);
-            Atom name = atoms_put(t->content.length, t->content.data);
             tokens_next(s);
 
             if (current == NULL) {
@@ -174,7 +173,7 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
                 current->kids_count++;
                 current = n;
             }
-            current->member_name = name;
+            current->member_name = t->atom;
             current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
             continue;
         }
@@ -254,10 +253,13 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     while (!tokens_eof(s)) {
         Token* t = tokens_get(s);
         if (t->type == TOKEN_STRING_DOUBLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
-            total_len += t->content.length - 2;
-        } else if (string_equals_cstr(&t->content, "__func__")) {
-            if (cuik__sema_function_stmt) total_len += strlen(cuik__sema_function_stmt->decl.name);
-            else total_len += 3; // "???"
+            total_len += atoms_len(t->atom) - 2;
+        } else if (t->atom == atom___func__) {
+            if (cuik__sema_function_stmt) {
+                total_len += atoms_len(cuik__sema_function_stmt->decl.name);
+            } else {
+                total_len += 3; // "???"
+            }
         } else {
             break;
         }
@@ -275,9 +277,9 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     while (!tokens_eof(s)) {
         Token* t = tokens_get(s);
         if (t->type == TOKEN_STRING_DOUBLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
-            memcpy(&buffer[curr], t->content.data + 1, t->content.length - 2);
-            curr += t->content.length - 2;
-        } else if (string_equals_cstr(&t->content, "__func__")) {
+            memcpy(&buffer[curr], t->atom + 1, atoms_len(t->atom) - 2);
+            curr += atoms_len(t->atom) - 2;
+        } else if (t->atom == atom___func__) {
             if (cuik__sema_function_stmt) {
                 size_t len = strlen(cuik__sema_function_stmt->decl.name);
                 memcpy(&buffer[curr], cuik__sema_function_stmt->decl.name, len);
@@ -294,9 +296,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     }
 
     buffer[curr++] = '\"';
-
-    e->str.start = (const unsigned char*)buffer;
-    e->str.end = (const unsigned char*)(buffer + curr);
+    e->str = atoms_put(curr, (const unsigned char*) buffer);
 }
 
 // primary-expression:
@@ -331,7 +331,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
     switch (t->type) {
         case TOKEN_IDENTIFIER: {
-            if (string_equals_cstr(&t->content, "__va_arg")) {
+            if (t->atom == atom___va_arg) {
                 tokens_next(s);
 
                 expect_char(s, '(');
@@ -348,15 +348,13 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                     .va_arg_ = { type },
                 };
                 break;
-            } else if (!parser->is_in_global_scope && string_equals_cstr(&t->content, "__func__")) {
+            } else if (!parser->is_in_global_scope && t->atom == atom___func__) {
                 tokens_next(s);
                 Atom name = cuik__sema_function_stmt->decl.name;
 
                 e = push_expr(parser);
                 *e = (Subexpr){
-                    .op = EXPR_STR,
-                    .str.start = (const unsigned char*) name,
-                    .str.end = (const unsigned char*) &name[strlen(name)],
+                    .op = EXPR_STR, .str = name
                 };
                 break;
             }
@@ -364,17 +362,16 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             e = push_expr(parser);
 
             Token* t = tokens_get(s);
-            Atom name = atoms_put(t->content.length, t->content.data);
 
             Symbol* sym = NULL;
-            ptrdiff_t builtin_search = nl_map_get_cstr(parser->target->builtin_func_map, name);
+            ptrdiff_t builtin_search = nl_map_get_cstr(parser->target->builtin_func_map, t->atom);
             if (builtin_search >= 0) {
                 *e = (Subexpr){
                     .op = EXPR_BUILTIN_SYMBOL,
-                    .builtin_sym = { name },
+                    .builtin_sym = { t->atom },
                 };
             } else {
-                sym = cuik_symtab_lookup(parser->symbols, name);
+                sym = cuik_symtab_lookup(parser->symbols, t->atom);
                 if (sym != NULL) {
                     if (sym->storage_class == STORAGE_PARAM) {
                         *e = (Subexpr){
@@ -394,11 +391,11 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                         };
                     }
                 } else {
-                    diag_unresolved_symbol(parser, name, start_loc);
+                    diag_unresolved_symbol(parser, t->atom, start_loc);
 
                     *e = (Subexpr){
                         .op = EXPR_UNKNOWN_SYMBOL,
-                        .unknown_sym = { name },
+                        .unknown_sym = { t->atom },
                     };
                 }
             }
@@ -417,11 +414,11 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
         case TOKEN_FLOAT: {
             Token* t = tokens_get(s);
-            bool is_float32 = t->content.data[t->content.length - 1] == 'f';
+            bool is_float32 = t->atom[atoms_len(t->atom) - 1] == 'f';
 
             char* end;
-            double f = strtod((const char*) t->content.data, &end);
-            if (end != (const char*) &t->content.data[t->content.length]) {
+            double f = strtod(t->atom, &end);
+            if (end != &t->atom[atoms_len(t->atom)]) {
                 if (*end != 'l' && *end != 'L' && *end != 'f' && *end != 'd' && *end != 'F' && *end != 'D') {
                     diag_err(s, get_token_range(t), "invalid float literal");
                 }
@@ -438,7 +435,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
         case TOKEN_INTEGER: {
             Token* t = tokens_get(s);
             Cuik_IntSuffix suffix;
-            uint64_t i = parse_int(t->content.length, (const char*) t->content.data, &suffix);
+            uint64_t i = parse_int(atoms_len(t->atom), t->atom, &suffix);
 
             if (i > UINT32_MAX) {
                 suffix = INT_SUFFIX_LL;
@@ -459,7 +456,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             Token* t = tokens_get(s);
 
             int ch = 0;
-            ptrdiff_t distance = parse_char(t->content.length - 2, (const char*) &t->content.data[1], &ch);
+            ptrdiff_t distance = parse_char(atoms_len(t->atom) - 2, t->atom + 1, &ch);
             if (distance < 0) {
                 diag_err(s, get_token_range(t), "invalid character literal");
             }
@@ -478,7 +475,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             SourceLoc opening_loc = tokens_get_location(s);
             expect_char(s, '(');
 
-            String content = tokens_get(s)->content;
+            Atom content = tokens_get(s)->atom;
             tokens_next(s);
 
             Cuik_QualType char_type = cuik_uncanonical_type(&parser->target->signed_ints[CUIK_BUILTIN_CHAR]);
@@ -487,7 +484,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             *e = (Subexpr){
                 .op = EXPR_STR,
                 .has_visited = true,
-                .str = { content.data, content.data + content.length }
+                .str = content,
             };
 
             expect_closing_paren(s, opening_loc);
@@ -690,14 +687,13 @@ static void parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s,
             }
 
             Token* t = tokens_get(s);
-            Atom name = atoms_put(t->content.length, t->content.data);
             tokens_next(s);
 
             SourceLoc end_loc = tokens_get_last_location(s);
             *push_expr(parser) = (Subexpr){
                 .op = EXPR_ARROW,
                 .loc = { start_loc, end_loc },
-                .dot_arrow = { .name = name },
+                .dot_arrow = { .name = t->atom },
             };
 
             if (use_constructor) {
@@ -714,14 +710,13 @@ static void parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s,
             }
 
             Token* t = tokens_get(s);
-            Atom name = atoms_put(t->content.length, t->content.data);
             tokens_next(s);
 
             SourceLoc end_loc = tokens_get_last_location(s);
             *push_expr(parser) = (Subexpr){
                 .op = EXPR_DOT,
                 .loc = { start_loc, end_loc },
-                .dot_arrow = { .name = name },
+                .dot_arrow = { .name = t->atom },
             };
 
             if (use_constructor) {

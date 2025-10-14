@@ -1,83 +1,3 @@
-#define PERFECT_HASH_SEED UINT32_C(166379777)
-static const uint8_t keywords_table[256] = {
-    [147] = 0, // auto
-    [100] = 1, // break
-    [41] = 2, // case
-    [76] = 3, // char
-    [168] = 4, // const
-    [135] = 5, // continue
-    [151] = 6, // default
-    [165] = 7, // do
-    [109] = 8, // double
-    [124] = 9, // else
-    [20] = 10, // enum
-    [140] = 11, // extern
-    [107] = 12, // float
-    [85] = 13, // for
-    [22] = 14, // goto
-    [11] = 15, // if
-    [139] = 16, // inline
-    [38] = 17, // int
-    [99] = 18, // long
-    [9] = 19, // register
-    [113] = 20, // restrict
-    [167] = 21, // return
-    [83] = 22, // short
-    [144] = 23, // signed
-    [106] = 24, // sizeof
-    [104] = 25, // static
-    [160] = 26, // struct
-    [82] = 27, // switch
-    [141] = 28, // typedef
-    [150] = 29, // union
-    [1] = 30, // unsigned
-    [111] = 31, // void
-    [81] = 32, // volatile
-    [138] = 33, // while
-    [92] = 34, // _Alignas
-    [164] = 35, // _Alignof
-    [105] = 36, // _Atomic
-    [58] = 37, // _Bool
-    [126] = 38, // _Complex
-    [62] = 39, // _Embed
-    [26] = 40, // _Generic
-    [40] = 41, // _Imaginary
-    [175] = 42, // _Pragma
-    [154] = 43, // _Noreturn
-    [59] = 44, // _Static_assert
-    [90] = 45, // _Thread_local
-    [14] = 46, // _Typeof
-    [60] = 47, // _Vector
-    [117] = 48, // __asm__
-    [73] = 49, // __attribute__
-    [45] = 50, // __cdecl
-    [146] = 51, // __stdcall
-    [18] = 52, // __declspec
-    [70] = 53, // discard
-    [61] = 54, // layout
-    [51] = 55, // in
-    [157] = 56, // out
-    [132] = 57, // inout
-    [72] = 58, // uint
-    [108] = 59, // buffer
-    [97] = 60, // uniform
-    [65] = 61, // flat
-    [28] = 62, // smooth
-    [129] = 63, // noperspective
-    [16] = 64, // vec2
-    [69] = 65, // vec3
-    [122] = 66, // vec4
-    [63] = 67, // ivec2
-    [77] = 68, // ivec3
-    [91] = 69, // ivec4
-    [52] = 70, // uvec2
-    [66] = 71, // uvec3
-    [80] = 72, // uvec4
-    [172] = 73, // dvec2
-    [7] = 74, // dvec3
-    [21] = 75, // dvec4
-};
-
 static const char keywords[][16] = {
     "auto",
     "break",
@@ -190,23 +110,102 @@ static const uint8_t eq_classes[256] = {
     [192 ... 255] = 20,
 };
 
-static const uint64_t dfa[23] = {
-    [1] = (6ull << 12ull) | (12ull << 18ull) | (6ull << 30ull) | (6ull << 36ull) | (24ull << 42ull) | (48ull << 48ull) | (54ull << 54ull), // EQ2
-    [2] = (6ull << 0ull), // EQ3
-    [3] = (12ull << 0ull) | (6ull << 24ull) | (6ull << 30ull) | (6ull << 36ull) | (6ull << 42ull), // EQ4
-    [8] = (18ull << 0ull), // EQ9
-    [9] = (24ull << 0ull), // EQ10
-    [10] = (24ull << 0ull), // EQ11
-    [11] = (24ull << 0ull), // EQ12
-    [12] = (24ull << 0ull), // EQ13
-    [13] = (24ull << 0ull), // EQ14
-    [14] = (30ull << 0ull), // EQ15
-    [15] = (30ull << 0ull), // EQ16
-    [16] = (30ull << 0ull), // EQ17
-    [17] = (36ull << 0ull), // EQ18
-    [18] = (42ull << 0ull), // EQ19
-    [19] = (42ull << 0ull) | (6ull << 36ull), // EQ20
-    [20] = (48ull << 0ull) | (48ull << 48ull) | (54ull << 54ull), // EQ21
-    [21] = (6ull << 0ull), // EQ22
-    [22] = (54ull << 0ull) | (48ull << 48ull) | (54ull << 54ull), // EQ23
+static const uint8_t dfa[23][10] = {
+    [ 0] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 1] = {  0,  0,  1,  2,  0,  1,  1,  4,  8,  9 },
+    [ 2] = {  1,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 3] = {  2,  0,  0,  0,  1,  1,  1,  1,  0,  0 },
+    [ 4] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 5] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 6] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 7] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 8] = {  3,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 9] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [10] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [11] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [12] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [13] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [14] = {  5,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [15] = {  5,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [16] = {  5,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [17] = {  6,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [18] = {  7,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [19] = {  7,  0,  0,  0,  0,  0,  1,  0,  0,  0 },
+    [20] = {  8,  0,  0,  0,  0,  0,  0,  0,  8,  9 },
+    [21] = {  1,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [22] = {  9,  0,  0,  0,  0,  0,  0,  0,  8,  9 },
 };
+
+static const uint8_t lexer_final_state[10] = {
+};
+
+static bool lexer_is_space(int ch) {
+    uint64_t mask = (1ull << ' ') | (1ull << '\t') | (1ull << '\v') | (1ull << '\r') | (1ull << '\n') | (1ull << '/');
+    return ch < 64 ? (mask >> ch) & 1 : false;
+}
+Token lexer_read(Lexer* restrict l) {
+    unsigned char* current = l->current;
+    Token t = { 0 };
+    t.has_space = *current == ' ';
+    // phase 1: skip non-token space
+    //   branchless space skip
+    current += (*current == ' ');
+    //   non-token DFA
+    retry: {
+        // skip whitespace
+        while (lexer_is_space(*current)) {
+            t.hit_line = *current++ == '\n';
+        }
+        // check for comments
+        if (current[0] == '/' && current[1] == '/') {
+            __debugbreak();
+        } else if (current[0] == '/' && current[1] == '*') {
+            __debugbreak();
+        }
+    }
+    unsigned char* start = current;
+    unsigned char first  = *start;
+    if (__builtin_expect(first == '\0', 0)) {
+        return (Token){ 0 };
+    }
+    current++;
+    // eval first char
+    uint8_t eq_class = eq_classes[first];
+    uint64_t state   = dfa[eq_class][0];
+    if (state) {
+        // eval rest
+        for (;;) {
+            uint8_t ch = *current;
+            // read convert to class (compresses the DFA a lot)
+            uint8_t eq_class = eq_classes[ch];
+            if (ch == first) { eq_class = 1; }
+            // eval DFA
+            uint64_t next = dfa[eq_class][state];
+            if (next == 0) break;
+            state = next, current += 1;
+        }
+    }
+    uint64_t tag = lexer_final_state[state];
+    if (tag == 0) {
+        // these tokens are gonna get converted to real atoms
+        t.atom = atoms_put(current - start, start);
+    } else {
+        // these tokens have their contents embedded into the
+        // Atom pointer.
+        int length = current - start;
+        assert(length <= 3);
+        uint32_t mask = UINT32_MAX >> ((4 - length) * 8);
+        // potentially unaligned access :P
+        uint32_t chars;
+        memcpy(&chars, start, sizeof(uint32_t));
+        t.atom = (Atom) ((uintptr_t) (chars & mask) | (tag << 56ull));
+    }
+    // NOTE(NeGate): the lexer will modify code to allow for certain patterns
+    // if we wanna get rid of this we should make virtual code regions
+    if (__builtin_expect(current[0] == '\\' && (current[1] == '\r' || current[1] == '\n'), 0)) {
+        __debugbreak();
+    }
+    l->current = current;
+    t.location = encode_file_loc(l->file_id, start - l->start);
+    return t;
+}

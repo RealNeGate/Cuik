@@ -1,6 +1,6 @@
 #include <cuik.h>
 #include "../cuik_pp/lexer.h"
-#include "../cuik_c/atoms.h"
+#include "../cuik_pp/atoms.h"
 
 #include <common.h>
 #include <log.h>
@@ -39,10 +39,8 @@ static bool alphanum(int ch) {
     return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch == '_') || (ch >= '0' && ch <= '9');
 }
 
-static bool token_isa(Token t, const char* str) {
-    size_t l = strlen(str);
-    return l == t.content.length && memcmp(t.content.data, str, l) == 0;
-}
+#define X(name) static thread_local Atom atom_ ## name;
+#include "go_atoms.h"
 
 static Token cuikgo_lex(Lexer* l) {
     unsigned char* current = l->current;
@@ -58,7 +56,7 @@ static Token cuikgo_lex(Lexer* l) {
             // insert semicolon
             if (l->flags & LEXER_END_STMT) {
                 l->flags = 0;
-                return (Token){ .type = ';', .hit_line = true, .content = { 1, (const unsigned char*) ";" } };
+                return (Token){ .type = ';', .atom = atom_semicolon };
             }
 
             t.hit_line = true;
@@ -69,7 +67,7 @@ static Token cuikgo_lex(Lexer* l) {
     // parse token
     unsigned char* start = current;
     if (__builtin_expect(*start == '\0', 0)) {
-        return (Token){ .content = { 0, current } };
+        return (Token){ 0 };
     }
 
     l->flags = 0;
@@ -125,7 +123,7 @@ static Token cuikgo_lex(Lexer* l) {
 
     // encode token
     t.has_space = leading_space;
-    t.content = (String){ current - start, start };
+    t.atom      = atoms_put(current - start, start);
     // t.location = encode_file_loc(l->file_id, start - l->start);
     return t;
 }
@@ -144,18 +142,18 @@ static bool cuikgo_try_eat(Lexer* l, int type) {
     return false;
 }
 
-static bool cuikgo_try_eat_str(Lexer* l, const char* str) {
+static bool cuikgo_try_eat_str(Lexer* l, Atom str) {
     Lexer old = *l;
-    if (token_isa(cuikgo_lex(l), str)) {
+    if (cuikgo_lex(l).atom == str) {
         return true;
     }
     *l = old;
     return false;
 }
 
-static void cuikgo_eat_str(Lexer* l, const char* str) {
+static void cuikgo_eat_str(Lexer* l, Atom str) {
     Token t = cuikgo_lex(l);
-    if (!token_isa(t, str)) { abort(); }
+    if (t.atom != str) { abort(); }
 }
 
 static void cuikgo_eat(Lexer* l, int type) {
@@ -422,10 +420,7 @@ static void dump_words(CuikGo_Parser* ctx) {
     printf("\n");
 }
 
-static CuikGo_Symbol* def_name(CuikGo_Parser* ctx, int tag, String str, CuikGo_Type* type) {
-    printf("VAR '%.*s'\n", (int)str.length, str.data);
-
-    Cuik_Atom name = atoms_put(str.length, str.data);
+static CuikGo_Symbol* def_name(CuikGo_Parser* ctx, int tag, Cuik_Atom name, CuikGo_Type* type) {
     CuikGo_Word* w = submit_word(ctx, tag);
     w->name = name;
     w->type = type;
@@ -449,8 +444,7 @@ static CuikGo_Symbol* def_name(CuikGo_Parser* ctx, int tag, String str, CuikGo_T
     return sym;
 }
 
-static CuikGo_Symbol* ref_name(CuikGo_Parser* ctx, String str) {
-    Cuik_Atom name = atoms_put(str.length, str.data);
+static CuikGo_Symbol* ref_name(CuikGo_Parser* ctx, Cuik_Atom name) {
     CuikGo_Word* w = submit_word(ctx, WORD_REF);
     CuikGo_Symbol* sym = cuik_symtab_lookup(syms, name);
     if (sym == NULL) {
@@ -502,11 +496,11 @@ CuikGo_Type* cuikgo_type(CuikGo_Parser* ctx, Lexer* l) {
         }
     }
 
-    if (token_isa(t, "float64")) {
+    if (t.atom == atom_float64) {
         *dst = &FLOAT64_TYPE;
-    } else if (token_isa(t, "int")) {
+    } else if (t.atom == atom_int) {
         *dst = &INT_TYPE;
-    } else if (token_isa(t, "struct")) {
+    } else if (t.atom == atom_struct) {
         CuikGo_Type* new_type = calloc(1, sizeof(CuikGo_Type));
         new_type->tag = CUIKGO_STRUCT;
         new_type->fields = dyn_array_create(CuikGo_Field, 8);
@@ -520,8 +514,7 @@ CuikGo_Type* cuikgo_type(CuikGo_Parser* ctx, Lexer* l) {
                 t = cuikgo_lex(l);
                 TB_ASSERT(t.type == TOKEN_IDENTIFIER);
 
-                Cuik_Atom name = atoms_put(t.content.length, t.content.data);
-                dyn_array_put(new_type->fields, (CuikGo_Field){ name });
+                dyn_array_put(new_type->fields, (CuikGo_Field){ t.atom });
             } while (cuikgo_try_eat(l, ','));
 
             // Broadcast the same type to the fields
@@ -534,10 +527,9 @@ CuikGo_Type* cuikgo_type(CuikGo_Parser* ctx, Lexer* l) {
         cuikgo_eat(l, '}');
         *dst = new_type;
     } else if (t.type == TOKEN_IDENTIFIER) {
-        Cuik_Atom name = atoms_put(t.content.length, t.content.data);
-        CuikGo_Symbol* sym = cuik_symtab_lookup(syms, name);
+        CuikGo_Symbol* sym = cuik_symtab_lookup(syms, t.atom);
         if (sym == NULL) {
-            sym = cuik_symtab_put_global(syms, name, sizeof(CuikGo_Symbol));
+            sym = cuik_symtab_put_global(syms, t.atom, sizeof(CuikGo_Symbol));
 
             *dst = calloc(1, sizeof(CuikGo_Type));
             (*dst)->tag = CUIKGO_UNRESOLVED;
@@ -561,7 +553,7 @@ CuikGo_Word* cuikgo_name_list(CuikGo_Parser* ctx, Lexer* l, int tag, int* out_co
     do {
         t = cuikgo_lex(l);
         TB_ASSERT(t.type == TOKEN_IDENTIFIER);
-        CuikGo_Word* def = def_name(ctx, tag, t.content, NULL)->def_word;
+        CuikGo_Word* def = def_name(ctx, tag, t.atom, NULL)->def_word;
         if (count == 0) {
             w = def;
         }
@@ -575,21 +567,26 @@ CuikGo_Word* cuikgo_name_list(CuikGo_Parser* ctx, Lexer* l, int tag, int* out_co
 void cuikgo_expr(CuikGo_Parser* ctx, Lexer* l);
 void cuikgo_atom(CuikGo_Parser* ctx, Lexer* l) {
     Token t = cuikgo_lex(l);
-    if (token_isa(t, "nil")) {
+    if (t.atom == atom_nil) {
         submit_word(ctx, WORD_NIL);
-    } else if (token_isa(t, "new")) {
+    } else if (t.atom == atom_new) {
         cuikgo_eat(l, '(');
         CuikGo_Word* w = submit_word(ctx, WORD_NEW);
         w->src_type = cuikgo_type(ctx, l);
         cuikgo_eat(l, ')');
     } else if (t.type == TOKEN_INTEGER) {
         Cuik_IntSuffix suffix;
-        uint64_t i = parse_int(t.content.length, (const char*) t.content.data, &suffix);
+        uint64_t i = 0;
+        const char* str = t.atom;
+        while (*str) {
+            i = (i * 10) + (*str - '0');
+            str += 1;
+        }
 
         CuikGo_Word* w = submit_word(ctx, WORD_INT);
         w->iconst = i;
     } else if (t.type == TOKEN_IDENTIFIER) {
-        ref_name(ctx, t.content);
+        ref_name(ctx, t.atom);
     } else {
         __debugbreak();
     }
@@ -601,10 +598,9 @@ void cuikgo_atom(CuikGo_Parser* ctx, Lexer* l) {
             t = cuikgo_lex(l);
             TB_ASSERT(t.type == TOKEN_IDENTIFIER);
 
-            Cuik_Atom name = atoms_put(t.content.length, t.content.data);
             CuikGo_Word* w = submit_word(ctx, WORD_FIELD);
             w->arity = 1;
-            w->name  = name;
+            w->name  = t.atom;
             goto retry;
         } else if (t.type == '[') {
             cuikgo_expr(ctx, l);
@@ -702,7 +698,7 @@ void cuikgo_block(CuikGo_Parser* ctx, Lexer* l) {
 void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l, bool simple) {
     Lexer saved = *l;
     Token t = cuikgo_lex(l);
-    if (token_isa(t, "if")) {
+    if (t.atom == atom_if) {
         // TODO(NeGate): a simple statement can fit here
         cuikgo_expr(ctx, l);
 
@@ -723,12 +719,12 @@ void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l, bool simple) {
 
         CuikGo_Word* end_w = submit_word(ctx, WORD_CONSUME);
         else_w->ref = end_w;
-    } else if (token_isa(t, "return")) {
+    } else if (t.atom == atom_return) {
         cuikgo_expr(ctx, l);
 
         CuikGo_Word* w = submit_word(ctx, WORD_RETURN);
         w->arity = 1;
-    } else if (token_isa(t, "for")) {
+    } else if (t.atom == atom_for) {
         cuik_scope_open(syms);
 
         saved = *l;
@@ -739,19 +735,19 @@ void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l, bool simple) {
             // identifier list? we're either an init stmt or range clause
             int count = 1;
             Atom names[16];
-            names[0] = atoms_put(t.content.length, t.content.data);
+            names[0] = t.atom;
 
             if (ahead.type == ',') {
                 do {
                     t = cuikgo_lex(l);
                     TB_ASSERT(t.type == TOKEN_IDENTIFIER);
                     TB_ASSERT(count != 16);
-                    names[count++] = atoms_put(t.content.length, t.content.data);
+                    names[count++] = t.atom;
                 } while (cuikgo_try_eat(l, ','));
                 cuikgo_eat(l, 0x3D3A);
             }
 
-            if (cuikgo_try_eat_str(l, "range")) {
+            if (cuikgo_try_eat_str(l, atom_range)) {
                 FOR_N(i, 0, count) {
                     CuikGo_Word* w = submit_word(ctx, WORD_DECL_REF);
                     w->name = names[i];
@@ -833,14 +829,14 @@ void cuikgo_stmt(CuikGo_Parser* ctx, Lexer* l, bool simple) {
             // identifier list? this is a variable declaration
             int count = 1;
             Atom names[16];
-            names[0] = atoms_put(t.content.length, t.content.data);
+            names[0] = t.atom;
 
             if (ahead.type == ',') {
                 do {
                     t = cuikgo_lex(l);
                     TB_ASSERT(t.type == TOKEN_IDENTIFIER);
                     TB_ASSERT(count != 16);
-                    names[count++] = atoms_put(t.content.length, t.content.data);
+                    names[count++] = t.atom;
                 } while (cuikgo_try_eat(l, ','));
                 cuikgo_eat(l, 0x3D3A);
             }
@@ -1088,6 +1084,11 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
         .current = (unsigned char*) main_file.data
     };
 
+    if (atom_semicolon == NULL) {
+        #define X(name) atom_ ## name = atoms_putc(#name);
+        #include "go_atoms.h"
+    }
+
     ////////////////////////////////
     // Parsing
     ////////////////////////////////
@@ -1102,42 +1103,38 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
         Token t = cuikgo_lex(&l);
         if (t.type == 0) { break; }
 
-        if (token_isa(t, "var")) {
+        if (t.atom == atom_var) {
             t = cuikgo_lex(&l);
             TB_ASSERT(t.type == TOKEN_IDENTIFIER);
 
-            Cuik_Atom name = atoms_put(t.content.length, t.content.data);
             CuikGo_Type* type = cuikgo_type(ctx, &l);
-
-            CuikGo_Word* w = def_name(ctx, WORD_DECL, t.content, type)->def_word;
+            CuikGo_Word* w = def_name(ctx, WORD_DECL, t.atom, type)->def_word;
             w->ref  = w;
-        } else if (token_isa(t, "type")) {
+        } else if (t.atom == atom_type) {
             t = cuikgo_lex(&l);
             TB_ASSERT(t.type == TOKEN_IDENTIFIER);
 
-            Cuik_Atom name = atoms_put(t.content.length, t.content.data);
             CuikGo_Type* type = cuikgo_type(ctx, &l);
-
-            CuikGo_Symbol* sym = cuik_symtab_lookup(syms, name);
+            CuikGo_Symbol* sym = cuik_symtab_lookup(syms, t.atom);
             if (sym != NULL) {
                 // already referenced? backpatching time
                 TB_ASSERT(sym->type != NULL);
                 *sym->type = *type;
             } else {
-                sym = cuik_symtab_put(syms, name, sizeof(CuikGo_Symbol));
+                sym = cuik_symtab_put(syms, t.atom, sizeof(CuikGo_Symbol));
                 sym->type = type;
             }
 
             if (type->name == NULL) {
-                type->name = name;
+                type->name = t.atom;
             }
 
             CuikGo_Word* w = submit_word(ctx, WORD_TYPE_DECL);
-            w->name = name;
+            w->name = t.atom;
             w->type = type;
             w->ref  = w;
-        } else if (token_isa(t, "func")) {
-            String name = cuikgo_lex(&l).content;
+        } else if (t.atom == atom_func) {
+            Cuik_Atom name = cuikgo_lex(&l).atom;
             CuikGo_Word* w = def_name(ctx, WORD_FUNC, name, NULL)->def_word;
 
             CuikGo_Type* new_type = calloc(1, sizeof(CuikGo_Type));

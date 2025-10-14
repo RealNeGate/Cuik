@@ -9,6 +9,10 @@
 #include "targets/targets.h"
 #include "../cuik_pp/diagnostic.h"
 
+// Some pseudo-keywords
+#define X(name) static thread_local Atom atom_ ## name;
+#include "pseudo_keywords.h"
+
 // winnt.h loves including garbage
 #undef VOID
 
@@ -176,13 +180,6 @@ struct Cuik_Parser {
     // used when expression building
     Cuik_Expr* expr;
 
-    struct {
-        // these are unique entries in the string interner so
-        // we can cache it here
-        #define X(name) Atom name;
-        #include "glsl_keywords.h"
-    } glsl;
-
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
     // Once top-level parsing is complete we'll compute the TU (which stores
@@ -228,7 +225,7 @@ static bool expect_char(TokenStream* restrict s, char ch) {
         DiagFixit fixit = { tokens_get_last_range(s), 0, str };
         fixit.loc.start.raw += 1;
         fixit.loc.end.raw += 1;
-        diag_err(s, fixit.loc, "#expected '%c', got '%!S'", fixit, ch, tokens_get(s)->content);
+        diag_err(s, fixit.loc, "#expected '%c', got '%s'", fixit, ch, tokens_get(s)->atom);
         return false;
     } else {
         tokens_next(s);
@@ -465,7 +462,7 @@ size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
 
 static Symbol* find_symbol(Cuik_Parser* parser, TokenStream* restrict s) {
     Token* t = tokens_get(s);
-    return cuik_symtab_lookup(parser->symbols, atoms_put(t->content.length, t->content.data));
+    return cuik_symtab_lookup(parser->symbols, t->atom);
 }
 
 ////////////////////////////////

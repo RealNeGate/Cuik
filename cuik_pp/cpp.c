@@ -196,14 +196,9 @@ static void expect_from_lexer(Cuik_CPP* c, Lexer* l, char ch) {
     Token t = lexer_read(l);
     if (t.type != ch) {
         ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t.location);
-
-        fprintf(stderr, "error %s:%d: expected '%c' got '%.*s'", r.file->filename, r.line, ch, (int) t.content.length, t.content.data);
+        fprintf(stderr, "error %s:%d: expected '%c' got '%s'", r.file->filename, r.line, ch, t.atom);
         abort();
     }
-}
-
-static String get_token_as_string(TokenStream* restrict in) {
-    return tokens_get(in)->content;
 }
 
 static LocateResult locate_file(Cuik_CPP* ctx, bool search_lib_first, const Cuik_Path* restrict dir, const char* og_path, Cuik_Path* restrict canonical) {
@@ -259,6 +254,8 @@ static const char MAGIC_EMPTY_STRING[] = "";
 #include "cpp_expr.h"
 #include "cpp_directive.h"
 #include "cpp_iters.h"
+
+#include "atoms.c"
 
 const char* cuikpp_get_main_file(TokenStream* tokens) {
     return tokens->filepath;

@@ -5,6 +5,8 @@
 #include <dyn_array.h>
 #include <cuik_lex.h>
 
+#include "atoms.h"
+
 #define TKN2(x, y)                  (((y) << 8) | (x))
 #define TKN3(x, y, z) (((z) << 16) | ((y) << 8) | (x))
 
@@ -106,8 +108,6 @@ typedef struct {
     unsigned char* current;
 } Lexer;
 
-extern thread_local TB_Arena thread_arena;
-
 // this is used by the preprocessor to scan tokens in
 Token lexer_read(Lexer* restrict l);
 
@@ -141,16 +141,16 @@ static bool tokens_peek_double_token(TokenStream* restrict s, TknType tkn) {
 }
 
 static SourceRange get_token_range(Token* t) {
-    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
+    return (SourceRange){ t->location, { t->location.raw + atoms_len(t->atom) } };
 }
 
 static SourceLoc get_end_location(Token* t) {
-    return (SourceLoc){ t->location.raw + t->content.length };
+    return (SourceLoc){ t->location.raw + atoms_len(t->atom) };
 }
 
 static SourceLoc tokens_get_last_location(TokenStream* restrict s) {
     Token* t = &s->list.tokens[s->list.current - 1];
-    return (SourceLoc){ t->location.raw + t->content.length };
+    return (SourceLoc){ t->location.raw + atoms_len(t->atom) };
 }
 
 static SourceLoc tokens_get_location(TokenStream* restrict s) {
@@ -159,12 +159,12 @@ static SourceLoc tokens_get_location(TokenStream* restrict s) {
 
 static SourceRange tokens_get_last_range(TokenStream* restrict s) {
     Token* t = &s->list.tokens[s->list.current - 1];
-    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
+    return (SourceRange){ t->location, { t->location.raw + atoms_len(t->atom) } };
 }
 
 static SourceRange tokens_get_range(TokenStream* restrict s) {
     Token* t = &s->list.tokens[s->list.current];
-    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
+    return (SourceRange){ t->location, { t->location.raw + atoms_len(t->atom) } };
 }
 
 static bool tokens_hit_line(TokenStream* restrict s) {
@@ -180,8 +180,8 @@ static bool tokens_is(TokenStream* restrict s, TknType type) {
     return s->list.tokens[s->list.current].type == type;
 }
 
-static bool tokens_match(TokenStream* restrict s, size_t len, const char* str) {
-    return string_equals(&s->list.tokens[s->list.current].content, &(String){ len, (const unsigned char*) str });
+static bool tokens_match(TokenStream* restrict s, Atom atom) {
+    return s->list.tokens[s->list.current].atom == atom;
 }
 
 // this is used by the parser to get the next token

@@ -13,54 +13,6 @@
 
 #include "dfa.h"
 
-static uint32_t hash(uint32_t k) {
-    uint32_t lo = (k & 0xFFFF) * (PERFECT_HASH_SEED & 0xFFFF);
-    uint32_t hi = (k >> 16u) * (PERFECT_HASH_SEED >> 16u);
-    return ((hi<<16u) + lo) >> 8u;
-}
-static uint64_t hash_with_len(const void* data, size_t len) {
-    const uint8_t* p = data;
-    uint64_t h = 0;
-    for (size_t i = 0; i < len && i < 8; i++) {
-        h |= (uint64_t)p[i] << (uint64_t)(i*8);
-    }
-
-    uint32_t x = hash(h & 0xFFFFFFFF);
-    uint32_t y = hash(h >> 32u);
-    return (x + y) % 179;
-}
-
-TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
-    size_t v = hash_with_len(str, len);
-    v = keywords_table[v];
-
-    if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x800000) {
-        return TOKEN_IDENTIFIER;
-    }
-
-    // VERIFY
-    #if USE_INTRIN && CUIK__IS_X64
-    __m128i kw128 = _mm_loadu_si128((__m128i*)&keywords[v]);
-    __m128i str128 = _mm_loadu_si128((__m128i*)str);
-
-    int kw_len = __builtin_ffs(_mm_movemask_epi8(_mm_cmpeq_epi8(kw128, _mm_set1_epi8('\0')))) - 1;
-
-    // NOTE(NeGate): Fancy x86 strcmp crap :)
-    int result = _mm_cmpestri(kw128, kw_len, str128, len,
-        _SIDD_UBYTE_OPS |
-        _SIDD_CMP_EQUAL_EACH |
-        _SIDD_NEGATIVE_POLARITY |
-        _SIDD_UNIT_MASK
-    );
-
-    return result == 16 ? (0x800000 + v) : TOKEN_IDENTIFIER;
-    #else
-    if (strlen(keywords[v]) != len) return TOKEN_IDENTIFIER;
-
-    return memcmp((const char*) str, keywords[v], len) == 0 ? (0x800000 + v) : TOKEN_IDENTIFIER;
-    #endif
-}
-
 static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* current, unsigned char* start) {
     // you don't wanna be here... basically if we spot \U in the identifier
     // we reparse it but this time with the correct handling of those details.
@@ -176,10 +128,6 @@ Token lexer_read(Lexer* restrict l) {
 
     // NOTE(NeGate): We canonicalized spaces \t \v
     // in the preprocessor so we don't need to handle them
-    static uint64_t early_out[4] = {
-        [0] = (1ull << ' ') | (1ull << '\r') | (1ull << '\n') | (1ull << '/'),
-        [1] = (1ull << ('\\' - 64)),
-    };
 
     while ((early_out[*current / 64] >> (*current % 64)) & 1) {
         #if USE_INTRIN && CUIK__IS_X64
@@ -248,7 +196,7 @@ Token lexer_read(Lexer* restrict l) {
     unsigned char* start = current;
     unsigned char first = *start;
     if (__builtin_expect(first == '\0', 0)) {
-        return (Token){ .content = { 0, current } };
+        return (Token){ 0 };
     }
     current++;
 
@@ -400,13 +348,14 @@ Token lexer_read(Lexer* restrict l) {
     // if we wanna get rid of this we should make virtual code regions
     if (__builtin_expect(current[0] == '\\' && (current[1] == '\r' || current[1] == '\n'), 0)) {
         current = backslash_join(l, start, current);
+        __debugbreak();
     }
     l->current = current;
 
     // encode token
     t.has_space = leading_space;
-    t.content = (String){ current - start, start };
-    t.location = encode_file_loc(l->file_id, start - l->start);
+    t.atom      = atoms_put(current - start, start);
+    t.location  = encode_file_loc(l->file_id, start - l->start);
     return t;
 }
 

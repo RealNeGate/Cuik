@@ -20,8 +20,7 @@ static Cuik_Attribute* parse_attributes(Cuik_Parser* restrict parser, TokenStrea
             if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
                 diag_err(s, tokens_get_range(s), "expected an identifier");
             } else {
-                Token* t = tokens_get(s);
-                a->name = atoms_put(t->content.length, t->content.data);
+                a->name = tokens_get(s)->atom;
                 tokens_next(s);
             }
             a->loc.end = tokens_get_location(s);
@@ -44,11 +43,7 @@ static Cuik_Attribute* parse_attributes(Cuik_Parser* restrict parser, TokenStrea
             a->loc.start = tokens_get_location(s);
 
             Token* t = tokens_get(s);
-            if (t->type == TOKEN_IDENTIFIER) {
-                a->name = atoms_put(t->content.length, t->content.data);
-            } else {
-                a->name = NULL;
-            }
+            a->name = t->type == TOKEN_IDENTIFIER ? t->atom : NULL;
 
             int depth = 1;
             while (depth) {
@@ -168,9 +163,6 @@ static bool is_typename(Cuik_Parser* restrict parser, TokenStream* restrict s) {
 
         case TOKEN_IDENTIFIER: {
             // good question...
-            Token* t = tokens_get(s);
-            Atom name = atoms_put(t->content.length, t->content.data);
-
             Symbol* loc = find_symbol(parser, s);
             if (loc != NULL) {
                 // if we find a normal symbol before the typedef, then we didn't match typename
@@ -422,7 +414,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                 tokens_next(s);
                 expect_char(s, '(');
 
-                if (tokens_match(s, sizeof("noreturn")-1, "noreturn")) {
+                if (tokens_match(s, atom_noreturn)) {
                     tokens_next(s);
                     expect_char(s, ')');
                 } else {
@@ -558,8 +550,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                 Atom name = NULL;
                 if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-                    Token* t = tokens_get(s);
-                    name = atoms_put(t->content.length, t->content.data);
+                    name = tokens_get(s)->atom;
                     tokens_next(s);
                 }
 
@@ -607,7 +598,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                             diag_err(s, tokens_get_range(s), "expected identifier for enum name entry.");
                         }
 
-                        Atom name = atoms_put(t->content.length, t->content.data);
+                        Atom name = t->atom;
                         tokens_next(s);
 
                         int lexer_pos = 0;
@@ -698,10 +689,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                 Atom name = NULL;
                 if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
                     record_loc = tokens_get_range(s);
-
-                    Token* t = tokens_get(s);
-                    name = atoms_put(t->content.length, t->content.data);
-
+                    name = tokens_get(s)->atom;
                     tokens_next(s);
                 }
 
@@ -863,13 +851,11 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                 if (counter) goto done;
 
                 Token* t = tokens_get(s);
-                Atom name = atoms_put(t->content.length, t->content.data);
-
-                Symbol* old_def = cuik_symtab_lookup(parser->symbols, name);
+                Symbol* old_def = cuik_symtab_lookup(parser->symbols, t->atom);
                 if (old_def != NULL) {
                     // if the typename is already defined, then reuse that type index
                     if (old_def->storage_class != STORAGE_TYPEDEF) {
-                        diag_err(s, tokens_get_range(s), "symbol '%s' is not a typedef.", name);
+                        diag_err(s, tokens_get_range(s), "symbol '%s' is not a typedef.", t->atom);
                         diag_note(s, old_def->loc, "declared here");
                         return CUIK_QUAL_TYPE_NULL;
                     }
@@ -885,7 +871,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         *type = (Cuik_Type){
                             .kind = KIND_PLACEHOLDER,
                             .loc = get_token_range(t),
-                            .placeholder = { name },
+                            .placeholder = { t->atom },
                         };
 
                         // insert into placeholder list (we'll use this to check for unresolved types later)
@@ -893,14 +879,14 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         parser->first_placeholder = type;
 
                         Symbol sym = {
-                            .name = name,
+                            .name = t->atom,
                             .type = cuik_uncanonical_type(type),
                             .loc = type->loc,
                             .storage_class = STORAGE_TYPEDEF,
                         };
                         counter += OTHER;
 
-                        *CUIK_SYMTAB_PUT(parser->symbols, name, Symbol) = sym;
+                        *CUIK_SYMTAB_PUT(parser->symbols, t->atom, Symbol) = sym;
                         break;
                     } else {
                         // if not a typename, this isn't a typedecl
@@ -971,7 +957,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
             default: {
                 Token* last = &s->list.tokens[s->list.current];
-                diag_err(s, (SourceRange){ loc.start, tokens_get_last_location(s) }, "unknown typename %!S", last->content);
+                diag_err(s, (SourceRange){ loc.start, tokens_get_last_location(s) }, "unknown typename %s", last->atom);
                 tokens_next(s);
                 return CUIK_QUAL_TYPE_NULL;
             }
@@ -984,7 +970,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
     loc = (SourceRange){ loc.start, tokens_get_last_location(s) };
     if (type == 0) {
         Token* last = &s->list.tokens[s->list.current];
-        diag_err(s, loc, "unknown typename %!S", last->content);
+        diag_err(s, loc, "unknown typename %s", last->atom);
         tokens_next(s);
         return CUIK_QUAL_TYPE_NULL;
     }
@@ -1200,7 +1186,7 @@ static Decl parse_declarator_glsl(Cuik_Parser* restrict parser, TokenStream* res
     Token* t = tokens_get(s);
     if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
         // simple name
-        name = atoms_put(t->content.length, t->content.data);
+        name = t->atom;
         tokens_next(s);
     }
 
@@ -1251,7 +1237,7 @@ static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restric
     ptrdiff_t nested_start = -1, nested_end = -1;
     if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
         // simple name
-        name = atoms_put(t->content.length, t->content.data);
+        name = t->atom;
         tokens_next(s);
     } else if (t->type == '(') {
         // int (*name)(void);

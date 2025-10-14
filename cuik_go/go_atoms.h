@@ -1,0 +1,15 @@
+X(var)
+X(type)
+X(func)
+
+X(semicolon)
+X(float64)
+X(int)
+X(struct)
+X(nil)
+X(new)
+X(return)
+X(if)
+X(for)
+X(range)
+#undef X

@@ -107,6 +107,8 @@ local patterns = {
     ".", "..", "...",
 }
 
+rules = {}
+
 local state_count = 1
 
 local eq_count = 2
@@ -139,37 +141,107 @@ function dfa_range(first, last, from, to)
     end
 end
 
-function eq_match(str, tag)
-    local class = dfa_gen_class(tag)
-
-    -- regex style subpattern
-    local i = 1
+function parse_regex(str, i)
+    local pat = {}
     while i <= #str do
         local first = str:byte(i)
-        if first == string.byte("\\", 1) then
+        local subpat = nil
+        if str:byte(i) == string.byte("(") then
+            subpat, i = parse_regex(str, i + 1)
+        elseif str:byte(i) == string.byte(")") then
+            break
+        elseif str:byte(i) == string.byte("[") then
+            subpat = {}
+            subpat[#subpat + 1] = "or"
+
             i = i + 1
-            first = str:byte(i)
-        end
-        i = i + 1
-
-        local last = first
-        if str:sub(i, i) == "-" then
-            last = str:byte(i + 1)
-            if last == string.byte("\\", 1) then
+            while str:byte(i) ~= string.byte("]") do
+                local first = str:byte(i)
+                if first == string.byte("\\") then
+                    i = i + 1
+                    first = str:byte(i)
+                end
                 i = i + 1
-                last = str:byte(i)
+
+                local last = first
+                if str:sub(i, i) == "-" then
+                    last = str:byte(i + 1)
+                    if last == string.byte("\\") then
+                        i = i + 1
+                        last = str:byte(i)
+                    end
+                    i = i + 2
+                end
+
+                if first ~= last then
+                    subpat[#subpat + 1] = { "range", first, last }
+                else
+                    subpat[#subpat + 1] = first
+                end
             end
-            i = i + 2
+            i = i + 1
+        else
+            subpat = first
+            i = i + 1
         end
 
-        for j=first,last do
-            eq_classes[j] = class
+        if str:byte(i) == string.byte("?") then
+            subpat = { "or_none", subpat }
+            i = i + 1
+        elseif str:byte(i) == string.byte("*") then
+            subpat = { "star", subpat }
+            i = i + 1
+        elseif str:byte(i) == string.byte("+") then
+            subpat = { "plus", subpat }
+            i = i + 1
+        end
+        pat[#pat + 1] = subpat
+
+        if str:byte(i) == string.byte("|") then
+            subpat, i = parse_regex(str, i + 1)
+
+            -- not a real group
+            if type(pat) == "table" and #pat == 1 then
+                pat = pat[1]
+            end
+
+            if type(subpat) == "table" and subpat[1] == "or" then
+                pat = { "or", pat }
+                for i=2,#subpat do
+                    pat[1+i] = subpat[i]
+                end
+            else
+                pat = { "or", pat, subpat }
+            end
         end
     end
-    return class
+
+    -- not a real group
+    if type(pat) == "table" and #pat == 1 then
+        pat = pat[1]
+    end
+
+    return pat, i
 end
 
--- print(inspect(rules))
+function add_rule(str, tag)
+    local pat = parse_regex(str, 1)
+    rules[#rules + 1] = { tag=tag, pat=pat }
+end
+
+function add_rules_raw(list)
+
+end
+
+add_rule("(A|B|C)", "A")
+add_rule("[A-Za-z_$][A-Za-z0-9_$]*", "IDENT")
+
+add_rule("(0|[1-9][0-9]+)(.[0-9]*)?",    "NUMBER")
+add_rule("0[0-7]+",            "NUMBER")
+add_rule("0[bB][01]+",         "NUMBER")
+add_rule("0[xX][0-9A-Za-z]+",  "NUMBER")
+
+print(inspect(rules))
 
 -- Compile complex sigils
 function complex_sigil_rule(str)
@@ -226,7 +298,7 @@ do
 
             eq_classes[ch] = class
         end
-        -- print(#list, hash, class)
+        print(#list, hash, class)
     end
 
     for i=1,#spares do
@@ -331,7 +403,10 @@ do
     dfa_compile(1, active, 1, nil)
 end
 
-local ident = eq_match("A-Za-z$_", "IDENT")
+print("HHEHEHE")
+os.exit(0)
+
+local ident = 0 -- eq_match("A-Za-z$_", "IDENT")
 for i=192,255 do
    eq_classes[i] = ident
 end
@@ -340,7 +415,7 @@ local Q_class = dfa_gen_class("QUOTE")
 eq_classes[string.byte("'")] = Q_class
 eq_classes[string.byte("\"")] = Q_class
 
-local num = eq_match("0-9",      "NUM")
+local num = 0 -- eq_match("0-9",      "NUM")
 local dot = eq_classes[string.byte(".")]
 
 do
@@ -366,7 +441,7 @@ do
 end
 
 -- Dump DFA
-if false then
+if true then
     for i=1,state_count do
         print("State", i)
 
@@ -377,82 +452,18 @@ if false then
     end
 end
 
-function imul32(a, b)
-    local lo = bit.band(a, 0xFFFF) * bit.band(b, 0xFFFF)
-    local hi = bit.band(bit.rshift(a, 16), 0xFFFF) * bit.band(bit.rshift(b, 16), 0xFFFF)
-    return bit.lshift(hi, 16) + lo
-end
-
-function hash(k, a)
-    local m = 24
-    -- k = bit.bxor(bit.rshift(k, 32 - m))
-    k = bit.band(imul32(a, k), 0xFFFFFFFF)
-    return bit.rshift(k, 32 - m)
-end
-
-function read32(str, s, e)
-    e = math.min(e, #str)
-    local b = 0
-    for i=s,e do
-        local ch = str:byte(i)
-        b = bit.bor(b, bit.lshift(ch, (i-s)*8))
-    end
-    return b
-end
-
-function hash_function(a, str)
-    local x = hash(read32(str, 1, 4), a)
-    local y = hash(read32(str, 5, 8), a)
-    return (x + y) % 179
-end
-
-local a = 166379777
 local lines = {}
--- for trial=1,10000 do
-local trial = 0
-local highest = 0
-while true do
-    trial = trial + 1
-    -- print("Trial", a, b, trial, string.format("%#x", a))
+lines[#lines + 1] = "static const char keywords[][16] = {"
+for j=1,#keywords do
+    lines[#lines + 1] = string.format("    \"%s\",", keywords[j])
+end
+lines[#lines + 1] = "};"
+lines[#lines + 1] = ""
 
-    local slots = {}
-    local bad = false
-    for j=1,#keywords do
-        local i = hash_function(a, keywords[j])
-        -- print(string.format("%-16s => %d", keywords[j], i))
-
-        if slots[i] then
-            -- print(string.format("Trial %3d/0x%s: %.1f%%: collision %#x ('%s' %#x vs '%s' %#x)", trial, bit.tohex(a), (j / #keywords) * 100, i-1, keywords[j], h, slots[i], hash_function(a, slots[i])))
-            local prob = (j-1) / #keywords
-            if prob > highest then
-                -- print(string.format("Trial %3d/0x%s: %.1f%%", trial, bit.tohex(a), prob*100))
-            end
-            highest = math.max(highest, prob)
-            bad = true
-            break
-        end
-        slots[i] = keywords[j]
+function add_lines(str)
+    for s in str:gmatch("[^\r\n]+") do
+        lines[#lines + 1] = s
     end
-
-    if not bad then
-        lines[#lines + 1] = "#define PERFECT_HASH_SEED UINT32_C("..a..")"
-        lines[#lines + 1] = "static const uint8_t keywords_table[256] = {"
-        for j=1,#keywords do
-            local i = hash_function(a, keywords[j])
-            lines[#lines + 1] = string.format("    [%d] = %d, // %s", i, j-1, keywords[j])
-        end
-        lines[#lines + 1] = "};"
-        lines[#lines + 1] = ""
-        lines[#lines + 1] = "static const char keywords[][16] = {"
-        for j=1,#keywords do
-            lines[#lines + 1] = string.format("    \"%s\",", keywords[j])
-        end
-        lines[#lines + 1] = "};"
-        lines[#lines + 1] = ""
-        break
-    end
-
-    a = a + 1
 end
 
 lines[#lines + 1] = "static const uint8_t eq_classes[256] = {"
@@ -472,20 +483,113 @@ for j=0,256 do
 end
 lines[#lines + 1] = "};"
 lines[#lines + 1] = ""
-lines[#lines + 1] = string.format("static const uint64_t dfa[%s] = {", eq_count)
+lines[#lines + 1] = string.format("static const uint8_t dfa[%d][%d] = {", eq_count, state_count)
 for j=1,eq_count do
-    local vec = {}
+    local set = {}
     for i=1,state_count do
         if DFA[i][j] and DFA[i][j] ~= 1 then
-            vec[#vec + 1] = string.format("(%dull << %dull)", (DFA[i][j] - 1)*6, (i - 1)*6)
+            set[i] = DFA[i][j] - 1
+        else
+            set[i] = 0
         end
+        set[i] = string.format("%2d", set[i])
     end
 
-    if #vec > 0 then
-        lines[#lines + 1] = string.format("    [%d] = %s, // EQ%d", j-1, table.concat(vec, " | "), j)
+    if #set > 0 then
+        set = table.concat(set, ", ")
+        lines[#lines + 1] = string.format("    [%2d] = { %s },", j-1, set)
     end
 end
 lines[#lines + 1] = "};"
+lines[#lines + 1] = ""
+lines[#lines + 1] = string.format("static const uint8_t lexer_final_state[%d] = {", state_count)
+lines[#lines + 1] = "};"
+lines[#lines + 1] = ""
+add_lines[[
+static bool lexer_is_space(int ch) {
+    uint64_t mask = (1ull << ' ') | (1ull << '\t') | (1ull << '\v') | (1ull << '\r') | (1ull << '\n') | (1ull << '/');
+    return ch < 64 ? (mask >> ch) & 1 : false;
+}
+
+Token lexer_read(Lexer* restrict l) {
+    unsigned char* current = l->current;
+    Token t = { 0 };
+    t.has_space = *current == ' ';
+
+    // phase 1: skip non-token space
+    //   branchless space skip
+    current += (*current == ' ');
+    //   non-token DFA
+    retry: {
+        // skip whitespace
+        while (lexer_is_space(*current)) {
+            t.hit_line = *current++ == '\n';
+        }
+
+        // check for comments
+        if (current[0] == '/' && current[1] == '/') {
+            __debugbreak();
+        } else if (current[0] == '/' && current[1] == '*') {
+            __debugbreak();
+        }
+    }
+
+    unsigned char* start = current;
+    unsigned char first  = *start;
+    if (__builtin_expect(first == '\0', 0)) {
+        return (Token){ 0 };
+    }
+    current++;
+
+    // eval first char
+    uint8_t eq_class = eq_classes[first];
+    uint64_t state   = dfa[eq_class][0];
+
+    if (state) {
+        // eval rest
+        for (;;) {
+            uint8_t ch = *current;
+            // read convert to class (compresses the DFA a lot)
+            uint8_t eq_class = eq_classes[ch];
+            if (ch == first) { eq_class = 1; }
+            // eval DFA
+            uint64_t next = dfa[eq_class][state];
+            if (next == 0) break;
+            state = next, current += 1;
+        }
+    }
+
+    uint64_t tag = lexer_final_state[state];
+    if (tag == 0) {
+        // these tokens are gonna get converted to real atoms
+        t.atom = atoms_put(current - start, start);
+    } else {
+        // these tokens have their contents embedded into the
+        // Atom pointer.
+        int length = current - start;
+        assert(length <= 3);
+
+        uint32_t mask = UINT32_MAX >> ((4 - length) * 8);
+
+        // potentially unaligned access :P
+        uint32_t chars;
+        memcpy(&chars, start, sizeof(uint32_t));
+
+        t.atom = (Atom) ((uintptr_t) (chars & mask) | (tag << 56ull));
+    }
+
+    // NOTE(NeGate): the lexer will modify code to allow for certain patterns
+    // if we wanna get rid of this we should make virtual code regions
+    if (__builtin_expect(current[0] == '\\' && (current[1] == '\r' || current[1] == '\n'), 0)) {
+        __debugbreak();
+    }
+
+    l->current = current;
+    t.location = encode_file_loc(l->file_id, start - l->start);
+    return t;
+}
+]]
+lines[#lines + 1] = ""
 
 local final_src = table.concat(lines, "\n")
 local f = io.open("cuik_pp/dfa.h", "w")

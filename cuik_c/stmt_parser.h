@@ -229,7 +229,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             tokens_next(s);
 
             if (condition == 0) {
-                diag_err(s, (SourceRange){ start, end }, "static assertion failed! %.*s", (int) t->content.length, t->content.data);
+                diag_err(s, (SourceRange){ start, end }, "static assertion failed! %s", t->atom);
             }
         } else {
             if (condition == 0) {
@@ -529,7 +529,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             if (tokens_get(s)->type != TOKEN_KW_while) {
                 Token* t = tokens_get(s);
 
-                diag_err(s, get_token_range(t), "expected 'while' got '%.*s'", (int)t->content.length, t->content.data);
+                diag_err(s, get_token_range(t), "expected 'while' (for a do-while), got '%s'", t->atom);
             }
             tokens_next(s);
 
@@ -559,12 +559,10 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             return n;
         }
 
-        Atom name = atoms_put(t->content.length, t->content.data);
-
         // skip to the semicolon
         tokens_next(s);
 
-        ptrdiff_t search = nl_map_get_cstr(labels, name);
+        ptrdiff_t search = nl_map_get_cstr(labels, t->atom);
         if (search >= 0) {
             *push_expr(parser) = (Subexpr){
                 .op = EXPR_SYMBOL,
@@ -575,8 +573,8 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             // not defined yet, make a placeholder
             Stmt* label_decl = alloc_stmt(parser);
             label_decl->op = STMT_LABEL;
-            label_decl->label = (struct StmtLabel){ .name = name };
-            nl_map_put_cstr(labels, name, label_decl);
+            label_decl->label = (struct StmtLabel){ .name = t->atom };
+            nl_map_put_cstr(labels, t->atom, label_decl);
 
             *push_expr(parser) = (Subexpr){
                 .op = EXPR_SYMBOL,
@@ -595,17 +593,15 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         // label amirite
         // IDENTIFIER COLON STMT
         Token* t = tokens_get(s);
-        Atom name = atoms_put(t->content.length, t->content.data);
-
-        ptrdiff_t search = nl_map_get_cstr(labels, name);
+        ptrdiff_t search = nl_map_get_cstr(labels, t->atom);
         if (search >= 0) {
             n = labels[search].v;
         } else {
             n = alloc_stmt(parser);
             n->op = STMT_LABEL;
             n->loc = tokens_get_range(s);
-            n->label = (struct StmtLabel){ .name = name };
-            nl_map_put_cstr(labels, name, n);
+            n->label = (struct StmtLabel){ .name = t->atom };
+            nl_map_put_cstr(labels, t->atom, n);
         }
 
         n->label.placed = true;
