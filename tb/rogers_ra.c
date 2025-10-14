@@ -995,7 +995,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
             // reset assignment, but don't try to split them this round
             if (num_spills > 64) {
-				compare_split__vregs = ctx->vregs;
+                compare_split__vregs = ctx->vregs;
                 qsort(ra.splits, num_spills, sizeof(SplitDecision), compare_split);
 
                 for (size_t i = 64; i < num_spills; i++) {
