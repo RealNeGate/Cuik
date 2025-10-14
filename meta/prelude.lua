@@ -14,13 +14,31 @@ function OrderedSet()
         end
     end
 
+    function t:get(k)
+        return self.entries[k]
+    end
+
+    function t:count()
+        return #self.ord
+    end
+
+    -- return a table of keys to ordinals
+    function t:transpose()
+        local out = {}
+        for i=1,#self.ord do
+            out[self.ord[i]] = i
+        end
+        return out
+    end
+
     function t:iter()
         local i = 0
         local n = #self.ord
         return function ()
             i = i + 1
             if i <= n then
-                return self.ord[i]
+                local k = self.ord[i]
+                return k, self.entries[k]
             end
         end
     end
@@ -57,6 +75,10 @@ function Partitions()
             list[#list + 1] = v[i]
         end
         return is_new
+    end
+
+    function t:get(k)
+        return self.entries[k]
     end
 
     function t:at(i)

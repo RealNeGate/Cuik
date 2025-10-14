@@ -75,7 +75,7 @@ end
 
 lines[#lines + 1] = "#include \"../emitter.h\""
 lines[#lines + 1] = "#include \"../tb_internal.h\""
-lines[#lines + 1] = "#include <strings.h>"
+lines[#lines + 1] = "#include <string.h>"
 lines[#lines + 1] = ""
 
 function decl_type(n)
@@ -133,12 +133,30 @@ while true do
         end
 
         local pattern = parse_node(lex)
+        local where = nil
 
         t = lex()
-        local where = nil
-        if t == "where" then
-            where = lex()
-            t = lex()
+        while t == "where" or t == "require" do
+            local expr
+            if t == "where" then
+                expr = lex()
+                t = lex()
+            else
+                expr = lex()
+
+                local feats = {}
+                for s in string.gmatch(expr, "([^,]+)") do
+                    feats[#feats + 1] = string.format("TB_%sFeatureSet__get(&f->features.%s, TB_%sFEATURE_%s)", mach_prefix:upper(), mach_prefix:sub(1, -2), mach_prefix:upper(), s:upper())
+                end
+                expr = table.concat(feats, " && ")
+                t = lex()
+            end
+
+            if where then
+                where = where.." && "..expr
+            else
+                where = expr
+            end
         end
 
         if t ~= "=>" then
@@ -171,20 +189,10 @@ while true do
                 return x:gsub("[-]","_"):gsub("[.]","_")
             end
 
-            local implies_map = {}
+            local implies_map = OrderedSet()
             local pfx_parser
-            local tg_fmt
             for i=2, #n do
                 local feat = n[i]
-
-                if feat[1] == "_format" then
-                    tg_fmt = feat[2]
-                    if #feat ~= 2 then
-                        print("wrong syntax for _prefix-parser")
-                        os.exit(1)
-                    end
-                    goto continue
-                end
 
                 if feat[1] == "_prefix-parser" then
                     pfx_parser = feat[2]
@@ -201,81 +209,84 @@ while true do
                     print("wrong syntax for arch_features")
                     os.exit(1)
                 end
-                if implies_map[feat_name] then
+                if implies_map:get(feat_name) then
                     print(string.format("arch feature '%s' has already been defined", feat_name))
                     os.exit(1)
                 end
                 if feat[2] then
                     if feat[2] == "=>" then
-                        implies_map[feat_name] = { unpack(feat, 3) }
+                        implies_map:put(feat_name, { unpack(feat, 3) })
                     else
                         print(inspect(feat))
                         print("wrong syntax for arch_features")
                         os.exit(1)
                     end
                 else
-                    implies_map[feat_name] = {}
+                    implies_map:put(feat_name, true)
                 end
             ::continue::
             end
 
-            if not tg_fmt then
-                print("missing (arch_features (_format \"_\"))")
-                os.exit(1)
-            end
-
             local function collect_implied_feats(feat_name, out)
                 out = out or {}
-
                 for _, x in ipairs(out) do
                     if x == feat_name then
                         return
                     end
-                end 
+                end
                 out[#out + 1] = feat_name
 
-                local li = implies_map[feat_name]
+                local li = implies_map:get(feat_name)
                 if not li then
                     print(string.format("implied arch feature '%s' not defined", feat_name))
                     os.exit(1)
-                end
-                for _, other in ipairs(li) do
-                    collect_implied_feats(other, out)
+                elseif type(li) == "table" then
+                    for _, other in ipairs(li) do
+                        collect_implied_feats(other, out)
+                    end
                 end
                 return out
             end
 
-            -- we will have more than 64 features so we can't use nice bit enums, instead we do this:
-
-            local sig
+            local implied2idx = implies_map:transpose()
 
             -- generate enum --
             pub_lines[#pub_lines + 1] = "typedef enum {"
-            for feat, _ in pairs(implies_map) do
+            for feat, i in implies_map:iter() do
                 pub_lines[#pub_lines + 1] = "    " .. entnamepfx .. mangle(feat):upper() .. ","
             end
+            pub_lines[#pub_lines + 1] = "    " .. entnamepfx .. "_MAX" .. ","
             pub_lines[#pub_lines + 1] = "} " .. enum_tyname .. ";"
             pub_lines[#pub_lines + 1] = ""
 
             -- generate featureset --
+            local word_count = math.ceil(implies_map:count() / 64)
             pub_lines[#pub_lines + 1] = "typedef struct {"
-            for feat, _ in pairs(implies_map) do
-                pub_lines[#pub_lines + 1] = "    bool " .. mangle(feat) .. " : 1" .. ";"
-            end
+            pub_lines[#pub_lines + 1] = "    uint64_t set["..word_count.."];"
             pub_lines[#pub_lines + 1] = "} " .. set_tyname .. ";"
             pub_lines[#pub_lines + 1] = ""
 
             -- generate featureset_set --
-            sig = "void "..set_tyname.."__set("..set_tyname.."* out, "..enum_tyname.." ent)"
+            local sig = "void "..set_tyname.."__set("..set_tyname.."* out, "..enum_tyname.." ent)"
             pub_lines[#pub_lines + 1] = sig..";"
             lines[#lines + 1] = sig.." {"
+            lines[#lines + 1] = "    out->set[ent / 64] |= 1ull << (ent % 64);"
             lines[#lines + 1] = "    switch (ent) {"
-            for feat, _ in pairs(implies_map) do
-                lines[#lines + 1] = "    case "..entnamepfx..mangle(feat):upper()..":"
-                for _, x in ipairs(collect_implied_feats(feat)) do
-                    lines[#lines + 1] = "        out->"..mangle(x).." = true;"
+            for feat, _ in implies_map:iter() do
+                local implied_feats = collect_implied_feats(feat)
+                if #implied_feats > 1 then
+                    local words = Partitions()
+                    for i=2,#implied_feats do
+                        local x = implied2idx[implied_feats[i]]
+                        words:put(math.floor(x / 64), string.format("(1ull << %dull)", x % 64))
+                    end
+
+                    lines[#lines + 1] = "    case "..entnamepfx..mangle(feat):upper()..":"
+                    for i,v in words:iter() do
+                        lines[#lines + 1] = string.format("        out->set[%d] |= %s;", i, table.concat(v, " | "))
+                    end
+                    lines[#lines + 1] = "        break;"
                 end
-                lines[#lines + 1] = "        break;"
             end
             lines[#lines + 1] = "    default:"
             lines[#lines + 1] = "        tb_unreachable();"
@@ -291,15 +302,8 @@ while true do
             sig = "bool "..set_tyname.."__get("..set_tyname.." const* out, "..enum_tyname.." ent)"
             pub_lines[#pub_lines + 1] = sig..";"
             lines[#lines + 1] = sig.." {"
-            lines[#lines + 1] = "    switch (ent) {"
-            for feat, _ in pairs(implies_map) do
-                lines[#lines + 1] = "    case "..entnamepfx..mangle(feat):upper()..":"
-                lines[#lines + 1] = "        return out->"..mangle(feat)..";"
-            end
-            lines[#lines + 1] = "    default:"
-            lines[#lines + 1] = "        tb_unreachable();"
-            lines[#lines + 1] = "        return false;"
-            lines[#lines + 1] = "    }"
+            lines[#lines + 1] = "    TB_ASSERT(ent < "..entnamepfx.."_MAX);"
+            lines[#lines + 1] = "    return (out->set[ent / 64] >> (ent % 64)) & 1;"
             lines[#lines + 1] = "}"
             lines[#lines + 1] = ""
 
@@ -307,9 +311,9 @@ while true do
             sig = "void "..set_tyname.."__each_toggled("..set_tyname.." const* set, void (*consumer)("..enum_tyname..", void*), void* userptr)"
             pub_lines[#pub_lines + 1] = sig..";"
             lines[#lines + 1] = sig.." {"
-            for feat, _ in pairs(implies_map) do
-                lines[#lines + 1] = "    if (set->"..mangle(feat)..") consumer("..entnamepfx..mangle(feat):upper()..", userptr);"
-            end
+            lines[#lines + 1] = "    FOR_N(i, 0, "..entnamepfx.."_MAX) {"
+            lines[#lines + 1] = "        if ((set->set[i / 64] >> (i % 64)) & 1) { consumer(i, userptr); }"
+            lines[#lines + 1] = "    }"
             lines[#lines + 1] = "}"
             lines[#lines + 1] = ""
 
@@ -318,7 +322,7 @@ while true do
             pub_lines[#pub_lines + 1] = sig..";"
             lines[#lines + 1] = sig.." {"
             lines[#lines + 1] = "    switch (ent) {"
-            for feat, _ in pairs(implies_map) do
+            for feat, _ in implies_map:iter() do
                 lines[#lines + 1] = "    case "..entnamepfx..mangle(feat):upper()..":"
                 lines[#lines + 1] = "        return \""..mangle(feat).."\";"
             end
@@ -335,14 +339,14 @@ while true do
             pub_lines[#pub_lines + 1] = sig..";"
             lines[#lines + 1] = sig.." {"
             lines[#lines + 1] = "    if (!str || str_len == 0) return 1;"
-            lines[#lines + 1] = "    unsigned char hash = (str[0] ^ str[str_len-1]) % 8;" -- 2 bytes because of rv Zbb, Zcond, ...
+            lines[#lines + 1] = "    unsigned char hash = (tolower(str[0]) ^ tolower(str[str_len - 1])) % 8;" -- 2 bytes because of rv Zbb, Zcond, ...
             lines[#lines + 1] = "    switch (hash) {"
             for i=0,7 do
-                lines[#lines + 1] = "    case "..i..":"
-                for feat, _ in pairs(implies_map) do
+                lines[#lines + 1] = "        case "..i..":"
+                for feat, _ in implies_map:iter() do
                     local hash = math.fmod(xor8(feat:byte(1), feat:byte(#feat)), 8)
                     if hash == i then
-                        lines[#lines + 1] = "        if (str_len == "..#feat.." && !strncasecmp(str, \""..feat.."\", "..#feat..")) {"
+                        lines[#lines + 1] = "        if (str_len == "..#feat.." && !tb_string_case_cmp(str, \""..feat.."\", "..#feat..")) {"
                         lines[#lines + 1] = "            *out = "..entnamepfx..mangle(feat):upper()..";"
                         lines[#lines + 1] = "            return 0;"
                         lines[#lines + 1] = "        }"
@@ -369,7 +373,7 @@ while true do
                 lines[#lines + 1] = "    str = "..pfx_parser.."(str,  out);"
             end
             lines[#lines + 1] = "    for (; str && *str; ) {"
-            lines[#lines + 1] = "        char const* next = strchr(str, '"..tg_fmt.."');"
+            lines[#lines + 1] = "        char const* next = strchr(str, ',');"
             lines[#lines + 1] = "        unsigned int len = next ? next - str : strlen(str);"
             lines[#lines + 1] = "        "..enum_tyname.." x;"
             lines[#lines + 1] = "        if ("..enum_tyname.."__from_str(&x, str, len)) return 1;"

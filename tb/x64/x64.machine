@@ -10,12 +10,7 @@
     //               if (*str == 'c' && ++str) TB_RV_FeatureSet__set(feats, TB_RV_FEATURE_C);
     //               // ...
     //               return str;
-    //             }  
-
-	// riscv would use (_format "_")
-	// x86 can't do that, because the profiles contain underscores
-	(_format "+")
-
+    //             }
     // (a)            feature a
     // (a => x y z)   feature a, which implies x, y, z
 
@@ -215,8 +210,8 @@ pat (TB_VA_START ...) => "isel_va_start(ctx, f, n)"
 // *******************************
 #define BMI2_OP(op_name, mnemonic) \
 (node mnemonic X86MemOp) \
-pat (op_name dt=$dt ___ $lhs $rhs) where "ctx->features.x86.bmi2" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
-pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: MEMORY ...)) $rhs) where "ctx->features.x86.bmi2" => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD) \
+pat (op_name dt=$dt ___ $lhs $rhs) require "bmi2" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
+pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: MEMORY ...)) $rhs) require "bmi2" => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD) \
 
 BMI2_OP(TB_SHL, shlx)
 BMI2_OP(TB_SHR, shrx)

@@ -3048,7 +3048,7 @@ int max_pack_width_for_op(TB_Function* f, TB_DataType dt, TB_Node* n) {
     };
 
     int i = 0;
-    if (f->features.x86.avx) {
+    if (TB_X86_FeatureSet__get(&f->features.x86, TB_X86_FEATURE_AVX)) {
         i = 1;
     }
 

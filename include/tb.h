@@ -83,7 +83,7 @@ typedef enum TB_FeatureSet_Generic {
 } TB_FeatureSet_Generic;
 
 typedef struct TB_FeatureSet {
-    uint32_t gen; // TB_FeatureSet_Generic
+    uint64_t gen; // TB_FeatureSet_Generic
     union {
         TB_X86_FeatureSet x86;
     };
