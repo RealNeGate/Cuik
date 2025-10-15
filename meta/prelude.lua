@@ -238,7 +238,7 @@ function parse_node(lex)
         t = lex()
     end
 
-    while t ~= ")" do
+    while t and t ~= ")" do
         if t == "(" then
             n[#n + 1] = parse_node(lex)
             t = lex()

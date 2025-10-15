@@ -146,54 +146,6 @@ TB_PassingRule tb_get_passing_rule_from_dbg(TB_Module* mod, TB_DebugType* param_
     return classify_reg(mod->target_abi, param_type) == RG_MEMORY ? TB_PASSING_INDIRECT : TB_PASSING_DIRECT;
 }
 
-TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, size_t* out_param_count) {
-    TB_ASSERT_MSG(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
-    TB_ASSERT_MSG(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
-
-    TB_ABI abi = f->super.module->target_abi;
-    TB_FunctionPrototype* p = tb_prototype_from_dbg(f->super.module, dbg);
-
-    // apply prototype
-    tb_function_set_prototype(f, section, p);
-
-    size_t param_count = dbg->func.param_count;
-    TB_DebugType** param_list = dbg->func.params;
-
-    // reassemble values
-    TB_Node** params = NULL;
-    if (dbg->func.param_count > 0) {
-        params = tb_arena_alloc(&f->arena, sizeof(TB_Node*) * param_count);
-
-        bool has_aggregate_return = dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
-        FOR_N(i, 0, param_count) {
-            TB_DebugType* type = param_list[i]->field.type;
-            const char* name = param_list[i]->field.name;
-            size_t name_len = param_list[i]->field.len;
-
-            int size = debug_type_size(abi, type);
-            int align = debug_type_align(abi, type);
-
-            // place values into memory
-            TB_Node* v = tb_inst_param(f, i + has_aggregate_return);
-
-            RegClass rg = classify_reg(abi, type);
-            if (rg == RG_MEMORY) {
-                params[i] = v;
-            } else {
-                TB_Node* slot = tb_inst_local(f, size, align);
-                tb_inst_store(f, p->params[i + has_aggregate_return].dt, slot, v, align, false);
-                params[i] = slot;
-            }
-
-            // mark debug info
-            tb_function_attrib_variable(f, params[i], NULL, name_len, name, type);
-        }
-    }
-
-    *out_param_count = param_count;
-    return params;
-}
-
 TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* dbg) {
     TB_ABI abi = m->target_abi;
 

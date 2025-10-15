@@ -186,9 +186,9 @@ int tb_features_parse(TB_FeatureSet* out, TB_Module* m, const char* str) {
 
     switch (m->target_arch) {
         case TB_ARCH_X86_64:
-			if (TB_X86_FeatureSet__parse(&out->x86, str))
-				return 1;
-			break;
+        if (TB_X86_FeatureSet__parse(&out->x86, str))
+            return 1;
+        break;
 
         default:
         break;
@@ -451,10 +451,6 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
     f->params[0] = tb__make_proj(f, TB_TYPE_CONTROL, f->root_node, 0);
     f->params[1] = tb__make_proj(f, TB_TYPE_MEMORY, f->root_node, 1);
     f->params[2] = tb__make_proj(f, TB_TYPE_PTR, f->root_node, 2);
-
-    // initial trace
-    f->trace.top_ctrl = f->trace.bot_ctrl = f->params[0];
-    f->trace.mem = f->params[1];
 
     // create parameter projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);

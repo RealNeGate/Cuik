@@ -476,7 +476,7 @@ static bool wasm_is_natural_loop(Ctx* ctx, TB_Node* header) {
 }
 
 static bool has_merge_root(Ctx* ctx, TB_Node* n, int id) {
-    if (!cfg_is_region(n)) {
+    if (!NODE_ISA(n, REGION)) {
         return false;
     }
 

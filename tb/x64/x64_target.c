@@ -199,51 +199,6 @@ static TB_Node* redundant_and_63(TB_Node* n) {
     return NULL;
 }
 
-/* static TB_Node* isel_op_jcc(Ctx* ctx, TB_Function* f, TB_Node* n) {
-    if (n->inputs[1]->type != TB_ADD) {
-        return NULL;
-    }
-
-    int used_as_data = n->inputs[1]->user_count - 1;
-    if (used_as_data == 0) {
-        // we can use the normal patterns here
-        return NULL;
-    }
-
-    // we want the results of the operation, not just the FLAGS
-    TB_Node* op = tb_alloc_node(f, x86_add, TB_TYPE_PTR, 4, sizeof(X86MemOp));
-    set_input(f, op, n->inputs[1]->inputs[1], 2);
-    if (fits_into_int32(n->inputs[1]->dt, n->inputs[1]->inputs[2])) {
-        TB_NODE_SET_EXTRA(op, X86MemOp, .flags = OP_IMMEDIATE, .imm = as_int32(n->inputs[1]->inputs[2]));
-    } else {
-        set_input(f, op, n->inputs[1]->inputs[1], 3);
-        TB_NODE_SET_EXTRA(op, X86MemOp, .imm = as_int32(n->inputs[1]->inputs[2]));
-    }
-
-    TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
-    set_input(f, proj, op, 0);
-    TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = 0, .def = ctx->normie_mask[REG_CLASS_FLAGS]);
-
-    TB_Node* jcc = tb_alloc_node(f, x86_jcc, TB_TYPE_TUPLE, 2, sizeof(X86MemOp));
-    set_input(f, jcc, n->inputs[0], 0);
-    set_input(f, jcc, proj,         1);
-    TB_NODE_SET_EXTRA(jcc, X86MemOp, .cond = NE);
-    return jcc;
-} */
-
-static TB_Node* isel_peep_shift(Ctx* ctx, TB_Function* f, TB_Node* n) {
-    /*X86MemOp* op = TB_NODE_GET_EXTRA(n);
-    if (op->mode != MODE_REG && n->dt.type == TB_TAG_I64) {
-        TB_Node* src = n->inputs[n->input_count - 1];
-        if (src->type == TB_AND && src->inputs[2]->type == TB_ICONST && TB_NODE_GET_EXTRA_T(src->inputs[2], TB_NodeInt)->value == 63) {
-            worklist_push(f->worklist, src);
-            set_input(f, n, src->inputs[1], n->input_count - 1);
-            return n;
-        }
-    }*/
-    return NULL;
-}
-
 static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n) {
     TB_ASSERT(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
 
@@ -354,7 +309,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
     uint64_t max = 0;
     FOR_USERS(u, n) {
         TB_Node* un = USERN(u);
-        if (is_proj(un)) {
+        if (IS_PROJ(un)) {
             TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(un);
             if (p->index) {
                 uint64_t key = p->key;
@@ -450,7 +405,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
         bool good = true;
         FOR_USERS(u, n) {
             TB_Node* un = USERN(u);
-            if (is_proj(un)) {
+            if (IS_PROJ(un)) {
                 TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(un);
                 if (p->index != 0) {
                     uint32_t h = phash_fn(hash, p->key, shift);
@@ -1234,7 +1189,7 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
     } else if (n->type == x86_idiv || n->type == x86_div) {
         uint32_t has_proj = 0;
         FOR_USERS(u, n) {
-            if (is_proj(USERN(u))) {
+            if (IS_PROJ(USERN(u))) {
                 int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                 has_proj |= 1ull << index;
             }
@@ -2674,33 +2629,8 @@ static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) {
     return false;
 }
 
-static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
-    if (n->type == x86_imul) {
-        return 0b00000010;
-    } else if (n->type == TB_VSHUFFLE) {
-        return 0b00100000;
-    }
-
-    if (n->type >= TB_MACH_X86) {
-        X86MemOp* op = TB_NODE_GET_EXTRA(n);
-
-        if (op->mode == MODE_LD) {
-            // if we're doing a load, we can only fit into ports 2 & 3
-            return 0b00001100;
-        } else if (op->mode == MODE_ST) {
-            // stores go into port 4
-            return 0b00010000;
-        }
-
-        // compares go into port 6
-        return 0b00010000;
-    }
-
-    return 0b11101111;
-}
-
 static int node_latency(TB_Function* f, TB_Node* n, int i) {
-    if (is_proj(n)) {
+    if (IS_PROJ(n)) {
         return 0;
     }
 

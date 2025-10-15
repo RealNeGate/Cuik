@@ -404,8 +404,8 @@ static void rogers_dump_split(Ctx* restrict ctx, Rogers* restrict ra, TB_BasicBl
     a[1] = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, block, aa, aa->gvn) - 1;
     b[1] = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, block, bb, bb->gvn) - 1;
 
-    // if (is_proj(aa)) { aa = aa->inputs[0]; }
-    // if (is_proj(bb)) { bb = bb->inputs[0]; }
+    // if (IS_PROJ(aa)) { aa = aa->inputs[0]; }
+    // if (IS_PROJ(bb)) { bb = bb->inputs[0]; }
 
     int start = TB_MIN(a[0], b[0]);
     int end   = TB_MAX(a[1], b[1]);
@@ -436,7 +436,7 @@ static void mark_point_as_hrp(Ctx* ctx, Rogers* ra, TB_Node* n, int reg_class) {
     int t = ra->order[gvn] - 1;
 
     int end_t = t;
-    while (end_t+1 < aarray_length(bb->items) && is_proj(bb->items[end_t+1]) && bb->items[end_t+1]->inputs[0] == n) {
+    while (end_t+1 < aarray_length(bb->items) && IS_PROJ(bb->items[end_t+1]) && bb->items[end_t+1]->inputs[0] == n) {
         end_t++;
     }
 
@@ -456,7 +456,7 @@ static void gimme_lifetime(Ctx* ctx, Rogers* ra, TB_BasicBlock** scheduled, TB_B
     if (scheduled[gvn] == bb) {
         if (n->type == TB_PHI) {
             start_t = 0;
-        } else if (is_proj(n)) {
+        } else if (IS_PROJ(n)) {
             uint32_t tuple_gvn = n->inputs[0]->gvn;
             start_t = ra->order[tuple_gvn] - 1;
         } else {
@@ -915,7 +915,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                                 array[n->gvn] = -1;
                             }
 
-                            if (cfg_flags(n) & NODE_SAFEPOINT) {
+                            if (tb_node_is_safepoint(n)) {
                                 printf("# ");
                                 tb_print_dumb_node(NULL, n);
                                 printf("\n  Live:\n");
@@ -1524,7 +1524,7 @@ static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 TB_OPTDEBUG(REGALLOC_AREA)(printf("# "));
 
                 // accumulate area (don't do so on projections and temps)
-                if (n->type != TB_MACH_TEMP && !is_proj(n)) {
+                if (n->type != TB_MACH_TEMP && !IS_PROJ(n)) {
                     aarray_for(k, stack) {
                         TB_ASSERT(ctx->vreg_map[stack[k]] > 0);
                         VReg* v = &ctx->vregs[ctx->vreg_map[stack[k]]];
@@ -1677,7 +1677,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
         //   each def will either put the node to sleep or kill it.
         FOR_REV_N(j, 0, aarray_length(bb->items)) {
             TB_Node* n = bb->items[j];
-            if (0) { // if (!is_proj(n) || n->inputs[0] != f->root_node) {
+            if (0) { // if (!IS_PROJ(n) || n->inputs[0] != f->root_node) {
                 continue;
             }
 
@@ -1698,7 +1698,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
                 /*FOR_USERS(u, to_spill) {
                     TB_BasicBlock* bb = f->scheduled[USERN(u)->gvn];
-                    if (is_proj(USERN(u))) {
+                    if (IS_PROJ(USERN(u))) {
                         is_tuple = true;
                     }
                 }*/
@@ -1889,7 +1889,7 @@ static SlotIndex find_slot_index_start(Ctx* ctx, Rogers* restrict ra, TB_Node* n
     TB_BasicBlock* block = ctx->f->scheduled[n->gvn];
 
     TB_Node* tup = n;
-    if (is_proj(n)) { tup = n->inputs[0]; }
+    if (IS_PROJ(n)) { tup = n->inputs[0]; }
 
     bool entry_block = block == &ctx->cfg.blocks[0];
     int t = (entry_block && tup->type == TB_ROOT) || set_get(&block->live_in, n->gvn) ? 0 : ra->order[n->gvn] - 1;
@@ -1898,7 +1898,7 @@ static SlotIndex find_slot_index_start(Ctx* ctx, Rogers* restrict ra, TB_Node* n
         t++;
 
         size_t cnt = aarray_length(block->items);
-        while (t < cnt && (is_proj(block->items[t]) || block->items[t]->type == TB_PHI || block->items[t]->type == TB_MACH_FRAME_PTR)) {
+        while (t < cnt && (IS_PROJ(block->items[t]) || block->items[t]->type == TB_PHI || block->items[t]->type == TB_MACH_FRAME_PTR)) {
             t++;
         }
     }
@@ -1936,7 +1936,7 @@ static TB_BasicBlock* sched_spill_site(TB_BasicBlock* early, TB_BasicBlock* late
 
 static SlotIndex skip_projs_and_weirdos(SlotIndex s) {
     size_t i = s.order + 1, cnt = aarray_length(s.bb->items);
-    while (i < cnt && (is_proj(s.bb->items[i]) || s.bb->items[i]->type == TB_PHI || s.bb->items[i]->type == TB_MACH_FRAME_PTR)) {
+    while (i < cnt && (IS_PROJ(s.bb->items[i]) || s.bb->items[i]->type == TB_PHI || s.bb->items[i]->type == TB_MACH_FRAME_PTR)) {
         i++;
     }
     s.order = i;
@@ -2001,11 +2001,11 @@ static void rogers_remat(Ctx* ctx, Rogers* ra, TB_Node* n, bool kill_node) {
 
             int pos = aarray_length(pred_bb->items);
             TB_Node* last = pred_bb->items[pos - 1];
-            if (is_proj(last)) { last = last->inputs[0]; }
+            if (IS_PROJ(last)) { last = last->inputs[0]; }
             if (cfg_is_terminator(last)) {
                 pos--;
 
-                while (pos > 0 && pred_bb->items[pos] != pred_bb->start && is_proj(pred_bb->items[pos])) {
+                while (pos > 0 && pred_bb->items[pos] != pred_bb->start && IS_PROJ(pred_bb->items[pos])) {
                     pos--;
                 }
             }

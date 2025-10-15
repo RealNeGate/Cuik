@@ -234,7 +234,7 @@ static TB_Node* partially_redundant(TB_Function* f, TB_Node* n, TB_Node* phi, in
             int i = 0;
             while (i++ < MAX_STEPS && mem != st) {
                 // non-aliasing operations can be walked past
-                if (is_proj(mem)) {
+                if (IS_PROJ(mem)) {
                     mem = mem->inputs[1];
                 }
 

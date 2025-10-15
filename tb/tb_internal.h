@@ -67,6 +67,72 @@
 
 #include <stdatomic.h>
 
+////////////////////////////////
+// HELPER FUNCTIONS
+////////////////////////////////
+#ifndef _MSC_VER
+#define __debugbreak() __builtin_debugtrap()
+#endif
+
+// tb_todo means it's something we fill in later
+// tb_unreachable means it's logically impossible to reach
+// tb_assume means we assume some expression cannot be false
+//
+// in debug builds these are all checked and tb_todo is some sort of trap
+#if defined(_MSC_VER) && !defined(__clang__)
+#if TB_DEBUG_BUILD
+#define tb_todo()            (assert(0 && "TODO"), __assume(0))
+#define tb_unreachable()     (assert(0), __assume(0), 0)
+#else
+#define tb_todo()            abort()
+#define tb_unreachable()     (__assume(0), 0)
+#endif
+#else
+#if TB_DEBUG_BUILD
+#define tb_todo()            __builtin_trap()
+#define tb_unreachable()     (assert(0), 0)
+#else
+#define tb_todo()            __builtin_trap()
+#define tb_unreachable()     (__builtin_unreachable(), 0)
+#endif
+#endif
+
+#ifndef NDEBUG
+#define TB_ASSERT_MSG(cond, ...) ((cond) ? 0 : (printf("\n" __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), printf(__VA_ARGS__), __builtin_trap(), 0))
+#define TB_ASSERT(cond)          ((cond) ? 0 : (printf("\n" __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), __builtin_trap(), 0))
+#else
+#define TB_ASSERT_MSG(cond, ...) ((cond) ? 0 : (__builtin_unreachable(), 0))
+#define TB_ASSERT(cond)          ((cond) ? 0 : (__builtin_unreachable(), 0))
+#endif
+
+#if defined(_WIN32) && !defined(__GNUC__)
+#define tb_panic(...)                     \
+do {                                      \
+    printf(__VA_ARGS__);                  \
+    __fastfail(FAST_FAIL_FATAL_APP_EXIT); \
+} while (0)
+#else
+#define tb_panic(...)                     \
+do {                                      \
+    printf(__VA_ARGS__);                  \
+    abort();                              \
+} while (0)
+#endif
+
+#ifndef COUNTOF
+#define COUNTOF(...) (sizeof(__VA_ARGS__) / sizeof((__VA_ARGS__)[0]))
+#endif
+
+#ifdef _MSC_VER
+#define TB_LIKELY(x)   (!!(x))
+#define TB_UNLIKELY(x) (!!(x))
+#else
+#define TB_LIKELY(x)   __builtin_expect(!!(x), 1)
+#define TB_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
+#include "tb_gen_private.h"
+
 #define TB_DATA_TYPE_EQUALS(a, b) ((a).raw == (b).raw)
 
 #ifdef CONFIG_HAS_LINKER
@@ -380,10 +446,6 @@ struct TB_Function {
     size_t node_count;
     TB_Node* root_node;
 
-    // for legacy builder
-    TB_Trace trace;
-    TB_Node* last_loc;
-
     // Bookkeeping in certain interprocedural opts
     int uid;
 
@@ -571,33 +633,6 @@ typedef struct {
     TB_ObjectSection* data;
 } TB_SectionGroup;
 
-enum {
-    // part of the SoN's embedded CFG, generally produce more CONTROL
-    // and taken in CONTROL (with the exception of the entry and exits).
-    NODE_CTRL       = 1,
-    // CFG node with no successors
-    NODE_END        = 2,
-    // CFG node which terminates a BB (usually branch or exit)
-    NODE_TERMINATOR = 4,
-    // tuple nodes which may produce several control edges
-    NODE_FORK_CTRL  = 8,
-    // uses TB_BRANCH_PROJ for the cprojs
-    NODE_BRANCH     = 16,
-    // uses TB_NodeIf
-    NODE_IF         = 32,
-    // has potential memory input in inputs[1]
-    NODE_MEMORY_IN  = 64,
-    // has memory outputs
-    NODE_MEMORY_OUT = 128,
-    // the first few bytes of extra are TB_NodeSafepoint
-    NODE_SAFEPOINT  = 256,
-    // cannot be scheduled late
-    NODE_PINNED     = 512,
-    // "necessary" CFG node (in the context of the optimistic solver)
-    NODE_EFFECT     = 1024,
-    NODE_ALWAYS_SINK = 2048,
-};
-
 typedef struct OutStream {
     void (*color)(struct OutStream* s, int ansi_code);
     void (*write)(struct OutStream* s, size_t n, const char* data);
@@ -612,11 +647,7 @@ struct ICodeGen {
     void (*global_init)(void);
 
     // Mach nodes info
-    bool (*can_gvn)(TB_Node* n);
-    uint32_t (*flags)(TB_Node* n);
-    size_t (*extra_bytes)(TB_Node* n);
     float (*edge_prob)(TB_Node* n);
-    const char* (*node_name)(int n_type);
     void (*print_extra)(OutStream* s, TB_Node* n);
 
     int (*is_pack_op_supported)(TB_Function* f, TB_DataType dt, TB_Node* n, int width);
@@ -643,59 +674,6 @@ typedef struct {
 
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
 
-#ifndef _MSC_VER
-#define __debugbreak() __builtin_debugtrap()
-#endif
-
-// tb_todo means it's something we fill in later
-// tb_unreachable means it's logically impossible to reach
-// tb_assume means we assume some expression cannot be false
-//
-// in debug builds these are all checked and tb_todo is some sort of trap
-#if defined(_MSC_VER) && !defined(__clang__)
-#if TB_DEBUG_BUILD
-#define tb_todo()            (assert(0 && "TODO"), __assume(0))
-#define tb_unreachable()     (assert(0), __assume(0), 0)
-#else
-#define tb_todo()            abort()
-#define tb_unreachable()     (__assume(0), 0)
-#endif
-#else
-#if TB_DEBUG_BUILD
-#define tb_todo()            __builtin_trap()
-#define tb_unreachable()     (assert(0), 0)
-#else
-#define tb_todo()            __builtin_trap()
-#define tb_unreachable()     (__builtin_unreachable(), 0)
-#endif
-#endif
-
-#ifndef NDEBUG
-#define TB_ASSERT_MSG(cond, ...) ((cond) ? 0 : (printf("\n" __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), printf(__VA_ARGS__), __builtin_trap(), 0))
-#define TB_ASSERT(cond)          ((cond) ? 0 : (printf("\n" __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), __builtin_trap(), 0))
-#else
-#define TB_ASSERT_MSG(cond, ...) ((cond) ? 0 : (__builtin_unreachable(), 0))
-#define TB_ASSERT(cond)          ((cond) ? 0 : (__builtin_unreachable(), 0))
-#endif
-
-#if defined(_WIN32) && !defined(__GNUC__)
-#define tb_panic(...)                     \
-do {                                      \
-    printf(__VA_ARGS__);                  \
-    __fastfail(FAST_FAIL_FATAL_APP_EXIT); \
-} while (0)
-#else
-#define tb_panic(...)                     \
-do {                                      \
-    printf(__VA_ARGS__);                  \
-    abort();                              \
-} while (0)
-#endif
-
-#ifndef COUNTOF
-#define COUNTOF(...) (sizeof(__VA_ARGS__) / sizeof((__VA_ARGS__)[0]))
-#endif
-
 TB_ThreadInfo* tb_thread_info(TB_Module* m);
 
 inline static uint64_t align_up(uint64_t a, uint64_t b) {
@@ -706,17 +684,6 @@ inline static uint64_t align_up(uint64_t a, uint64_t b) {
 inline static bool tb_is_power_of_two(uint64_t x) {
     return (x & (x - 1)) == 0;
 }
-
-////////////////////////////////
-// HELPER FUNCTIONS
-////////////////////////////////
-#ifdef _MSC_VER
-#define TB_LIKELY(x)   (!!(x))
-#define TB_UNLIKELY(x) (!!(x))
-#else
-#define TB_LIKELY(x)   __builtin_expect(!!(x), 1)
-#define TB_UNLIKELY(x) __builtin_expect(!!(x), 0)
-#endif
 
 // for more consistent hashing than a pointer
 uint32_t tb__node_hash(void* a);

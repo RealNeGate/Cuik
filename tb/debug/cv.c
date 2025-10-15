@@ -356,9 +356,9 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
             tb_out2b(&debugs_out, 0);      // verFEMinor
             tb_out2b(&debugs_out, 0);      // verFEBuild
 
-            tb_out2b(&debugs_out, TB_VERSION_MAJOR); // verMajor
-            tb_out2b(&debugs_out, TB_VERSION_MINOR); // verMinor
-            tb_out2b(&debugs_out, TB_VERSION_PATCH); // verBuild
+            tb_out2b(&debugs_out, 1); // verMajor
+            tb_out2b(&debugs_out, 0); // verMinor
+            tb_out2b(&debugs_out, 0); // verBuild
 
             tb_out_reserve(&debugs_out, sizeof(creator_str));
             tb_outs_UNSAFE(&debugs_out, sizeof(creator_str), (const uint8_t*)creator_str);

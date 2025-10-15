@@ -136,7 +136,7 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
 
             // add edges
             float freq = bb->freq;
-            if (cfg_is_fork(bb->end)) {
+            if (tb_node_is_fork_ctrl(bb->end)) {
                 FOR_SUCC(it, bb->end) {
                     TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, it.succ);
 

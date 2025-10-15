@@ -1,5 +1,4 @@
 local inspect = require "meta/inspect"
-
 require "meta/prelude"
 
 local unpack = unpack or table.unpack
@@ -1810,6 +1809,8 @@ if true then
 end
 
 if true then
+    -- print(table.concat(lines, "\n"))
+else
     local f = io.open(arg[2], "w")
     f:write(table.concat(lines, "\n"))
     f:close()

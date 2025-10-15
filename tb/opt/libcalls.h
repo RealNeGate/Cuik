@@ -51,6 +51,7 @@ static TB_Node* ideal_libcall(TB_Function* f, TB_Node* n) {
         TB_Node* proj2 = USERN(proj_with_index(n, 2));
 
         if (proj2->dt.type == TB_TAG_F64) {
+            #if 0
             TB_Node* zero = make_f64_node(f, 0.0);
 
             // if it's already gated, skip it
@@ -104,6 +105,8 @@ static TB_Node* ideal_libcall(TB_Function* f, TB_Node* n) {
             set_input(f, phi_data, proj2, 2);
             mark_node(f, phi_data);
             return n;
+            #endif
+            tb_todo();
         }
     }
 

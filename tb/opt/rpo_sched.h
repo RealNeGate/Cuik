@@ -42,7 +42,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicB
     size_t phi_curr = 0;
     ArenaArray(SchedPhi) phis = aarray_create(arena, SchedPhi, 32);
 
-    if (cfg_is_fork(end)) {
+    if (tb_node_is_fork_ctrl(end)) {
         FOR_USERS(u, end) {
             TB_Node* un = USERN(u);
             if (!cfg_is_cproj(un)) continue;
@@ -69,7 +69,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicB
     // reserve projections for the top
     if (bb == &cfg->blocks[0]) {
         FOR_USERS(u, f->root_node) {
-            if (is_proj(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
+            if (IS_PROJ(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
                 dyn_array_put(ws->items, USERN(u));
             }
         }
@@ -86,7 +86,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicB
             TB_Node* in = n->inputs[top->index++];
             if (in != NULL) {
                 // projections don't get scheduled, their tuple node does
-                if (is_proj(in)) { in = in->inputs[0]; }
+                if (IS_PROJ(in)) { in = in->inputs[0]; }
                 if (sched_in_bb(f, ws, bb, in)) {
                     top = sched_make_node(arena, top, in);
                 }
@@ -124,9 +124,9 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicB
         top = parent;
 
         // push outputs (projections, if they apply)
-        if (n->dt.type == TB_TAG_TUPLE && !cfg_is_fork(n) && n->type != TB_ROOT) {
+        if (n->dt.type == TB_TAG_TUPLE && !tb_node_is_fork_ctrl (n) && n->type != TB_ROOT) {
             FOR_USERS(u, n) {
-                if (is_proj(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
+                if (IS_PROJ(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
                     dyn_array_put(ws->items, USERN(u));
                 }
             }

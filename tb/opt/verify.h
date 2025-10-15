@@ -43,7 +43,7 @@ void tb_verify(TB_Function* f, TB_Arena* tmp) {
     // cycles are allowed for root, phis and regions
     for (size_t i = 1; i < dyn_array_length(ws.items); i++) {
         TB_Node* n = ws.items[i];
-        if (n->type != TB_PHI && !cfg_is_region(n)) {
+        if (n->type != TB_PHI && !NODE_ISA(n, REGION)) {
             memset(visited, 0, ((f->node_count + 31) / 32) * sizeof(uint32_t));
             cycle_check(f, n, visited, progress);
         } else if (n->type == TB_PHI) {

@@ -21,7 +21,7 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
 
                 // place projections first & sequentially
                 if (n->dt.type == TB_TAG_TUPLE) {
-                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                    FOR_USERS(u, n) if (IS_PROJ(USERN(u))) {
                         worklist_push(ws, USERN(u));
                     }
                 }
@@ -98,7 +98,7 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
 
             FOR_USERS(u, f->root_node) {
                 TB_Node* un = USERN(u);
-                if (is_proj(un)) {
+                if (IS_PROJ(un)) {
                     TB_ASSERT(USERI(u) == 0);
                     int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
                     if (index < param_count) {
@@ -123,7 +123,7 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
                 TB_Node* n = ws->items[i];
                 if (n->dt.type == TB_TAG_TUPLE) {
                     // place projections first
-                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                    FOR_USERS(u, n) if (IS_PROJ(USERN(u))) {
                         worklist_push(ws, USERN(u));
                     }
                 }

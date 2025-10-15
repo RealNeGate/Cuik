@@ -18,17 +18,16 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
     }
 
     // ideally we don't place things into the backedge of a rotated loop
-    if (is_proj(late->start) && late->start == late->end) {
+    if (IS_PROJ(late->start) && late->start == late->end) {
         TB_Node* next = cfg_next_control(late->end);
         if (cfg_is_natural_loop(next)) {
             return early != late ? late->dom : late;
         }
     }
 
-    uint32_t flags = cfg_flags(n);
-    if (flags & NODE_ALWAYS_SINK) {
+    /* if (tb_node_is_always_sink(n)) {
         return late;
-    }
+    } */
 
     TB_BasicBlock* best = late;
     for (;;) {
@@ -60,7 +59,7 @@ static TB_BasicBlock* find_lca(TB_BasicBlock* a, TB_BasicBlock* b) {
 
 static TB_BasicBlock* find_use_block(TB_Function* f, TB_CFG* cfg, TB_Node* n, TB_Node* actual_n, TB_User* use) {
     TB_Node* y = USERN(use);
-    TB_ASSERT(!is_proj(y));
+    TB_ASSERT(!IS_PROJ(y));
 
     // extra deps not counted
     if (USERI(use) >= y->input_count) { return NULL; }
@@ -90,9 +89,9 @@ void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws) {
     for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
         TB_Node* n = ws->items[i];
 
-        if (tb_node_has_mem_out(n) || n->dt.type == TB_TAG_MEMORY) {
+        if (tb_node_is_memory_out(n) || n->dt.type == TB_TAG_MEMORY) {
             // the anti-deps are applied to the tuple node (projs can't have extra inputs anyways)
-            TB_Node* k = is_proj(n) ? n->inputs[0] : n;
+            TB_Node* k = IS_PROJ(n) ? n->inputs[0] : n;
             if (k->type != TB_ROOT) {
                 tb_node_clear_extras(f, k);
             }
@@ -111,7 +110,7 @@ static void add_anti_deps(TB_Function* f, TB_CFG* cfg, TB_Node* ld, TB_Node* mem
         TB_Node* un = USERN(u);
         if (USERI(u) <= un->input_count) {
             // phis don't actually write to memory so we can move around them
-            if (un->type != TB_PHI && tb_node_has_mem_out(un)) {
+            if (un->type != TB_PHI && tb_node_is_memory_out(un)) {
                 tb_node_add_extra(f, un, ld);
             }
         }
@@ -122,7 +121,7 @@ TB_BasicBlock* tb_late_sched(TB_Function* f, TB_CFG* cfg, TB_BasicBlock* lca, TB
     FOR_USERS(use, n) {
         // to avoid projections stopping the sinking of nodes, we walk past
         // them whenever decision making here
-        if (is_proj(USERN(use))) {
+        if (IS_PROJ(USERN(use))) {
             FOR_USERS(use2, USERN(use)) {
                 TB_BasicBlock* use_block = find_use_block(f, cfg, n, USERN(use), use2);
                 if (use_block) { lca = find_lca(lca, use_block); }
@@ -163,7 +162,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                 if (i == 0) {
                     // pin the ROOT's projections to the entry block
                     FOR_USERS(u, f->root_node) {
-                        if (is_proj(USERN(u))) {
+                        if (IS_PROJ(USERN(u))) {
                             f->scheduled[USERN(u)->gvn] = bb0;
                             if (USERN(u) != bb->start) {
                                 aarray_push(bb0->items, USERN(u));
@@ -191,7 +190,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         aarray_push(bb0->items, n);
                         aarray_push(pins, n);
                         // aarray_push(bb0->items, n);
-                    } else if (is_proj(n) && !tb_node_is_pinned(n->inputs[0])) {
+                    } else if (IS_PROJ(n) && !tb_node_is_pinned(n->inputs[0])) {
                         // projections are always pinned but they might refer to nodes which
                         // aren't (x86 division), we can skip these here as they're technically
                         // unpinned.
@@ -247,7 +246,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         TB_Node* in = n->inputs[--top->i];
                         if (in) {
                             // projections don't get scheduled, their tuple nodes do
-                            if (is_proj(in)) { in = in->inputs[0]; }
+                            if (IS_PROJ(in)) { in = in->inputs[0]; }
 
                             // pinned nodes can't be rescheduled
                             if (!tb_node_is_pinned(in) && !worklist_test_n_set(ws, in)) {
@@ -300,7 +299,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         f->scheduled[n->gvn] = best;
 
                         // unpinned nodes getting moved means their users need to move too
-                        FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                        FOR_USERS(u, n) if (IS_PROJ(USERN(u))) {
                             TB_ASSERT(USERN(u)->type != TB_NULL);
                             f->scheduled[USERN(u)->gvn] = best;
                         }
@@ -334,7 +333,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     TB_BasicBlock* curr = f->scheduled[n->gvn];
 
                     // insert anti-deps
-                    if (!tb_node_has_mem_out(n)) {
+                    if (!tb_node_is_memory_out(n)) {
                         TB_Node* mem = tb_node_mem_in(n);
                         if (mem != NULL) {
                             add_anti_deps(f, &cfg, n, mem, curr);
@@ -344,7 +343,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     // final schedule for a node is decided by this point so we place it into the correct bucket
                     FOR_USERS(u, n) {
                         TB_Node* un = USERN(u);
-                        if (is_proj(un) && USERI(u) == 0) {
+                        if (IS_PROJ(un) && USERI(u) == 0) {
                             aarray_push(curr->items, un);
                         }
                     }
@@ -365,7 +364,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     TB_BasicBlock* curr = f->scheduled[n->gvn];
 
                     // insert anti-deps
-                    if (!tb_node_has_mem_out(n)) {
+                    if (!tb_node_is_memory_out(n)) {
                         TB_Node* mem = tb_node_mem_in(n);
                         if (mem != NULL) {
                             add_anti_deps(f, &cfg, n, mem, curr);
@@ -393,7 +392,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                                 // unpinned nodes getting moved means their users need to move too
                                 FOR_USERS(u, n) {
                                     TB_Node* un = USERN(u);
-                                    if (is_proj(un) && USERI(u) == 0) {
+                                    if (IS_PROJ(un) && USERI(u) == 0) {
                                         f->scheduled[un->gvn] = better;
                                     }
                                 }
@@ -405,7 +404,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     // final schedule for a node is decided by this point so we place it into the correct bucket
                     FOR_USERS(u, n) {
                         TB_Node* un = USERN(u);
-                        if (is_proj(un) && USERI(u) == 0) {
+                        if (IS_PROJ(un) && USERI(u) == 0) {
                             aarray_push(curr->items, un);
                         }
                     }
@@ -502,7 +501,7 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
 
                 // walk all successors
                 TB_Node* end = bb->end;
-                if (cfg_is_fork(end)) {
+                if (tb_node_is_fork_ctrl(end)) {
                     FOR_USERS(u, end) {
                         if (cfg_is_cproj(USERN(u))) {
                             // union with successor's lives

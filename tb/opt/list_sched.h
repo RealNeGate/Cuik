@@ -66,7 +66,7 @@ static void ready_up(ListSched* sched, TB_Node* n) {
 
         // projections are readied but not in the ready list
         FOR_USERS(u, n) {
-            if (is_proj(USERN(u))) { set_put(&sched->ready_set, USERN(u)->gvn); }
+            if (IS_PROJ(USERN(u))) { set_put(&sched->ready_set, USERN(u)->gvn); }
         }
 
         ReadyNode r = { n };
@@ -105,7 +105,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
         TB_ASSERT(dyn_array_length(ws->items) > 0);
         TB_Node* prev_op = ws->items[dyn_array_length(ws->items) - 1];
         if (prev_op->user_count == 1 && USERN(&prev_op->users[0]) == n) {
-            if (!(is_proj(prev_op) && prev_op->inputs[0] == f->root_node) && prev_op->type != TB_MACH_SYMBOL) {
+            if (!(IS_PROJ(prev_op) && prev_op->inputs[0] == f->root_node) && prev_op->type != TB_MACH_SYMBOL) {
                 score += 200;
             }
         }
@@ -121,7 +121,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
             TB_Node* use = USERN(&n->users[0]);
 
             // try to schedule the latch IVs late
-            if (cfg_is_if(bb->end) && n == bb->end->inputs[1]) {
+            if (NODE_ISA(bb->end, IF) && n == bb->end->inputs[1]) {
                 continue;
             }
         }
@@ -245,7 +245,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
                 TB_Node* n = ordered[i];
                 int max_depth = 0;
 
-                if (n->type != TB_PHI && !cfg_is_region(n)) {
+                if (n->type != TB_PHI && !NODE_ISA(n, REGION)) {
                     FOR_N(i, 0, n->input_cap) {
                         TB_Node* in = n->inputs[i];
                         if (in && in->type != TB_MACH_TEMP && f->scheduled[in->gvn] == bb) {
@@ -303,11 +303,11 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
 
             TB_OPTDEBUG(SCHED4)(printf("N%d [label=\"%%%u: %s\"]\n", n->gvn, n->gvn, tb_node_get_name(n->type)));
 
-            if (n->type != TB_PHI && !cfg_is_region(n)) {
+            if (n->type != TB_PHI && !NODE_ISA(n, REGION)) {
                 FOR_N(i, 0, n->input_cap) {
                     TB_Node* in = n->inputs[i];
                     if (in) {
-                        if (is_proj(in)) { in = in->inputs[0]; }
+                        if (IS_PROJ(in)) { in = in->inputs[0]; }
                         if (in->type != TB_MACH_TEMP && f->scheduled[in->gvn] == bb) {
                             int edge_latency = sched.get_lat(sched.f, n, i);
                             int curr_latency = edge_latency + use_latency;
@@ -348,7 +348,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
         }
 
         FOR_USERS(u, f->root_node) {
-            if (is_proj(USERN(u))) {
+            if (IS_PROJ(USERN(u))) {
                 TB_ASSERT(USERI(u) == 0);
                 worklist_push(ws, USERN(u));
             }
@@ -399,7 +399,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
         TB_Node* n = sched.ready[idx].n;
 
         aarray_remove(sched.ready, idx);
-        TB_ASSERT(!is_proj(n));
+        TB_ASSERT(!IS_PROJ(n));
 
         if (n != end) {
             // idk, it's ugly and a bookkeeping op
@@ -413,31 +413,20 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             }
 
             // make sure to place all projections directly after their tuple node
-            if (!cfg_is_fork(n)) {
-                TB_Node* sfpt = NULL;
+            if (!tb_node_is_fork_ctrl(n)) {
                 FOR_USERS(u, n) {
-                    if (is_proj(USERN(u))) {
+                    if (IS_PROJ(USERN(u))) {
                         TB_ASSERT(USERI(u) == 0);
                         TB_ASSERT(!worklist_test(ws, USERN(u)));
                         worklist_push(ws, USERN(u));
-                    } else if (USERN(u)->type == TB_SAFEPOINT && USERI(u) == 2) {
-                        sfpt = USERN(u);
                     }
-                }
-
-                if (sfpt != NULL) {
-                    TB_OPTDEBUG(SCHED1)(printf("  Safepoint? "), tb_print_dumb_node(NULL, sfpt), printf("\n"));
-
-                    TB_ASSERT(!worklist_test(ws, sfpt));
-                    TB_ASSERT(can_ready_user(f, ws, bb, &sched.ready_set, sfpt));
-                    worklist_push(ws, sfpt);
                 }
             }
 
             // ready up the users
             FOR_USERS(u, n) {
                 TB_Node* un = USERN(u);
-                if (is_proj(un)) {
+                if (IS_PROJ(un)) {
                     // projections are where all the real users ended up
                     FOR_USERS(proj_u, un) {
                         if (can_ready_user(f, ws, bb, &sched.ready_set, USERN(proj_u))) {

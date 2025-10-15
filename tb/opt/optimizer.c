@@ -137,7 +137,7 @@ static bool is_empty_bb(TB_Function* f, TB_Node* end) {
 
 static TB_Node* next_mem_user(TB_Node* n) {
     FOR_USERS(u, n) {
-        if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u)) || (USERN(u)->type == TB_PHI && USERN(u)->dt.type == TB_TAG_MEMORY)) {
+        if (cfg_is_mproj(USERN(u)) || tb_node_is_memory_out(USERN(u)) || (USERN(u)->type == TB_PHI && USERN(u)->dt.type == TB_TAG_MEMORY)) {
             return USERN(u);
         }
     }
@@ -156,10 +156,10 @@ float tb_edge_prob(TB_Node* n) {
     TB_Node* tup = n->inputs[0];
     int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
 
-    if (cfg_is_if(tup)) {
+    if (NODE_ISA(tup, IF)) {
         TB_NodeIf* br = TB_NODE_GET_EXTRA(tup);
         return index ? 1.0 - br->prob : br->prob;
-    } else if (cfg_is_branch(tup)) {
+    } else if (NODE_ISA(tup, BRANCH)) {
         uint64_t total = TB_NODE_GET_EXTRA_T(tup, TB_NodeBranch)->total_hits;
         uint64_t hits  = TB_NODE_GET_EXTRA_T(n, TB_NodeBranchProj)->taken;
         return (float)hits / (float)total;
@@ -345,7 +345,7 @@ static Lattice* value_root(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_proj(TB_Function* f, TB_Node* n) {
-    TB_ASSERT(is_proj(n));
+    TB_ASSERT(IS_PROJ(n));
     Lattice* l = latuni_get(f, n->inputs[0]);
     if (l == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -393,7 +393,7 @@ static Lattice* value_ptr_vals(TB_Function* f, TB_Node* n) {
 } */
 
 static Lattice* value_region(TB_Function* f, TB_Node* n) {
-    TB_ASSERT(cfg_is_region(n));
+    TB_ASSERT(NODE_ISA(n, REGION));
 
     FOR_N(i, 0, n->input_count) {
         Lattice* edge = latuni_get(f, n->inputs[i]);
@@ -649,46 +649,7 @@ static void inc_nums(int* arr, int i) { if (i < TB_NODE_TYPE_MAX) { arr[i]++; } 
 #include "ipo.h"
 
 static bool can_gvn(TB_Node* n) {
-    switch (n->type) {
-        case TB_LOCAL:
-        case TB_MACH_TEMP:
-        return false;
-
-        // control producing nodes can't win from GVN (they all gonna be unique so the rules
-        // are met, they'd just bloat the table tho).
-        case TB_ROOT:
-        case TB_CALL:
-        case TB_HARD_BARRIER:
-        case TB_REGION:
-        case TB_RETURN:
-        case TB_BRANCH:
-        case TB_AFFINE_LATCH:
-        case TB_SYSCALL:
-        case TB_TAILCALL:
-        case TB_CALLGRAPH:
-        case TB_NATURAL_LOOP:
-        case TB_AFFINE_LOOP:
-        case TB_ATOMIC_LOAD:
-        case TB_ATOMIC_XCHG:
-        case TB_ATOMIC_ADD:
-        case TB_ATOMIC_AND:
-        case TB_ATOMIC_XOR:
-        case TB_ATOMIC_OR:
-        case TB_ATOMIC_PTROFF:
-        case TB_ATOMIC_CAS:
-        case TB_SAFEPOINT:
-        return false;
-
-        default: {
-            int family = n->type / 0x100;
-            if (family == 0) {
-                return true;
-            } else {
-                TB_ASSERT(family >= 0 && family < TB_ARCH_MAX);
-                return tb_codegen_families[family].extra_bytes(n);
-            }
-        }
-    }
+    return !tb_node_is_ctrl(n) && !tb_node_is_no_gvn(n);
 }
 
 TB_Node* tb_opt_gvn_node(TB_Function* f, TB_Node* n) {
@@ -987,7 +948,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         return NULL;
     }
 
-    if (cfg_is_region(n)) {
+    if (NODE_ISA(n, REGION)) {
         // regions just should prune their dead edges
         return prune_region(f, n);
     } else if (n->type != TB_ROOT && n->type != TB_UNREACHABLE && n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
@@ -1007,7 +968,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                     }
                     use_n->input_count--;
                     mark_node(f, use_n);
-                } else if (is_proj(use_n) || use_n->type == TB_SYMBOL_TABLE) {
+                } else if (IS_PROJ(use_n) || use_n->type == TB_SYMBOL_TABLE) {
                     TB_Node* replacement = use_n->dt.type == TB_TAG_CONTROL
                         ? dead
                         : make_poison(f, use_n->dt);
@@ -1102,7 +1063,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
 
                     for (size_t i = 0; i < n->user_count;) {
                         TB_Node* un = USERN(&n->users[i]);
-                        if (is_proj(un)) {
+                        if (IS_PROJ(un)) {
                             TB_ASSERT(USERI(&n->users[i]) == 0);
                             int index   = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
                             TB_Node* in = l->elems[index] == &LIVE_IN_THE_SKY ? ctrl : dead;
@@ -1316,7 +1277,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
                 if (k->dt.type == TB_TAG_TUPLE) {
                     TB_ASSERT(new_type->tag == LATTICE_TUPLE);
                     FOR_USERS(u, n) {
-                        if (is_proj(USERN(u))) {
+                        if (IS_PROJ(USERN(u))) {
                             int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                             TB_ASSERT(index < new_type->_elem_count);
 
@@ -1437,7 +1398,7 @@ int tb_opt_peeps(TB_Function* f) {
                 continue;
             }
 
-            if (!is_proj(n) && n->user_count == 0) {
+            if (!IS_PROJ(n) && n->user_count == 0) {
                 DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.killed, n->type));
                 TB_OPTLOG(PEEP, printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
                 TB_OPTLOG(PEEP, printf(" => \x1b[196mKILL\x1b[0m\n"));

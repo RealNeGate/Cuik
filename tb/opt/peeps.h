@@ -22,48 +22,6 @@ typedef struct {
     NodeValueOf  value;
 } NodeVtable;
 
-static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
-    [TB_ROOT]           =             NODE_TERMINATOR | NODE_END,
-    [TB_RETURN]         = NODE_CTRL | NODE_TERMINATOR | NODE_END | NODE_MEMORY_IN | NODE_EFFECT,
-    [TB_TRAP]           = NODE_CTRL | NODE_TERMINATOR | NODE_END | NODE_MEMORY_IN | NODE_EFFECT,
-    [TB_UNREACHABLE]    = NODE_CTRL | NODE_TERMINATOR | NODE_END | NODE_MEMORY_IN | NODE_EFFECT,
-    [TB_TAILCALL]       = NODE_CTRL | NODE_TERMINATOR | NODE_END | NODE_MEMORY_IN,
-
-    [TB_BRANCH]         = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH,
-    [TB_AFFINE_LATCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_IF,
-    [TB_IF]             = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_IF,
-    [TB_NEVER_BRANCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
-    [TB_ENTRY_FORK]     = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
-    [TB_MACH_JUMP]      = NODE_CTRL | NODE_TERMINATOR,
-
-    [TB_LOAD]           = NODE_MEMORY_IN,
-    [TB_STORE]          = NODE_MEMORY_IN | NODE_MEMORY_OUT,
-    [TB_DEAD_STORE]     = NODE_MEMORY_IN | NODE_MEMORY_OUT,
-    [TB_SPLITMEM]       = NODE_MEMORY_IN | NODE_MEMORY_OUT,
-    [TB_MERGEMEM]       = NODE_MEMORY_IN | NODE_MEMORY_OUT,
-    [TB_MEMSET]         = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_MEMCPY]         = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_ATOMIC_LOAD]    = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_ATOMIC_XCHG]    = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_ATOMIC_ADD]     = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_ATOMIC_AND]     = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_ATOMIC_XOR]     = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_ATOMIC_OR]      = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_ATOMIC_PTROFF]  = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_ATOMIC_CAS]     = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_HARD_BARRIER]   = NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-
-    [TB_DEBUG_LOCATION] = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_EFFECT,
-    [TB_CALL]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT | NODE_EFFECT,
-    [TB_SYSCALL]        = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT | NODE_EFFECT,
-    [TB_SAFEPOINT]      = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT | NODE_EFFECT,
-    [TB_REGION]         = NODE_CTRL,
-    [TB_NATURAL_LOOP]   = NODE_CTRL,
-    [TB_AFFINE_LOOP]    = NODE_CTRL,
-    [TB_BLACKHOLE]      = NODE_CTRL | NODE_EFFECT,
-    [TB_DEBUGBREAK]     = NODE_CTRL | NODE_MEMORY_IN | NODE_EFFECT,
-};
-
 static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     // type                 ideal              identity            value
     [TB_ICONST]         = { NULL,              NULL,               value_int        },
@@ -134,7 +92,6 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_BRANCH]         = { ideal_branch,      NULL,               value_branch,    },
     [TB_AFFINE_LATCH]   = { ideal_if,          NULL,               value_if,        },
     [TB_IF]             = { ideal_if,          NULL,               value_if,        },
-    [TB_SAFEPOINT]      = { NULL,              identity_safepoint, value_safepoint, },
     [TB_CALL]           = { ideal_libcall,     NULL,               value_call,      },
     [TB_TAILCALL]       = { NULL,              NULL,               value_ctrl,      },
     [TB_SYSCALL]        = { NULL,              NULL,               value_call,      },
@@ -147,42 +104,14 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_ROOT]           = { NULL,              NULL,               value_root,      },
 };
 
-bool cfg_is_region(TB_Node* n) {
-    return n->type >= TB_REGION && n->type <= TB_AFFINE_LOOP;
-}
-
-bool cfg_is_natural_loop(TB_Node* n) {
-    return n->type >= TB_NATURAL_LOOP && n->type <= TB_AFFINE_LOOP;
-}
-
-uint32_t cfg_flags(TB_Node* n) {
-    if (n->type >= TB_NODE_TYPE_MAX) {
-        int family = n->type / 0x100;
-        assert(family >= 1 && family < TB_ARCH_MAX);
-        return tb_codegen_families[family].flags(n);
-    } else {
-        return node_flags[n->type];
-    }
-}
-
-bool cfg_is_if(TB_Node* n)            { return cfg_flags(n) & NODE_IF; }
-bool cfg_is_branch(TB_Node* n)        { return cfg_flags(n) & NODE_BRANCH; }
-bool cfg_is_fork(TB_Node* n)          { return cfg_flags(n) & NODE_FORK_CTRL; }
-bool cfg_is_terminator(TB_Node* n)    { return cfg_flags(n) & NODE_TERMINATOR; }
-bool cfg_is_endpoint(TB_Node* n)      { return cfg_flags(n) & NODE_END; }
-bool tb_node_is_safepoint(TB_Node* n) { return cfg_flags(n) & NODE_SAFEPOINT; }
-bool tb_node_has_mem_out(TB_Node* n)  { return cfg_flags(n) & NODE_MEMORY_OUT; }
-bool tb_node_is_compare(TB_Node* n)   { return n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE; }
-
 bool tb_node_mem_read_only(TB_Node* n) {
-    uint32_t f = cfg_flags(n);
-    return (f & NODE_MEMORY_IN) != 0 && (f & NODE_MEMORY_OUT) == 0;
+    return tb_node_is_memory_in(n) && !tb_node_is_memory_out(n);
 }
 
 // has potential memory dep on inputs[1]
 TB_Node* tb_node_mem_in(TB_Node* n) {
-    if (cfg_flags(n) & NODE_MEMORY_IN) {
-        return n->input_count > 1 ? n->inputs[1] : 0;
+    if (tb_node_is_memory_in(n)) {
+        return n->input_count > 1 ? n->inputs[1] : NULL;
     }
     return NULL;
 }

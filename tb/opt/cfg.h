@@ -42,9 +42,9 @@ static Block* create_block(TB_Arena* arena, TB_Function* f, TB_Node* n) {
     TB_Node* end = end_of_bb(n);
 
     size_t succ_count = 0;
-    if (cfg_is_branch(end)) {
+    if (NODE_ISA(end, BRANCH)) {
         succ_count = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count;
-    } else if (cfg_is_if(end)) {
+    } else if (NODE_ISA(end, IF)) {
         succ_count = 2;
     } else if (end->dt.type == TB_TAG_TUPLE) {
         FOR_USERS(u, end) if (cfg_is_cproj(USERN(u))) {
@@ -62,7 +62,7 @@ static Block* create_block(TB_Arena* arena, TB_Function* f, TB_Node* n) {
         .succ_i = succ_count,
     };
 
-    if (cfg_is_fork(end)) {
+    if (tb_node_is_fork_ctrl(end)) {
         // this does imply the successors take up the bottom indices on the tuple... idk if thats
         // necessarily a problem tho.
         FOR_USERS(u, end) {
@@ -71,11 +71,11 @@ static Block* create_block(TB_Arena* arena, TB_Function* f, TB_Node* n) {
                 top->succ[index] = cfg_next_bb_after_cproj(USERN(u));
             }
         }
-    } else if (!cfg_is_endpoint(end)) {
+    } else if (!tb_node_is_end(end)) {
         TB_User* u = cfg_next_user(end);
         if (u == NULL) {
             tb_print_dumb(f);
-            __debugbreak();
+            tb_todo();
         }
 
         top->succ[0] = USERN(u);
@@ -305,7 +305,7 @@ static void tb_set_idom(TB_Function* f, TB_Node* n, TB_Node* new_dom) {
 static TB_Node* tb_get_idom(TB_Function* f, TB_Node* n) {
     // if dom[n] is NULL we just follow the inputs[0]
     while (f->doms[n->gvn] == NULL) {
-        TB_ASSERT(!cfg_is_region(n));
+        TB_ASSERT(!NODE_ISA(n, REGION));
         n = n->inputs[0];
     }
     return f->doms[n->gvn];
@@ -320,7 +320,7 @@ static TB_Node* tb_get_idom_RAW(TB_Function* f, TB_Node* n) {
 static TB_Node* tb_walk_to_bb_bounds(TB_Function* f, TB_Node* n) {
     // if dom[n] is NULL we just follow the inputs[0]
     while (f->doms[n->gvn] == NULL) {
-        TB_ASSERT(!cfg_is_region(n));
+        TB_ASSERT(!NODE_ISA(n, REGION));
         n = n->inputs[0];
     }
     return n;

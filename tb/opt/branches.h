@@ -502,7 +502,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
                 }
 
                 FOR_USERS(u, n) {
-                    if (is_proj(USERN(u))) {
+                    if (IS_PROJ(USERN(u))) {
                         int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                         if (index > 0) { l->elems[index] = lattice_from_dt(f, USERN(u)->dt); }
                     }
@@ -677,7 +677,7 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
                     // remove first branch
                     while (pred_branch->user_count > 0) {
                         TB_Node* un = USERN(&pred_branch->users[pred_branch->user_count - 1]);
-                        assert(is_proj(un));
+                        assert(IS_PROJ(un));
 
                         tb_kill_node(f, un);
                     }
@@ -792,31 +792,6 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
     }
 
     return NULL;
-}
-
-static Lattice* value_safepoint(TB_Function* f, TB_Node* n) {
-    TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
-
-    TB_Arena* arena = get_permanent_arena(f->super.module);
-    size_t size = sizeof(Lattice) + 2*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(arena, size);
-    *l = (Lattice){ LATTICE_TUPLE, ._elem_count = 2 };
-
-    l->elems[0] = &LIVE_IN_THE_SKY;
-    l->elems[1] = &MEM_IN_THE_SKY;
-
-    Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
-    if (k != l) { tb_arena_free(arena, l, size); }
-    return k;
-}
-
-static TB_Node* identity_safepoint(TB_Function* f, TB_Node* n) {
-    if (n->inputs[0]->type == TB_SAFEPOINT) {
-        // (safepoint (safepoint X)) => (safepoint X)
-        return n->inputs[0];
-    } else {
-        return n;
-    }
 }
 
 static TB_Node* identity_phi(TB_Function* f, TB_Node* n) {
