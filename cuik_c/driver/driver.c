@@ -883,6 +883,7 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
        int err = tb_features_parse(&features, mod, "x86_64-v1");
        assert(!err);
     }
+
     if (tp != NULL) {
         #if CUIK_ALLOW_THREADS
         size_t stmt_count = 0;

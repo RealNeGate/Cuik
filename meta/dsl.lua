@@ -346,8 +346,6 @@ while true do
             lines[#lines + 1] = "    return 0;"
             lines[#lines + 1] = "}"
             lines[#lines + 1] = ""
-
-            pub_lines[#pub_lines + 1] = ""
         elseif n[1] == "reg_class" then
             reg_classes[#reg_classes + 1] = { n[2], math.max(1, #n - 2) }
 

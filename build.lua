@@ -339,10 +339,6 @@ for i, f in ipairs(src) do
         extra[#extra+1] = "cuik_pp/keywords.h"
         extra[#extra+1] = "cuik_pp/dfa.h"
     end
-    if added["tb"] then
-        extra[#extra+1] = "include/tb_x64_gen.h"
-        -- extra[#extra+1] = "include/tb_a64_gen.h"
-    end
     if #extra > 0 then
         ninja:write(" | ")
         for _, x in ipairs(extra) do

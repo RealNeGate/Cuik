@@ -120,6 +120,68 @@ while true do
                 reg_classes[#reg_classes + 1] = { n[2], math.max(1, #n - 2), n }
             elseif n[1] == "arch_features" then
                 arch_features = n
+
+                local set_tyname = "TB_" .. node_prefix:upper() .. "FeatureSet"
+                local enum_tyname = "TB_" .. node_prefix:upper() .. "Feature"
+                local entnamepfx = "TB_" .. node_prefix:upper() .. "FEATURE_"
+
+                local function mangle(x)
+                    return x:gsub("[-]","_"):gsub("[.]","_")
+                end
+
+                local implies_map = OrderedSet()
+                local pfx_parser
+                for i=2, #n do
+                    local feat = n[i]
+                    if feat[1] ~= "_prefix-parser" then
+                        local feat_name = feat[1]
+                        if not feat_name then
+                            print(inspect(feat))
+                            print("wrong syntax for arch_features")
+                            os.exit(1)
+                        end
+
+                        if implies_map:get(feat_name) then
+                            print(string.format("arch feature '%s' has already been defined", feat_name))
+                            os.exit(1)
+                        end
+
+                        if feat[2] then
+                            if feat[2] == "=>" then
+                                implies_map:put(feat_name, { unpack(feat, 3) })
+                            else
+                                print(inspect(feat))
+                                print("wrong syntax for arch_features")
+                                os.exit(1)
+                            end
+                        else
+                            implies_map:put(feat_name, true)
+                        end
+                    end
+                end
+
+                -- generate enum --
+                add_line(0, "typedef enum {")
+                for feat, i in implies_map:iter() do
+                    add_line(1, string.format("%s%s,", entnamepfx, mangle(feat):upper()))
+                end
+                add_line(1, entnamepfx.."_MAX,")
+                add_line(0, "} "..enum_tyname..";")
+                add_line(0, "")
+
+                -- generate featureset --
+                local word_count = math.ceil(implies_map:count() / 64)
+                add_line(0, "typedef struct {")
+                add_line(0, "    uint64_t set["..word_count.."];")
+                add_line(0, "} "..set_tyname..";")
+                add_line(0, "")
+
+                add_line(0, string.format("void %s__set(%s* out, %s ent);", set_tyname, set_tyname, enum_tyname))
+                add_line(0, string.format("void %s__each_toggled(const %s* set, void (*consumer)(%s, void*), void* user_ptr);", set_tyname, set_tyname, enum_tyname))
+                add_line(0, string.format("const char* %s__as_str(%s ent);", set_tyname, enum_tyname))
+                add_line(0, string.format("int %s__from_str(%s* out, const char* str, size_t len);", set_tyname, set_tyname))
+                add_line(0, string.format("int %s__parse(%s* out, const char* str);", set_tyname, set_tyname, enum_tyname))
+                add_line(0, "")
             elseif n[1] == "node" then
                 local name = node_prefix..n[2]
                 local props = { idx=node_count, parent=n.parent, extra=n.extra, flags={} }

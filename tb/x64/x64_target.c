@@ -432,7 +432,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
                 set_input(f, cmp, sym, 2);
                 set_input(f, cmp, h,   3);
                 set_input(f, cmp, src, 4);
-                TB_NODE_SET_EXTRA(cmp, X86MemOp, .disp = key_offset, .scale = SCALE_X8, .flags = OP_INDEXED, .mode = MODE_LD, .extra_dt = TB_TYPE_I32);
+                TB_NODE_SET_EXTRA(cmp, X86MemOp, .disp = key_offset, .scale = SCALE_X8, .flags = OP_INDEXED, .mode = MODE_LD, .extra_dt = TB_TYPE_I64);
 
                 prev_ctrl = insert_range_check(ctx, f, n, cmp, E);
             }

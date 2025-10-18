@@ -46,9 +46,6 @@
 #  endif
 #endif
 
-#include "tb_x64_gen.h"
-// TODO: #include "tb_a64_gen.h"
-
 // These are flags
 typedef enum TB_ArithmeticBehavior {
     TB_ARITHMATIC_NONE = 0,
@@ -77,13 +74,6 @@ typedef enum TB_FeatureSet_Generic {
     TB_FEATURE_FRAME_PTR  = (1u << 0u),
     TB_FEATURE_STACK_MAPS = (1u << 1u),
 } TB_FeatureSet_Generic;
-
-typedef struct TB_FeatureSet {
-    uint64_t gen; // TB_FeatureSet_Generic
-    union {
-        TB_X86_FeatureSet x86;
-    };
-} TB_FeatureSet;
 
 typedef enum TB_Linkage {
     TB_LINKAGE_PUBLIC,
@@ -171,6 +161,15 @@ static_assert(sizeof(TB_DataType) == 1, "im expecting this to be a byte");
 #define TB_GET_PTR_ADDRSPACE(x) ((x).data)
 
 #include "tb_gen_public.h"
+
+typedef struct TB_FeatureSet {
+    uint64_t gen; // TB_FeatureSet_Generic
+    union {
+        #ifdef TB_HAS_X64
+        TB_X86_FeatureSet x86;
+        #endif
+    };
+} TB_FeatureSet;
 
 // represents byte counts
 typedef uint32_t TB_CharUnits;

@@ -183,7 +183,7 @@
     pat (CMP_NE cmp_dt=$dt ___ $lhs ($rhs: ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && TB_NODE_GET_EXTRA_T($rhs, TB_NodeInt)->value == 0" => (x86_COND dt=TB_TYPE_I8 (x86_test dt=TB_TYPE_I64 ___ ___ $lhs $lhs extra_dt=$dt) cond=NE)
 
     (node jcc parent=IF extra=X86MemOp)
-    (node jmp_MULTI CTRL TERMINATOR FORK_CTRL extra=X86MemOp)
+    (node jmp_MULTI CTRL TERMINATOR FORK_CTRL PINNED extra=X86MemOp)
 
     /* canonicalize the if-shaped branches */
     pat (IF ...) => "isel_if_branch(ctx, f, n)"
