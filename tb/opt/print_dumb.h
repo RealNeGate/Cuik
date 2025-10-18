@@ -188,7 +188,7 @@ void tb_print_dumb_raw(TB_Function* f, OutStream* s, bool use_fancy_types) {
         // extra newline on BB boundaries
         if (i + 1 < dyn_array_length(ws.items) && cfg_is_fork_proj(ws.items[i + 1]) && !cfg_is_fork_proj(ws.items[i])) {
             s_writef(s, "\n");
-        } else if (cfg_is_region(ws.items[i])) {
+        } else if (NODE_ISA(ws.items[i], REGION)) {
             s_writef(s, "\n");
         }
         tb_print_dumb_node_raw(types, ws.items[i], s);

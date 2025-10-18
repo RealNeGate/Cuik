@@ -186,8 +186,9 @@ int tb_features_parse(TB_FeatureSet* out, TB_Module* m, const char* str) {
 
     switch (m->target_arch) {
         case TB_ARCH_X86_64:
-        if (TB_X86_FeatureSet__parse(&out->x86, str))
+        if (TB_X86_FeatureSet__parse(&out->x86, str)) {
             return 1;
+        }
         break;
 
         default:

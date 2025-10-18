@@ -136,7 +136,7 @@ uint64_t tb_interpret(TB_Function* f, TB_Worklist* ws, uint64_t* params) {
         TB_Node* next_n = USERN(next);
 
         // phi transition
-        if (cfg_is_region(next_n)) {
+        if (NODE_ISA(next_n, REGION)) {
             int path = 1 + USERI(next);
 
             dyn_array_clear(phis);

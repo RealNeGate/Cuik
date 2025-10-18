@@ -68,7 +68,7 @@ static void insert_op_at_end(Ctx* ctx, Rogers* ra, TB_BasicBlock* bb, TB_Node* n
     int pos = aarray_length(bb->items);
     TB_Node* last = bb->items[pos - 1];
     if (IS_PROJ(last)) { last = last->inputs[0]; }
-    if (cfg_is_terminator(last)) {
+    if (tb_node_is_terminator(last)) {
         pos--;
 
         while (pos > 0 && bb->items[pos] != bb->start && IS_PROJ(bb->items[pos])) {
@@ -642,7 +642,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
         }
 
         // process phi defs
-        if (cfg_is_region(header)) {
+        if (NODE_ISA(header, REGION)) {
             FOR_USERS(u, header) {
                 if (USERN(u)->type != TB_PHI) {
                     continue;

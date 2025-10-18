@@ -3,7 +3,7 @@
 static TB_Node* prune_region(TB_Function* f, TB_Node* n) {
     // if there's a dead loop, we need to expunge the body such that
     // it doesn't leave a messy trace
-    if (cfg_is_natural_loop(n) && is_dead_ctrl(f, n->inputs[0]) && n->input_count == 2) {
+    if (NODE_ISA(n, NATURAL_LOOP) && is_dead_ctrl(f, n->inputs[0]) && n->input_count == 2) {
         TB_Node* dead = dead_node(f);
         set_input(f, n, NULL, 0);
         set_input(f, n, NULL, 1);
@@ -32,7 +32,7 @@ static TB_Node* prune_region(TB_Function* f, TB_Node* n) {
     }
 
     // demote loop regions if they lose their backedge
-    if (n->input_count != 2 && cfg_is_natural_loop(n)) {
+    if (n->input_count != 2 && NODE_ISA(n, NATURAL_LOOP)) {
         n->type = TB_REGION;
         changes = true;
     }
@@ -156,7 +156,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
 
         if (changes) {
             // affine loops can't be single edge
-            if (cfg_is_natural_loop(n) && n->input_count != 2) {
+            if (NODE_ISA(n, NATURAL_LOOP) && n->input_count != 2) {
                 n->type = TB_REGION;
             }
             return n;
@@ -649,7 +649,7 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
                 USERN(other_proj)->user_count == 1 &&
                 USERN(other_proj2)->user_count == 1
             ) {
-                TB_ASSERT(cfg_is_region(shared_edge));
+                TB_ASSERT(NODE_ISA(shared_edge, REGION));
                 int shared_i  = USERI(USERN(other_proj)->users);
                 int shared_i2 = USERI(USERN(other_proj2)->users);
 

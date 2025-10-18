@@ -5,14 +5,75 @@ local unpack = unpack or table.unpack
 local source = run_command("clang -E -xc "..arg[1].." "..arg[4])
 local lex = lexer(source)
 
-local all_nodes = OrderedSet()
-local node_count = 1
+all_nodes = OrderedSet()
+node_count = 1
 
 all_nodes:put("NULL", { idx=0, flags={} })
 
-local lines = {}
+lines = {}
 function add_line(depth, line)
     lines[#lines + 1] = string.rep(" ", depth*4) .. line
+end
+
+function decl_type(storage_class, n, name)
+    local name = n[2]
+    local kind = n[1]
+
+    local start_line = ""
+    if storage_class then
+        start_line = storage_class.." "
+    end
+    start_line = start_line..kind
+
+    if name ~= "___" then
+        start_line = start_line.." "..name
+    end
+    lines[#lines + 1] = start_line.." {"
+
+    if kind == "struct" or kind == "union" then
+        for i=3,#n do
+            -- function decl_type(storage_class, n, name)
+            local field_name = n[i][1]
+            local ty = n[i][2]
+
+            local field_ty = ""
+            while type(ty) == "table" and ty[1] == "ptr" do
+                field_ty = "*"
+                ty = ty[2]
+            end
+
+            if type(ty) == "table" then
+                if ty[1] == "bits" then
+                    lines[#lines + 1] = string.format("    %s%s %s : %d;", ty[2], field_ty, field_name, ty[3])
+                else
+                    decl_type(nil, ty, field_name)
+                end
+            else
+                lines[#lines + 1] = string.format("    %s%s %s;", ty, field_ty, field_name)
+            end
+        end
+    elseif kind == "enum" then
+        local ord = 0
+        for i=3,#n do
+            local name = n[i]
+            if type(n[i]) == "table" then
+                ord  = n[i][2]
+                name = n[i][1]
+            end
+
+            lines[#lines + 1] = string.format("    %s = %d,", name, ord)
+            ord = ord + 1
+        end
+    else
+        assert(false, "bad")
+    end
+
+    if name == "___" then
+        lines[#lines + 1] = "};"
+    else
+        lines[#lines + 1] = "} "..name..";"
+    end
+    lines[#lines + 1] = ""
 end
 
 local targets = {}
@@ -40,14 +101,26 @@ while true do
         node_prefix = namespace.."_"
     end
 
-    print(inspect(tree))
-
     local all_patterns = {}
+    local node_groups = Partitions()
+    local node2group = {}
+    local reg_classes = {}
+    local arch_features = nil
+    local types = {}
+
+    local start_id = node_count
+
     local i = 3
     while i <= #tree do
         local n = tree[i]
         if type(n) == "table" then
-            if n[1] == "node" then
+            if n[1] == "enum" or n[1] == "struct" or n[1] == "union" then
+                table.insert(types, n)
+            elseif n[1] == "reg_class" then
+                reg_classes[#reg_classes + 1] = { n[2], math.max(1, #n - 2), n }
+            elseif n[1] == "arch_features" then
+                arch_features = n
+            elseif n[1] == "node" then
                 local name = node_prefix..n[2]
                 local props = { idx=node_count, parent=n.parent, extra=n.extra, flags={} }
 
@@ -60,7 +133,12 @@ while true do
 
                 all_nodes:put(name, props)
                 node_count = node_count + 1
-            elseif n[1] == "reg_class" then
+            elseif n[1] == "op_group" then
+                local name = n[2]
+                for i=3,#n do
+                    node_groups:put(name, n[i])
+                    node2group[n[i]] = name
+                end
             end
         elseif n == "pat" then
             local pattern = tree[i+1]
@@ -97,9 +175,8 @@ while true do
         i = i + 1
     end
 
-    targets[namespace] = { all_patterns=all_patterns }
+    targets[namespace] = { all_patterns=all_patterns, node2group=node2group, node_groups=node_groups, node_prefix=node_prefix, types=types, reg_classes=reg_classes, arch_features=arch_features, range={start_id, node_count} }
 end
-print(inspect(targets))
 
 -- Apply subtyping
 local max_len = 0
@@ -121,6 +198,9 @@ for k,v in all_nodes:iter() do
 end
 print(inspect(attributes.entries))
 
+--------------------------
+-- Generate public file
+--------------------------
 add_line(0, "#pragma once")
 add_line(0, "typedef uint16_t TB_NodeType;")
 add_line(0, "typedef enum TB_NodeTypeEnum {")
@@ -130,7 +210,78 @@ end
 add_line(1, "TB_NODE_TYPE_MAX,")
 add_line(0, "} TB_NodeTypeEnum;")
 add_line(0, "")
-add_line(0, "static const uint16_t* tb_node_subtypes[] = {")
+
+if true then
+    local f = io.open(arg[3], "w")
+    f:write(table.concat(lines, "\n"))
+    f:close()
+    lines = {}
+end
+
+--------------------------
+-- Generate private file
+--------------------------
+add_line(0, "#pragma once")
+add_line(0, "")
+add_line(0, "extern const uint64_t tb_node_flags[];")
+add_line(0, "extern const uint16_t* tb_node_subtypes[];")
+add_line(0, "")
+add_line(0, "typedef enum TB_NodeFlagsEnum {")
+local i = 0
+for k,v in attributes:iter() do
+    add_line(1, string.format("NODE_%-20s = 1ull << %d,", k, i))
+    i = i + 1
+end
+add_line(0, "} TB_NodeFlagsEnum;")
+add_line(0, "")
+
+-- Generate query functions
+for k,v in attributes:iter() do
+    add_line(0, string.format("static bool tb_node_is_%s(TB_Node* n) { return tb_node_flags[n->type] & NODE_%s; }", k:lower(), k))
+end
+add_line(0, "")
+
+add_line(0, "#define NODE_ISA(s, t) tb_node_isa((s)->type, TB_ ## t)")
+
+for k,v in pairs(targets) do
+    if k ~= "___" then
+        local r = v.range
+        add_line(0, string.format("static bool tb_node_is_%s(TB_Node* n) { return n->type >= %d && n->type < %d; }", k, r[1], r[2]))
+    end
+end
+add_line(0, "")
+
+for k,v in pairs(targets) do
+    if k ~= "___" then
+        add_line(0, "#if 1 // namespace: "..k)
+        for i=1,#v.types do
+            if v.types[i][2] == "___" then
+                decl_type(nil, v.types[i], "___")
+            else
+                decl_type("typedef", v.types[i], v.types[i][1])
+            end
+        end
+        add_line(0, "#endif")
+        add_line(0, "")
+    end
+end
+
+add_line(0, "#ifndef TB_GEN_IMPL")
+add_line(0, "TB_NodeFlagsEnum tb_node_get_flags(TB_Node* n);")
+add_line(0, "const char* tb_node_get_name(TB_NodeTypeEnum n_type);")
+add_line(0, "size_t tb_node_extra_bytes(TB_NodeTypeEnum n_type);")
+add_line(0, "bool tb_node_isa(TB_NodeTypeEnum s, TB_NodeTypeEnum t);")
+add_line(0, "#else")
+add_line(0, "bool tb_node_isa(TB_NodeTypeEnum s, TB_NodeTypeEnum t) {")
+add_line(1, "const uint16_t* ss = tb_node_subtypes[s];")
+add_line(1, "if (ss == NULL) {")
+add_line(2, "return t == s;")
+add_line(1, "}")
+add_line(1, "int t_depth = tb_node_subtypes[t] ? tb_node_subtypes[t][0] : 1;")
+add_line(1, "return t_depth <= ss[0] ? t == ss[t_depth] : false;")
+add_line(0, "}")
+add_line(0, "")
+add_line(0, "const uint16_t* tb_node_subtypes[TB_NODE_TYPE_MAX] = {")
 for k,v in all_nodes:iter() do
     local limit = 0
     local curr  = k
@@ -156,24 +307,7 @@ end
 add_line(0, "};")
 add_line(0, "")
 
-if true then
-    local f = io.open(arg[3], "w")
-    f:write(table.concat(lines, "\n"))
-    f:close()
-    lines = {}
-end
-
-add_line(0, "#pragma once")
-add_line(0, "typedef enum TB_NodeFlagsEnum {")
-local i = 0
-for k,v in attributes:iter() do
-    add_line(1, string.format("NODE_%-20s = 1ull << %d,", k, i))
-    i = i + 1
-end
-add_line(0, "} TB_NodeFlagsEnum;")
-add_line(0, "")
-
-add_line(0, "static const uint64_t tb_node_flags[] = {")
+add_line(0, "const uint64_t tb_node_flags[TB_NODE_TYPE_MAX] = {")
 for k,v in all_nodes:iter() do
     local list = {}
     for f,_ in pairs(v.flags) do
@@ -190,27 +324,6 @@ end
 add_line(0, "};")
 add_line(0, "")
 
--- Generate query functions
-for k,v in attributes:iter() do
-    add_line(0, string.format("static bool tb_node_is_%s(TB_Node* n) { return tb_node_flags[n->type] & NODE_%s; }", k:lower(), k))
-end
-add_line(0, "")
-
-add_line(0, "#define NODE_ISA(s, t) tb_node_isa((s)->type, TB_ ## t)")
-add_line(0, "static bool tb_node_isa(TB_NodeTypeEnum s, TB_NodeTypeEnum t) {")
-add_line(1, "const uint16_t* ss = tb_node_subtypes[s];")
-add_line(1, "if (ss == NULL) {")
-add_line(2, "return t == s;")
-add_line(1, "}")
-add_line(1, "int t_depth = tb_node_subtypes[t] ? tb_node_subtypes[t][0] : 1;")
-add_line(1, "return t_depth <= ss[0] ? t == ss[t_depth] : false;")
-add_line(0, "}")
-add_line(0, "")
-
-add_line(0, "#ifndef TB_GEN_IMPL")
-add_line(0, "TB_NodeFlagsEnum tb_node_get_flags(TB_Node* n);")
-add_line(0, "const char* tb_node_get_name(TB_NodeTypeEnum n_type);")
-add_line(0, "#else")
 add_line(0, "TB_NodeFlagsEnum tb_node_get_flags(TB_Node* n) {")
 add_line(1, "TB_ASSERT(n->type < TB_NODE_TYPE_MAX);")
 add_line(1, "return tb_node_flags[n->type];")
@@ -224,9 +337,46 @@ end
 add_line(2, "default: tb_todo(); return NULL;")
 add_line(1, "}")
 add_line(0, "}")
+add_line(0, "")
+add_line(0, "size_t tb_node_extra_bytes(TB_NodeTypeEnum n_type) {")
+add_line(1, "switch (n_type) {")
+for k,v in all_nodes:iter() do
+    if v.extra then
+        add_line(2, string.format("case TB_%s: return sizeof(%s);", k, v.extra))
+    else
+        add_line(2, string.format("case TB_%s: return 0;", k))
+    end
+end
+add_line(2, "default: tb_todo(); return 0;")
+add_line(1, "}")
+add_line(0, "}")
 add_line(0, "#endif")
 
--- print(table.concat(lines, "\n"))
-f = io.open(arg[2], "w")
-f:write(table.concat(lines, "\n"))
-f:close()
+if true then
+    f = io.open(arg[2], "w")
+    f:write(table.concat(lines, "\n"))
+    f:close()
+    lines = {}
+end
+
+local arch_isel, err = loadfile("meta/arch_isel.lua")
+print(arch_isel, err)
+
+for k,v in pairs(targets) do
+    if k ~= "___" then
+        all_patterns = v.all_patterns
+        node2group   = v.node2group
+        node_groups  = v.node_groups
+        mach_prefix  = v.node_prefix
+        reg_classes  = v.reg_classes
+        types        = v.types
+        arch_features= v.arch_features
+        arch_isel()
+
+        local path = string.format("tb/x64/x64_gen.h")
+        f = io.open(path, "w")
+        f:write(table.concat(lines, "\n"))
+        f:close()
+        lines = {}
+    end
+end

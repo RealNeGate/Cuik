@@ -146,7 +146,7 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
                     edge.freq     = freq * tb_edge_prob(it.succ);
                     aarray_push(traces.edges, edge);
                 }
-            } else if (!cfg_is_endpoint(bb->end)) {
+            } else if (!tb_node_is_end(bb->end)) {
                 TB_Node* succ = USERN(cfg_next_user(bb->end));
                 TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, succ);
 

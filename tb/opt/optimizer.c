@@ -122,7 +122,7 @@ void tb_node_clear_extras(TB_Function* f, TB_Node* n) {
 }
 
 static bool is_empty_bb(TB_Function* f, TB_Node* end) {
-    TB_ASSERT(cfg_is_terminator(end));
+    TB_ASSERT(tb_node_is_terminator(end));
     if (!cfg_is_bb_entry(end->inputs[0])) {
         return false;
     }
@@ -146,7 +146,7 @@ static TB_Node* next_mem_user(TB_Node* n) {
 }
 
 float tb_edge_prob(TB_Node* n) {
-    TB_ASSERT(!cfg_is_endpoint(n));
+    TB_ASSERT(!tb_node_is_end(n));
 
     // not even a branch? then it's getting 100%
     if (!cfg_is_cproj(n)) {
@@ -916,7 +916,7 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     node_ensure_users_cap(f, new_n, n->user_count);
 
     // these nodes can subsume themselves
-    bool allow_cycle = cfg_is_region(new_n) || new_n->type == TB_PHI;
+    bool allow_cycle = NODE_ISA(new_n, REGION) || new_n->type == TB_PHI;
     FOR_N(i, 0, n->user_count) {
         TB_User u = n->users[i];
         TB_Node* un = USERN(&u);

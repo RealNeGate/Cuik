@@ -332,11 +332,8 @@ bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b);
 TB_Node* gcf_congruent_leader(TB_Function* f, TB_Node* n);
 
 // lovely properties
-bool cfg_is_region(TB_Node* n);
-bool cfg_is_natural_loop(TB_Node* n);
-bool cfg_is_terminator(TB_Node* n);
-bool cfg_is_endpoint(TB_Node* n);
-bool tb_node_is_compare(TB_Node* n);
+bool tb_node_is_terminator(TB_Node* n);
+bool tb_node_is_end(TB_Node* n);
 
 // debug server
 void dbg_startup_server(TB_Module* m);

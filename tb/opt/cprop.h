@@ -199,7 +199,7 @@ static void push_cprop_users(TB_Function* f, CProp* cprop, TB_Node* n) {
             continue;
         }
 
-        if (cfg_is_region(un)) {
+        if (NODE_ISA(un, REGION)) {
             FOR_USERS(phi, un) if (USERN(phi)->type == TB_PHI) {
                 push_cprop(f, cprop, USERN(phi));
             }

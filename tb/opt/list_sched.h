@@ -130,7 +130,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
         if (n->type != TB_PHI && n->dt.type != TB_TAG_MEMORY && n->dt.type != TB_TAG_CONTROL && n->dt.type != TB_TAG_TUPLE) {
             TB_Node* phi = NULL;
             FOR_N(i, 1, n->input_count) {
-                if (n->inputs[i] && n->inputs[i]->type == TB_PHI && cfg_is_natural_loop(n->inputs[i]->inputs[0])) {
+                if (n->inputs[i] && n->inputs[i]->type == TB_PHI && NODE_ISA(n->inputs[i]->inputs[0], NATURAL_LOOP)) {
                     phi = n->inputs[i];
                     break;
                 }

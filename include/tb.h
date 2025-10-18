@@ -359,7 +359,6 @@ typedef struct { // any integer binary operator
 
 typedef struct {
     TB_CharUnits align;
-    uint32_t is_volatile;
 } TB_NodeMemAccess;
 
 typedef struct { // TB_DEBUG_LOCATION

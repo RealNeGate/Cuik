@@ -52,13 +52,13 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicB
             if (search >= 0) continue;
 
             TB_User* succ = cfg_next_user(end);
-            if (cfg_is_region(USERN(succ))) {
+            if (NODE_ISA(USERN(succ), REGION)) {
                 fill_phis(arena, &phis, USERN(succ), USERI(succ));
             }
         }
-    } else if (!cfg_is_endpoint(end)) {
+    } else if (!tb_node_is_end(end)) {
         TB_User* succ = cfg_next_user(end);
-        if (cfg_is_region(USERN(succ))) {
+        if (NODE_ISA(USERN(succ), REGION)) {
             fill_phis(arena, &phis, USERN(succ), USERI(succ));
         }
     }
@@ -124,7 +124,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicB
         top = parent;
 
         // push outputs (projections, if they apply)
-        if (n->dt.type == TB_TAG_TUPLE && !tb_node_is_fork_ctrl (n) && n->type != TB_ROOT) {
+        if (n->dt.type == TB_TAG_TUPLE && !tb_node_is_fork_ctrl(n) && n->type != TB_ROOT) {
             FOR_USERS(u, n) {
                 if (IS_PROJ(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
                     dyn_array_put(ws->items, USERN(u));

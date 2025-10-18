@@ -31,7 +31,7 @@ static ArrayAccess compute_array_access(TB_Function* f, TB_Node* mem) {
         }
     }
 
-    if (r.base->type == TB_PHI && cfg_is_natural_loop(r.base->inputs[0])) {
+    if (r.base->type == TB_PHI && NODE_ISA(r.base->inputs[0], NATURAL_LOOP)) {
         TB_Node* step = r.base->inputs[2];
         if (step->type == TB_PTR_OFFSET && step->inputs[2]->type == TB_ICONST) {
             r.base = r.base->inputs[1];
@@ -260,10 +260,6 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
     TB_Node* addr = n->inputs[2];
 
     TB_NodeMemAccess* a = TB_NODE_GET_EXTRA(n);
-    if (a->is_volatile) {
-        return NULL;
-    }
-
     if (ctrl != NULL) {
         // we've dependent on code which must always be run (ROOT.mem)
         if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_ROOT) {

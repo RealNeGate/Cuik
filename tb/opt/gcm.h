@@ -20,7 +20,7 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
     // ideally we don't place things into the backedge of a rotated loop
     if (IS_PROJ(late->start) && late->start == late->end) {
         TB_Node* next = cfg_next_control(late->end);
-        if (cfg_is_natural_loop(next)) {
+        if (NODE_ISA(next, NATURAL_LOOP)) {
             return early != late ? late->dom : late;
         }
     }
@@ -69,7 +69,7 @@ static TB_BasicBlock* find_use_block(TB_Function* f, TB_CFG* cfg, TB_Node* n, TB
 
     if (y->type == TB_PHI) {
         TB_Node* use_node = y->inputs[0];
-        TB_ASSERT(cfg_is_region(use_node));
+        TB_ASSERT(NODE_ISA(use_node, REGION));
         TB_ASSERT_MSG(y->input_count == use_node->input_count + 1, "phi has parent with mismatched predecessors");
 
         ptrdiff_t j = USERI(use);
@@ -171,7 +171,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     }
                 }
 
-                if (cfg_is_region(bb->start)) {
+                if (NODE_ISA(bb->start, REGION)) {
                     FOR_USERS(u, bb->start) if (USERN(u)->type == TB_PHI) {
                         f->scheduled[USERN(u)->gvn] = bb;
                         aarray_push(bb->items, USERN(u));
@@ -198,7 +198,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         TB_Node* curr = n;
                         while (bb == NULL) {
                             bb = f->scheduled[curr->gvn];
-                            if (curr->type == TB_DEAD || cfg_is_region(curr)) { // dead block? odd
+                            if (curr->type == TB_DEAD || NODE_ISA(curr, REGION)) { // dead block? odd
                                 break;
                             }
                             curr = curr->inputs[0];
@@ -510,7 +510,7 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                             set_union(live_out, &succ_bb->live_in);
                         }
                     }
-                } else if (!cfg_is_endpoint(end)) {
+                } else if (!tb_node_is_end(end)) {
                     // union with successor's lives
                     TB_Node* succ = cfg_next_control(end);
                     TB_BasicBlock* succ_bb = f->scheduled[succ->gvn];
@@ -544,7 +544,7 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
             aarray_for(i, cfg.blocks) {
                 TB_BasicBlock* bb = &cfg.blocks[i];
                 TB_Node* start = bb->start;
-                if (cfg_is_region(start)) {
+                if (NODE_ISA(start, REGION)) {
                     FOR_USERS(u, start) {
                         TB_Node* n = USERN(u);
                         if (n->type == TB_PHI && n->dt.type != TB_TAG_MEMORY) {

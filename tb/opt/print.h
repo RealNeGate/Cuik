@@ -166,10 +166,10 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, OutStream* s, bool fa
 
     // print phi args
     s_writef(s, "(");
-    if (cfg_is_region(target)) {
+    if (NODE_ISA(target, REGION)) {
         int phi_i = -1;
         FOR_USERS(u, n) {
-            if (cfg_is_region(USERN(u))) {
+            if (NODE_ISA(USERN(u), REGION)) {
                 phi_i = 1 + USERI(u);
                 break;
             }
@@ -549,7 +549,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
     }
     dyn_array_clear(ws->items);
 
-    if (!cfg_is_terminator(bb->end)) {
+    if (!tb_node_is_terminator(bb->end)) {
         s_writef(s, "  goto ");
         print_branch_edge(ctx, bb->end, s, true);
         s_newline(s);

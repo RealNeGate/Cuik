@@ -477,7 +477,7 @@ TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Data
     }
     set_input(f, n, peek_mem(g, mem_var), 1);
     set_input(f, n, addr, 2);
-    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align, .is_volatile = is_volatile);
+    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
     n = g->peep(f, n);
 
     if (is_volatile) {
@@ -501,7 +501,6 @@ TB_Node* tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Nod
     set_input(f, n, xfer_mem(g, n, mem_var), 1);
     set_input(f, n, addr, 2);
     set_input(f, n, val, 3);
-    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align, .is_volatile = is_volatile);
 
     if (is_volatile) {
         // volatile operations just have a memory barrier right after them, this will stop the
@@ -664,7 +663,7 @@ void tb_builder_label_complete(TB_GraphBuilder* g, TB_Node* label) {
     TB_Function* f = g->f;
     TB_Node* top_ctrl = label->inputs[1];
 
-    if (cfg_is_region(top_ctrl)) {
+    if (NODE_ISA(top_ctrl, REGION)) {
         FOR_USERS(u, top_ctrl) {
             TB_Node* un = USERN(u);
             if (un->type == TB_PHI) {
@@ -689,7 +688,7 @@ TB_Node* tb_builder_label_get(TB_GraphBuilder* g) {
 }
 
 int tb_builder_label_pred_count(TB_GraphBuilder* g, TB_Node* label) {
-    if (cfg_is_region(label->inputs[1])) {
+    if (NODE_ISA(label->inputs[1], REGION)) {
         return label->inputs[1]->input_count;
     } else {
         return 1;
@@ -819,7 +818,7 @@ TB_Node* tb_builder_key_case(TB_GraphBuilder* g, TB_Node* br_syms, uint64_t key,
 }
 
 TB_Node* tb_builder_phi(TB_GraphBuilder* g, int val_count, TB_Node** vals) {
-    TB_ASSERT(cfg_is_region(g->curr->inputs[1]));
+    TB_ASSERT(NODE_ISA(g->curr->inputs[1], REGION));
     TB_ASSERT(g->curr->inputs[1]->input_count == val_count);
 
     TB_Function* f = g->f;

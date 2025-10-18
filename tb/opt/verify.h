@@ -15,7 +15,7 @@ static void cycle_check(TB_Function* f, TB_Node* n, uint32_t* visited, uint32_t*
         b_set(progress, n->gvn);
         FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
             TB_Node* in = n->inputs[i];
-            if (in->type != TB_ROOT && in->type != TB_PHI && !cfg_is_region(in)) {
+            if (in->type != TB_ROOT && in->type != TB_PHI && !NODE_ISA(in, REGION)) {
                 cycle_check(f, in, visited, progress);
             }
         }
@@ -47,7 +47,7 @@ void tb_verify(TB_Function* f, TB_Arena* tmp) {
             memset(visited, 0, ((f->node_count + 31) / 32) * sizeof(uint32_t));
             cycle_check(f, n, visited, progress);
         } else if (n->type == TB_PHI) {
-            assert(cfg_is_region(n->inputs[0]));
+            assert(NODE_ISA(n->inputs[0], REGION));
             assert(n->input_count == 1 + n->inputs[0]->input_count);
         }
     }

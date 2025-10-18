@@ -9,34 +9,6 @@ static TB_Node* isel_va_start(struct Ctx* ctx, TB_Function* f, TB_Node* n);
 static TB_Node* isel_if_branch(struct Ctx* ctx, TB_Function* f, TB_Node* n);
 static TB_Node* isel_multi_way_branch(struct Ctx* ctx, TB_Function* f, TB_Node* n);
 
-// node with X86MemOp (mov, add, and...) will have this layout of inputs:
-//   [1] mem
-//   [2] base (or first src)
-//   [3] idx
-//   [4] val (only if flags' HAS_IMMEDIATE is unset)
-typedef struct {
-    union {
-        float prob;
-
-        struct {
-            int32_t disp;
-            int32_t imm;
-        };
-    };
-
-    uint8_t mode  : 2;
-    uint8_t scale : 2;
-    uint8_t cond  : 4;
-    uint8_t flags;
-
-    TB_DataType extra_dt;
-} X86MemOp;
-
-typedef struct {
-    TB_NodeSafepoint super;
-    TB_FunctionPrototype* proto;
-} X86Call;
-
 typedef union {
     float f;
     uint32_t i;
@@ -210,7 +182,7 @@ static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n) {
     //     va_start(args, fmt); // args = ((char*) &fmt) + 8;
     //     ...
     // }
-    TB_Node* op = tb_alloc_node(f, x86_lea, TB_TYPE_PTR, 5, sizeof(X86MemOp));
+    TB_Node* op = tb_alloc_node(f, TB_x86_lea, TB_TYPE_PTR, 5, sizeof(X86MemOp));
     set_input(f, op, ctx->frame_ptr, 2);
 
     TB_FunctionPrototype* proto = ctx->f->prototype;
@@ -267,7 +239,7 @@ static TB_Node* insert_range_check(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node
     TB_Node* default_case = USERN(proj_with_index(n, 0));
     TB_ASSERT(default_case->type == TB_BRANCH_PROJ);
 
-    TB_Node* chk_jcc = tb_alloc_node(f, x86_jcc, TB_TYPE_TUPLE, 2, sizeof(X86MemOp));
+    TB_Node* chk_jcc = tb_alloc_node(f, TB_x86_jcc, TB_TYPE_TUPLE, 2, sizeof(X86MemOp));
     set_input(f, chk_jcc, n->inputs[0], 0);
     set_input(f, chk_jcc, cmp,          1);
     TB_NODE_SET_EXTRA(chk_jcc, X86MemOp, .cond = cond);
@@ -327,23 +299,23 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
     double density = ((double)br->succ_count) / ((double) (max - min));
     if (density > 0.25f) {
         if (src->dt.type == TB_TAG_I32) {
-            src = unary_reg(f, x86_mov, TB_TYPE_I64, src);
+            src = unary_reg(f, TB_x86_mov, TB_TYPE_I64, src);
         } else if (src->dt.type == TB_TAG_I16) {
-            src = unary_reg(f, x86_movzx16, TB_TYPE_I64, src);
+            src = unary_reg(f, TB_x86_movzx16, TB_TYPE_I64, src);
         } else if (src->dt.type == TB_TAG_I8) {
-            src = unary_reg(f, x86_movzx8, TB_TYPE_I64, src);
+            src = unary_reg(f, TB_x86_movzx8, TB_TYPE_I64, src);
         }
 
         // normalize range, x' = x - range_start
         if (min != 0) {
-            src = binop_imm(f, x86_sub, src, min);
+            src = binop_imm(f, TB_x86_sub, src, min);
         }
 
         // TODO(NeGate): technically if the default case leads
         // to unreachable we can omit this range check.
         TB_Node* prev_ctrl = n->inputs[0];
         if (1) {
-            TB_Node* cmp = tb_alloc_node(f, x86_cmp, TB_TYPE_I64, 3, sizeof(X86MemOp));
+            TB_Node* cmp = tb_alloc_node(f, TB_x86_cmp, TB_TYPE_I64, 3, sizeof(X86MemOp));
             set_input(f, cmp, src, 2);
             TB_NODE_SET_EXTRA(cmp, X86MemOp, .imm = limit, .flags = OP_IMMEDIATE, .extra_dt = src->dt);
 
@@ -375,7 +347,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
         set_input(f, sym, f->root_node, 0);
         TB_NODE_SET_EXTRA(sym, TB_NodeSymbol, .sym = &table->super);
 
-        TB_Node* op = tb_alloc_node(f, x86_jmp_MULTI, TB_TYPE_TUPLE, 3, sizeof(X86JmpMulti));
+        TB_Node* op = tb_alloc_node(f, TB_x86_jmp_MULTI, TB_TYPE_TUPLE, 3, sizeof(X86JmpMulti));
         set_input(f, op, prev_ctrl, 0);
         set_input(f, op, src, 1);
         set_input(f, op, sym, 2);
@@ -427,22 +399,22 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
             // h = (h + 0xe6546b64) >> (32 - shift)
             if (src->dt.type < TB_TAG_I32) {
                 // zero extend
-                src = unary_reg(f, src->dt.type == TB_TAG_I16 ? x86_movzx16 : x86_movzx8, TB_TYPE_I32, src);
+                src = unary_reg(f, src->dt.type == TB_TAG_I16 ? TB_x86_movzx16 : TB_x86_movzx8, TB_TYPE_I32, src);
             } else if (src->dt.type > TB_TAG_I32) {
                 // truncate
-                src = unary_reg(f, x86_mov, TB_TYPE_I32, src);
+                src = unary_reg(f, TB_x86_mov, TB_TYPE_I32, src);
             }
 
             TB_Node* k = src;
-            k = binop_imm(f, x86_rol,  k, 15);
-            k = binop_imm(f, x86_imul, k, 0x1b873593);
+            k = binop_imm(f, TB_x86_rol,  k, 15);
+            k = binop_imm(f, TB_x86_imul, k, 0x1b873593);
 
             TB_Node* h = make_int_node(f, TB_TYPE_I32, hash);
-            h = binop_reg(f, x86_xor,  k, h);
-            h = binop_imm(f, x86_rol,  h, 13);
-            h = binop_imm(f, x86_imul, h, 5);
-            h = binop_imm(f, x86_add,  h, 0xe6546b64);
-            h = binop_imm(f, x86_shr,  h, 32 - shift);
+            h = binop_reg(f, TB_x86_xor,  k, h);
+            h = binop_imm(f, TB_x86_rol,  h, 13);
+            h = binop_imm(f, TB_x86_imul, h, 5);
+            h = binop_imm(f, TB_x86_add,  h, 0xe6546b64);
+            h = binop_imm(f, TB_x86_shr,  h, 32 - shift);
 
             TB_Global* table = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
             tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), table, cap * sizeof(uint64_t[2]), sizeof(uint64_t), 2 + cap);
@@ -456,7 +428,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
             TB_Node* prev_ctrl = n->inputs[0];
             size_t key_offset = cap * sizeof(uint64_t);
             if (1) {
-                TB_Node* cmp = tb_alloc_node(f, x86_cmp, TB_TYPE_I64, 5, sizeof(X86MemOp));
+                TB_Node* cmp = tb_alloc_node(f, TB_x86_cmp, TB_TYPE_I64, 5, sizeof(X86MemOp));
                 set_input(f, cmp, sym, 2);
                 set_input(f, cmp, h,   3);
                 set_input(f, cmp, src, 4);
@@ -468,7 +440,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
             uint64_t* dst_keys = tb_global_add_region(f->super.module, table, cap * sizeof(uint64_t), cap * sizeof(uint64_t));
             memcpy(dst_keys, keys, key_offset);
 
-            TB_Node* op = tb_alloc_node(f, x86_jmp_MULTI, TB_TYPE_TUPLE, 3, sizeof(X86JmpMulti));
+            TB_Node* op = tb_alloc_node(f, TB_x86_jmp_MULTI, TB_TYPE_TUPLE, 3, sizeof(X86JmpMulti));
             set_input(f, op, prev_ctrl, 0);
             set_input(f, op, h, 1);
             set_input(f, op, sym, 2);
@@ -490,7 +462,7 @@ static float edge_prob(TB_Node* n) {
     TB_Node* tup = n->inputs[0];
     int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
 
-    if (tup->type == x86_jcc) {
+    if (tup->type == TB_x86_jcc) {
         X86MemOp* op = TB_NODE_GET_EXTRA(n);
         return index ? 1.0 - op->prob : op->prob;
     } else {
@@ -498,10 +470,10 @@ static float edge_prob(TB_Node* n) {
     }
 }
 
-static uint32_t node_flags(TB_Node* n) {
-    if (n->type == x86_jcc) {
+/* static uint32_t node_flags(TB_Node* n) {
+    if (n->type == TB_x86_jcc) {
         return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_IF | NODE_MEMORY_IN;
-    } else if (n->type == x86_jmp_MULTI) {
+    } else if (n->type == TB_x86_jmp_MULTI) {
         return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL;
     } else if (n->type == x86_call) {
         return NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT | NODE_EFFECT;
@@ -512,18 +484,14 @@ static uint32_t node_flags(TB_Node* n) {
         flags |= NODE_ALWAYS_SINK;
     }
     return flags;
-}
-
-static size_t extra_bytes(TB_Node* n) {
-    return sizeof(X86MemOp);
-}
+}*/
 
 static void print_extra(OutStream* s, TB_Node* n) {
     static const char* modes[] = { "reg", "ld", "st" };
 
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
     s_writef(s, "mode=%s", modes[op->mode]);
-    if (op->mode || n->type == x86_MEMORY) {
+    if (op->mode || n->type == TB_x86_MEMORY) {
         s_writef(s, ", scale=%d, disp=%d", 1u<<op->scale, op->disp, modes[op->mode]);
     }
 
@@ -531,11 +499,11 @@ static void print_extra(OutStream* s, TB_Node* n) {
         s_writef(s, ", imm=%d", op->imm);
     }
 
-    if (n->type == x86_jcc) {
+    if (n->type == TB_x86_jcc) {
         s_writef(s, ", prob=%f", op->prob);
     }
 
-    if (n->type == x86_jcc || n->type == x86_setcc || n->type == x86_cmovcc) {
+    if (n->type == TB_x86_jcc || n->type == TB_x86_setcc || n->type == TB_x86_cmovcc) {
         s_writef(s, ", cond=%s", COND_NAMES[op->cond]);
     }
 }
@@ -616,7 +584,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
 
             printf("  jmp BB%d", b);
         }
-    } else if (n->type == TB_MACH_JUMP || n->type == x86_jcc) {
+    } else if (n->type == TB_MACH_JUMP || n->type == TB_x86_jcc) {
         int succ[2] = { -1, -1 };
         FOR_SUCC(s, n) {
             int index = n->type == TB_MACH_JUMP ? 0 : TB_NODE_GET_EXTRA_T(s.succ, TB_NodeProj)->index;
@@ -630,7 +598,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             succ[index] = b;
         }
 
-        if (n->type == x86_jcc) {
+        if (n->type == TB_x86_jcc) {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             printf("  j%s ", COND_NAMES[op->cond]);
             print_pretty_edge(ctx, n->inputs[1]);
@@ -703,7 +671,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             print_pretty_edge(ctx, n->inputs[i]);
         }
         printf(")");
-    } else if (n->type == x86_vzero) {
+    } else if (n->type == TB_x86_vzero) {
         printf("  vzero ");
         print_pretty_edge(ctx, n);
     } else if (n->type == TB_VSHUFFLE) {
@@ -723,7 +691,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             printf("%d", shuf->indices[i]);
         }
         printf("]");
-    } else if (n->type >= TB_MACH_X86 && n->type != x86_call) {
+    } else if (tb_node_is_x86(n) && n->type != TB_x86_call) {
         const char* name = tb_node_get_name(n->type);
         name += 4;
 
@@ -740,11 +708,11 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
                 default: tb_todo();
             }
 
-            if (n->type == x86_movzx8 || n->type == x86_movzx16 ||
-                n->type == x86_movsx8 || n->type == x86_movsx16 || n->type == x86_movsx32
+            if (n->type == TB_x86_movzx8 || n->type == TB_x86_movzx16 ||
+                n->type == TB_x86_movsx8 || n->type == TB_x86_movsx16 || n->type == TB_x86_movsx32
             ) {
                 printf("  %s_%d ", name, bytes);
-            } else if (n->type == x86_cmovcc) {
+            } else if (n->type == TB_x86_cmovcc) {
                 printf("  %s%s_%d ", name, COND_NAMES[op->cond], bytes);
             } else {
                 printf("  %s%d ", name, bytes);
@@ -759,7 +727,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         }
 
         int rx_i = op->flags & OP_INDEXED ? 4 : 3;
-        bool mem_lhs = op->mode == MODE_ST || (n->type >= x86_shlx && n->type <= x86_sarx);
+        bool mem_lhs = op->mode == MODE_ST || (n->type >= TB_x86_shlx && n->type <= TB_x86_sarx);
 
         // if we're in load-form we print the RX first
         if (!mem_lhs && rx_i < n->input_count && n->inputs[rx_i]) {
@@ -996,8 +964,8 @@ static bool try_for_imm32(TB_DataType dt, TB_Node* n, int32_t* out_x) {
 // the op.
 static int node_2addr(TB_Node* n) {
     switch (n->type) {
-        case x86_add: case x86_or: case x86_and: case x86_sub: case x86_xor: case x86_imul:
-        case x86_vadd: case x86_vsub: case x86_vmul: case x86_vdiv: case x86_vxor:
+        case TB_x86_add: case TB_x86_or: case TB_x86_and: case TB_x86_sub: case TB_x86_xor: case TB_x86_imul:
+        case TB_x86_vadd: case TB_x86_vsub: case TB_x86_vmul: case TB_x86_vdiv: case TB_x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             if (op->mode == MODE_ST) return -1;
@@ -1008,11 +976,11 @@ static int node_2addr(TB_Node* n) {
             return n->input_count - 1;
         }
 
-        case x86_cmovcc: case x86_adc:
+        case TB_x86_cmovcc: case TB_x86_adc:
         return 2;
 
-        case x86_shl: case x86_shr: case x86_sar:
-        case x86_rol: case x86_ror: {
+        case TB_x86_shl: case TB_x86_shr: case TB_x86_sar:
+        case TB_x86_rol: case TB_x86_ror: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_ASSERT(op->mode == MODE_REG);
             return n->input_count - 1;
@@ -1029,7 +997,7 @@ static int node_2addr(TB_Node* n) {
 
 static bool node_remat(TB_Node* n) {
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
-    if ((n->type == x86_mov || n->type == x86_vmov) && op->mode == MODE_LD && n->inputs[1] == NULL) {
+    if ((n->type == TB_x86_mov || n->type == TB_x86_vmov) && op->mode == MODE_LD && n->inputs[1] == NULL) {
         return true;
     }
 
@@ -1037,7 +1005,7 @@ static bool node_remat(TB_Node* n) {
         return true;
     }
 
-    return n->type == x86_lea || n->type == x86_cmp || n->type == x86_test || n->type == x86_ucomi || n->type == x86_bt;
+    return n->type == TB_x86_lea || n->type == TB_x86_cmp || n->type == TB_x86_test || n->type == TB_x86_ucomi || n->type == TB_x86_bt;
 }
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
@@ -1160,12 +1128,12 @@ static TB_Node* mach_symbol(Ctx* restrict ctx, TB_Function* f, TB_Symbol* s) {
 
 static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
     TB_Function* f = ctx->f;
-    if (n->type >= x86_add && n->type <= x86_ror) {
+    if (n->type >= TB_x86_add && n->type <= TB_x86_ror) {
         // integer ops all produce the FLAGS
         TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
         set_input(f, proj, n, 0);
         TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = 0, .def = ctx->normie_mask[REG_CLASS_FLAGS]);
-    } else if (n->type == x86_call) {
+    } else if (n->type == TB_x86_call) {
         X86Call* op = TB_NODE_GET_EXTRA(n);
         CallingConv* cc = ctx->calling_conv;
         if (op->proto->call_conv == TB_TRAPCALL) {
@@ -1186,7 +1154,7 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
 
             ctx->num_regs[REG_CLASS_STK] = ctx->param_count + ctx->call_usage + ctx->num_spills + 1;
         }
-    } else if (n->type == x86_idiv || n->type == x86_div) {
+    } else if (n->type == TB_x86_idiv || n->type == TB_x86_div) {
         uint32_t has_proj = 0;
         FOR_USERS(u, n) {
             if (IS_PROJ(USERN(u))) {
@@ -1215,7 +1183,7 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
     TB_Function* f = ctx->f;
 
     int kill_count = 0;
-    if (n->type == x86_call) {
+    if (n->type == TB_x86_call) {
         X86Call* op = TB_NODE_GET_EXTRA(n);
         CallingConv* cc = ctx->calling_conv;
         if (op->proto->call_conv == TB_TRAPCALL) {
@@ -1326,8 +1294,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def;
         }
 
-        case TB_HARD_BARRIER:
-        case TB_SAFEPOINT: {
+        case TB_HARD_BARRIER: {
             if (ins) {
                 TB_NodeSafepoint* sp = TB_NODE_GET_EXTRA(n);
                 ins[1] = &TB_REG_EMPTY;
@@ -1367,10 +1334,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case TB_ICONST:
         return ctx->normie_mask[REG_CLASS_GPR];
 
-        case x86_vzero:
+        case TB_x86_vzero:
         return ctx->normie_mask[REG_CLASS_XMM];
 
-        case x86_jmp_MULTI:
+        case TB_x86_jmp_MULTI:
         if (ins) {
             ins[1] = ctx->normie_mask[REG_CLASS_GPR];
             ins[2] = ctx->normie_mask[REG_CLASS_GPR];
@@ -1398,13 +1365,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
 
             int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-            if (n->inputs[0]->type == x86_call) {
+            if (n->inputs[0]->type == TB_x86_call) {
                 CallingConv* cc = ctx->calling_conv;
                 int reg_class = TB_IS_VECTOR_TYPE(n->dt) || TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR;
 
                 TB_ASSERT(i >= 2 && i < 2 + cc->ret_count[reg_class]);
                 return intern_regmask(ctx, reg_class, false, 1u << cc->rets[reg_class][i - 2]);
-            } else if (n->inputs[0]->type == TB_UMULPAIR || n->inputs[0]->type == TB_SMULPAIR || n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div) {
+            } else if (n->inputs[0]->type == TB_UMULPAIR || n->inputs[0]->type == TB_SMULPAIR || n->inputs[0]->type == TB_x86_idiv || n->inputs[0]->type == TB_x86_div) {
                 return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i ? RDX : RAX));
             }
 
@@ -1412,13 +1379,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return &TB_REG_EMPTY;
         }
 
-        case x86_add: case x86_or:  case x86_and: case x86_sub:
-        case x86_xor: case x86_mov: case x86_imul: case x86_lea:
-        case x86_cmp: case x86_test: case x86_idiv: case x86_div:
-        case x86_shlx: case x86_shrx: case x86_sarx:
-        case x86_movzx8: case x86_movzx16:
-        case x86_movsx8: case x86_movsx16: case x86_movsx32:
-        case x86_cmovcc: case x86_bt: case x86_adc:
+        case TB_x86_add: case TB_x86_or:  case TB_x86_and: case TB_x86_sub:
+        case TB_x86_xor: case TB_x86_mov: case TB_x86_imul: case TB_x86_lea:
+        case TB_x86_cmp: case TB_x86_test: case TB_x86_idiv: case TB_x86_div:
+        case TB_x86_shlx: case TB_x86_shrx: case TB_x86_sarx:
+        case TB_x86_movzx8: case TB_x86_movzx16:
+        case TB_x86_movsx8: case TB_x86_movsx16: case TB_x86_movsx32:
+        case TB_x86_cmovcc: case TB_x86_bt: case TB_x86_adc:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             if (ins) {
@@ -1437,9 +1404,9 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     ins[2] = ctx->mayspill_mask[REG_CLASS_GPR];
                 }
 
-                if (n->type == x86_cmovcc || n->type == x86_adc) {
+                if (n->type == TB_x86_cmovcc || n->type == TB_x86_adc) {
                     ins[n->input_count - 1] = ctx->normie_mask[REG_CLASS_FLAGS];
-                } else if (n->type == x86_idiv || n->type == x86_div) {
+                } else if (n->type == TB_x86_idiv || n->type == TB_x86_div) {
                     // LHS is in RAX
                     ins[n->input_count - 2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
 
@@ -1449,16 +1416,16 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 }
             }
 
-            if (op->mode == MODE_ST || n->type == x86_idiv || n->type == x86_div) {
+            if (op->mode == MODE_ST || n->type == TB_x86_idiv || n->type == TB_x86_div) {
                 return &TB_REG_EMPTY;
-            } else if (n->type == x86_cmp || n->type == x86_test || n->type == x86_bt) {
+            } else if (n->type == TB_x86_cmp || n->type == TB_x86_test || n->type == TB_x86_bt) {
                 return ctx->normie_mask[REG_CLASS_FLAGS];
             } else {
                 return ctx->normie_mask[REG_CLASS_GPR];
             }
         }
 
-        case x86_setcc:
+        case TB_x86_setcc:
         if (ins) {
             ins[1] = &TB_REG_EMPTY;
             ins[2] = ctx->normie_mask[REG_CLASS_FLAGS];
@@ -1479,7 +1446,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
         return ctx->normie_mask[REG_CLASS_GPR];
 
-        case x86_shl: case x86_shr: case x86_rol: case x86_ror: case x86_sar:
+        case TB_x86_shl: case TB_x86_shr: case TB_x86_rol: case TB_x86_ror: case TB_x86_sar:
         {
             if (ins) {
                 ins[1] = &TB_REG_EMPTY;
@@ -1502,8 +1469,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return ctx->all_mask[REG_CLASS_GPR];
         }
 
-        case x86_vmov: case x86_vadd: case x86_vsub: case x86_vmul: case x86_vdiv:
-        case x86_ucomi: case x86_vxor: case x86_vmax: case x86_vmin:
+        case TB_x86_vmov: case TB_x86_vadd: case TB_x86_vsub: case TB_x86_vmul: case TB_x86_vdiv:
+        case TB_x86_ucomi: case TB_x86_vxor: case TB_x86_vmax: case TB_x86_vmin:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             RegMask* xmm = ctx->normie_mask[REG_CLASS_XMM];
@@ -1524,21 +1491,21 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     ins[2] = ctx->mayspill_mask[REG_CLASS_XMM];
                 }
 
-                if (!(n->type == x86_vmov && op->mode == MODE_LD)) {
+                if (!(n->type == TB_x86_vmov && op->mode == MODE_LD)) {
                     ins[n->input_count - 1] = xmm;
                 }
             }
 
             if (op->mode == MODE_ST) {
                 return &TB_REG_EMPTY;
-            } else if (n->type == x86_ucomi) {
+            } else if (n->type == TB_x86_ucomi) {
                 return ctx->normie_mask[REG_CLASS_FLAGS];
             } else {
                 return ctx->normie_mask[REG_CLASS_XMM];
             }
         }
 
-        case x86_jcc:
+        case TB_x86_jcc:
         {
             if (ins) {
                 ins[1] = ctx->normie_mask[REG_CLASS_FLAGS];
@@ -1546,8 +1513,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return &TB_REG_EMPTY;
         }
 
-        case TB_X86INTRIN_SQRT:
-        {
+        case TB_FSQRT: {
             if (ins) {
                 ins[1] = ctx->normie_mask[REG_CLASS_XMM];
             }
@@ -1619,7 +1585,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return &TB_REG_EMPTY;
         }
 
-        case x86_call:
+        case TB_x86_call:
         {
             if (ins) {
                 CallingConv* cc = ctx->calling_conv;
@@ -1798,9 +1764,9 @@ static bool node_peephole(Ctx* restrict ctx, TB_Node* n, TB_BasicBlock* bb, int 
     //   flags = PROJ
     // test RAX, RAX # we can remove it
     // jne  LOOP
-    if (n->type == x86_test && n->user_count == 1 && n->inputs[2] == n->inputs[3] && n->inputs[2]->type == x86_add) {
+    if (n->type == TB_x86_test && n->user_count == 1 && n->inputs[2] == n->inputs[3] && n->inputs[2]->type == TB_x86_add) {
         TB_Node* jcc = USERN(&n->users[0]);
-        if (jcc->type != x86_jcc) { return false; }
+        if (jcc->type != TB_x86_jcc) { return false; }
         X86MemOp* op = TB_NODE_GET_EXTRA(jcc);
         if (op->cond != NE && op->cond != E) { return false; }
 
@@ -1882,12 +1848,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_BLACKHOLE:
         break;
 
-        case TB_SAFEPOINT:
-        COMMENT("safepoint");
-        EMIT1(e, 0x90);
-        break;
-
-        case x86_jmp_MULTI: {
+        case TB_x86_jmp_MULTI: {
             int succ_count = TB_NODE_GET_EXTRA_T(n, X86JmpMulti)->succ_count;
             TB_Global* table = TB_NODE_GET_EXTRA_T(n, X86JmpMulti)->table;
 
@@ -2110,7 +2071,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_idiv: {
+        case TB_x86_idiv: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             // cqo/cdq (sign extend RAX into RDX)
             if (n->dt.type == TB_TAG_I64) { EMIT1(e, 0x48); }
@@ -2122,7 +2083,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_div: {
+        case TB_x86_div: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             __(XOR, TB_X86_DWORD, Vgpr(RDX), Vgpr(RDX));
             Val rhs = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
@@ -2131,7 +2092,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_lea: {
+        case TB_x86_lea: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt = legalize_int(n->dt);
 
@@ -2141,14 +2102,14 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_vmov:
-        case x86_vadd:
-        case x86_vsub:
-        case x86_vmul:
-        case x86_vdiv:
-        case x86_vxor:
-        case x86_vmax:
-        case x86_vmin:
+        case TB_x86_vmov:
+        case TB_x86_vadd:
+        case TB_x86_vsub:
+        case TB_x86_vmul:
+        case TB_x86_vdiv:
+        case TB_x86_vxor:
+        case TB_x86_vmax:
+        case TB_x86_vmin:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt;
@@ -2165,14 +2126,14 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
             int op_type;
             switch (n->type) {
-                case x86_vmov: op_type = mov_op; break;
-                case x86_vadd: op_type = FP_ADD; break;
-                case x86_vsub: op_type = FP_SUB; break;
-                case x86_vmul: op_type = FP_MUL; break;
-                case x86_vdiv: op_type = FP_DIV; break;
-                case x86_vxor: op_type = FP_XOR; break;
-                case x86_vmax: op_type = FP_MAX; break;
-                case x86_vmin: op_type = FP_MIN; break;
+                case TB_x86_vmov: op_type = mov_op; break;
+                case TB_x86_vadd: op_type = FP_ADD; break;
+                case TB_x86_vsub: op_type = FP_SUB; break;
+                case TB_x86_vmul: op_type = FP_MUL; break;
+                case TB_x86_vdiv: op_type = FP_DIV; break;
+                case TB_x86_vxor: op_type = FP_XOR; break;
+                case TB_x86_vmax: op_type = FP_MAX; break;
+                case TB_x86_vmin: op_type = FP_MIN; break;
                 default: tb_todo();
             }
 
@@ -2182,7 +2143,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             } else {
                 Val dst = op_at(ctx, n);
                 if (rx.type != VAL_NONE) {
-                    TB_ASSERT(n->type != x86_lea);
+                    TB_ASSERT(n->type != TB_x86_lea);
                     if (!is_value_match(&dst, &rx)) {
                         __(mov_op, dt, &dst, &rx);
                     }
@@ -2207,7 +2168,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case TB_X86INTRIN_SQRT: {
+        case TB_FSQRT: {
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
             TB_X86_DataType dt = legalize_float(n->dt);
@@ -2236,20 +2197,20 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_vzero: {
+        case TB_x86_vzero: {
             Val dst = op_at(ctx, n);
             __(FP_XOR, TB_X86_F32x4, &dst, &dst); // xorps
             break;
         }
 
-        case x86_setcc: {
+        case TB_x86_setcc: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             Val dst = op_at(ctx, n);
             __(SETO+op->cond, TB_X86_BYTE, &dst);
             break;
         }
 
-        case x86_shlx: case x86_shrx: case x86_sarx: {
+        case TB_x86_shlx: case TB_x86_shrx: case TB_x86_sarx: {
             // VEX.LZ.F3.0F38.W0 F7 /r SARX r32a, r/m32, r32b
             // VEX.LZ.66.0F38.W0 F7 /r SHLX r32a, r/m32, r32b
             // VEX.LZ.F2.0F38.W0 F7 /r SHRX r32a, r/m32, r32b
@@ -2277,9 +2238,9 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
             uint8_t p = 0;
             switch (n->type) {
-                case x86_shlx: p = VEX_66; break;
-                case x86_shrx: p = VEX_F2; break;
-                case x86_sarx: p = VEX_F3; break;
+                case TB_x86_shlx: p = VEX_66; break;
+                case TB_x86_shrx: p = VEX_F2; break;
+                case TB_x86_sarx: p = VEX_F3; break;
             }
 
             emit_vex(e, is_64bit, dst.reg, base, index, rx.reg, VEX_0F38, p);
@@ -2288,12 +2249,12 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_mov: {
+        case TB_x86_mov: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt;
             if (n->dt.type == TB_TAG_MEMORY) {
                 dt = legalize_int(op->extra_dt);
-            } else if (n->type == x86_mov && op->mode == MODE_REG) {
+            } else if (n->type == TB_x86_mov && op->mode == MODE_REG) {
                 dt = legalize_int(n->inputs[2]->dt);
             } else {
                 dt = legalize_int(n->dt);
@@ -2315,7 +2276,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 }
                 __(MOV, dt, &dst, &rm);
 
-                if (n->type == x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
+                if (n->type == TB_x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
                     Stub_LVB* stub = add_code_stub(ctx, 0, sizeof(Stub_LVB));
 
                     // LOADED VALUE BARRIER (LVB)
@@ -2332,16 +2293,16 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_add: case x86_or:  case x86_and:
-        case x86_sub: case x86_xor: case x86_adc:
-        case x86_shl: case x86_shr: case x86_rol:
-        case x86_ror: case x86_sar: case x86_cmovcc:
+        case TB_x86_add: case TB_x86_or:  case TB_x86_and:
+        case TB_x86_sub: case TB_x86_xor: case TB_x86_adc:
+        case TB_x86_shl: case TB_x86_shr: case TB_x86_rol:
+        case TB_x86_ror: case TB_x86_sar: case TB_x86_cmovcc:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt;
-            if (n->type == x86_test || n->type == x86_cmp || n->dt.type == TB_TAG_MEMORY) {
+            if (n->type == TB_x86_test || n->type == TB_x86_cmp || n->dt.type == TB_TAG_MEMORY) {
                 dt = legalize_int(op->extra_dt);
-            } else if (n->type == x86_mov && op->mode == MODE_REG) {
+            } else if (n->type == TB_x86_mov && op->mode == MODE_REG) {
                 dt = legalize_int(n->inputs[2]->dt);
             } else {
                 dt = legalize_int(n->dt);
@@ -2349,24 +2310,24 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
             int op_type;
             switch (n->type) {
-                case x86_add: op_type = ADD; break;
-                case x86_and: op_type = AND; break;
-                case x86_sub: op_type = SUB; break;
-                case x86_xor: op_type = XOR; break;
-                case x86_or:  op_type = OR;  break;
-                case x86_shl: op_type = SHL; break;
-                case x86_shr: op_type = SHR; break;
-                case x86_rol: op_type = ROL; break;
-                case x86_ror: op_type = ROR; break;
-                case x86_sar: op_type = SAR; break;
-                case x86_cmovcc: op_type = CMOVO+op->cond; break;
-                case x86_adc: op_type = ADC; break;
+                case TB_x86_add: op_type = ADD; break;
+                case TB_x86_and: op_type = AND; break;
+                case TB_x86_sub: op_type = SUB; break;
+                case TB_x86_xor: op_type = XOR; break;
+                case TB_x86_or:  op_type = OR;  break;
+                case TB_x86_shl: op_type = SHL; break;
+                case TB_x86_shr: op_type = SHR; break;
+                case TB_x86_rol: op_type = ROL; break;
+                case TB_x86_ror: op_type = ROR; break;
+                case TB_x86_sar: op_type = SAR; break;
+                case TB_x86_cmovcc: op_type = CMOVO+op->cond; break;
+                case TB_x86_adc: op_type = ADC; break;
             }
 
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
             if (op->mode == MODE_ST) {
                 __(op_type, dt, &rm, &rx);
-            } else if (n->type == x86_cmovcc || (op->flags & OP_IMMEDIATE)) {
+            } else if (n->type == TB_x86_cmovcc || (op->flags & OP_IMMEDIATE)) {
                 Val dst = op_at(ctx, n);
                 if (!is_value_match(&dst, &rm)) {
                     __(MOV, dt, &dst, &rm);
@@ -2375,7 +2336,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             } else {
                 Val dst = op_at(ctx, n);
                 if (rx.type != VAL_NONE) {
-                    TB_ASSERT(n->type != x86_lea);
+                    TB_ASSERT(n->type != TB_x86_lea);
                     if (!is_value_match(&dst, &rx)) {
                         __(MOV, dt, &dst, &rx);
                     }
@@ -2386,11 +2347,11 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_movsx8:
-        case x86_movzx8:
-        case x86_movsx16:
-        case x86_movzx16:
-        case x86_movsx32: {
+        case TB_x86_movsx8:
+        case TB_x86_movzx8:
+        case TB_x86_movsx16:
+        case TB_x86_movzx16:
+        case TB_x86_movsx32: {
             static int ops[] = {
                 MOVSXB, MOVZXB,
                 MOVSXW, MOVZXW,
@@ -2401,22 +2362,22 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             Val dst = op_at(ctx, n);
             Val src = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
 
-            int op_type = ops[n->type - x86_movsx8];
+            int op_type = ops[n->type - TB_x86_movsx8];
             __(op_type, dt, &dst, &src);
             break;
         }
 
-        case x86_cmp: case x86_test: case x86_ucomi: case x86_bt: {
+        case TB_x86_cmp: case TB_x86_test: case TB_x86_ucomi: case TB_x86_bt: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt = legalize(op->extra_dt);
 
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
             int op_type = -1;
             switch (n->type) {
-                case x86_cmp:   op_type = CMP;      break;
-                case x86_test:  op_type = TEST;     break;
-                case x86_ucomi: op_type = FP_UCOMI; break;
-                case x86_bt:    op_type = BT;       break;
+                case TB_x86_cmp:   op_type = CMP;      break;
+                case TB_x86_test:  op_type = TEST;     break;
+                case TB_x86_ucomi: op_type = FP_UCOMI; break;
+                case TB_x86_bt:    op_type = BT;       break;
             }
             if (rx.type == VAL_IMM) {
                 __(op_type, dt, &rm, &rx);
@@ -2426,7 +2387,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_jcc: {
+        case TB_x86_jcc: {
             int succ[2] = { -1, -1 };
             FOR_USERS(u, n) {
                 if (USERN(u)->type == TB_PROJ) {
@@ -2452,7 +2413,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_call: {
+        case TB_x86_call: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
 
             // on SysV, AL stores the number of float params
@@ -2491,7 +2452,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_imul: {
+        case TB_x86_imul: {
             TB_X86_DataType dt = legalize_int(n->dt);
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
 
@@ -2636,9 +2597,9 @@ static int node_latency(TB_Function* f, TB_Node* n, int i) {
 
     // fixed latency, regardless of who's asking it's gonna
     // take a while.
-    if (n->type == x86_call) {
+    if (n->type == TB_x86_call) {
         return 100;
-    } else if (n->type < TB_MACH_X86) {
+    } else if (!tb_node_is_x86(n)) {
         return 1;
     }
 
@@ -2646,44 +2607,44 @@ static int node_latency(TB_Function* f, TB_Node* n, int i) {
 
     // base latencies
     switch (n->type) {
-        case x86_mov: lat = 1; break;
-        case x86_and: lat = 1; break;
-        case x86_or:  lat = 1; break;
-        case x86_xor: lat = 1; break;
-        case x86_add: lat = 1; break;
-        case x86_sub: lat = 1; break;
+        case TB_x86_mov: lat = 1; break;
+        case TB_x86_and: lat = 1; break;
+        case TB_x86_or:  lat = 1; break;
+        case TB_x86_xor: lat = 1; break;
+        case TB_x86_add: lat = 1; break;
+        case TB_x86_sub: lat = 1; break;
 
-        case x86_shl: lat = 1; break;
-        case x86_shr: lat = 1; break;
-        case x86_sar: lat = 1; break;
+        case TB_x86_shl: lat = 1; break;
+        case TB_x86_shr: lat = 1; break;
+        case TB_x86_sar: lat = 1; break;
 
-        case x86_lea: lat = 1; break;
+        case TB_x86_lea: lat = 1; break;
 
-        case x86_imul: lat = 3; break;
+        case TB_x86_imul: lat = 3; break;
 
-        case x86_vmov: lat = 1; break;
-        case x86_vadd: lat = 4; break;
-        case x86_vsub: lat = 4; break;
-        case x86_vmul: lat = 4; break;
+        case TB_x86_vmov: lat = 1; break;
+        case TB_x86_vadd: lat = 4; break;
+        case TB_x86_vsub: lat = 4; break;
+        case TB_x86_vmul: lat = 4; break;
 
-        case TB_X86INTRIN_SQRT: lat = 13; break;
+        case TB_FSQRT: lat = 13; break;
     }
 
     // if the input is used to compute a memory load, the latency is bumped by 5
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
-    if ((op->mode == MODE_LD || op->mode == MODE_ST) && n->type != x86_vmov && n->type != x86_mov) {
+    if ((op->mode == MODE_LD || op->mode == MODE_ST) && n->type != TB_x86_vmov && n->type != TB_x86_mov) {
         if (i == 2 || (i == 3 && op->flags & OP_INDEXED)) {
             lat += 5;
         }
 
         // complex addressing required, there's a displacement
-        if (n->type == x86_lea && op->disp != 0) {
+        if (n->type == TB_x86_lea && op->disp != 0) {
             lat += 2;
         }
     }
 
     // has load barrier?
-    if (n->type == x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
+    if (n->type == TB_x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
         lat += 1;
     }
 
@@ -2990,12 +2951,8 @@ ICodeGen tb__x64_codegen = {
     .minimum_addressable_size = 8,
     .pointer_size = 64,
     .global_init = global_init,
-    .can_gvn = can_gvn,
     .edge_prob = edge_prob,
-    .node_name = node_name,
     .print_extra = print_extra,
-    .flags = node_flags,
-    .extra_bytes = extra_bytes,
     .is_pack_op_supported = is_pack_op_supported,
     .max_pack_width_for_op = max_pack_width_for_op,
     .emit_win64eh_unwind_info = emit_win64eh_unwind_info,

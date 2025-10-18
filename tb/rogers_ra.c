@@ -380,7 +380,7 @@ static void rogers_dump_sched(Ctx* restrict ctx, int old_node_count) {
             printf("\n");
         }
 
-        if (!cfg_is_terminator(bb->end)) {
+        if (!tb_node_is_terminator(bb->end)) {
             TB_Node* succ_n = cfg_next_control(bb->end);
             TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
             int b = succ_bb - ctx->cfg.blocks;
@@ -2002,7 +2002,7 @@ static void rogers_remat(Ctx* ctx, Rogers* ra, TB_Node* n, bool kill_node) {
             int pos = aarray_length(pred_bb->items);
             TB_Node* last = pred_bb->items[pos - 1];
             if (IS_PROJ(last)) { last = last->inputs[0]; }
-            if (cfg_is_terminator(last)) {
+            if (tb_node_is_terminator(last)) {
                 pos--;
 
                 while (pos > 0 && pred_bb->items[pos] != pred_bb->start && IS_PROJ(pred_bb->items[pos])) {

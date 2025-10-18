@@ -3,9 +3,9 @@
     ////////////////////////////////
     // CONSTANTS
     ////////////////////////////////
-    (node ICONST extra=TB_NodeInt)
-    (node F32CONST)
-    (node F64CONST)
+    (node ICONST   extra=TB_NodeInt)
+    (node F32CONST extra=TB_NodeFloat32)
+    (node F64CONST extra=TB_NodeFloat64)
 
     ////////////////////////////////
     // PROJECTIONS
@@ -56,9 +56,9 @@
     (node PHI           PINNED)
 
     // CProj0 is the default key, every CProjN is all key-match
-    (node BRANCH)
+    (node BRANCH extra=TB_NodeBranch)
     // if the condition is non-zero, it'll take the CProj0 else CProj1
-    (node IF            PINNED CTRL TERMINATOR FORK_CTRL)
+    (node IF            PINNED CTRL TERMINATOR FORK_CTRL extra=TB_NodeIf)
     (node AFFINE_LATCH  parent=IF)
     // NeverBranch is a fake branch which acts as a backedge for infinite
     // loops, this keeps the graph from getting disconnected with the endpoint.
@@ -68,7 +68,7 @@
     (node TRAP          PINNED CTRL TERMINATOR END MEMORY_IN EFFECT) // trap will not be continuable but will stop execution.
     (node UNREACHABLE   PINNED CTRL TERMINATOR END MEMORY_IN EFFECT) // unreachable means it won't trap or be continuable.
     (node DEAD)                                               // all dead paths are stitched here
-    (node DEAD_STORE    PINNED MEMORY_IN MEMORY_OUT)
+    (node DEAD_STORE    PINNED MEMORY_IN MEMORY_OUT extra=TB_NodeMemAccess)
     (node ENTRY_FORK    PINNED CTRL TERMINATOR FORK_CTRL)
 
     ////////////////////////////////
@@ -79,13 +79,13 @@
     // and the rest are just data args.
     //
     //   (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
-    (node CALL          PINNED CTRL MEMORY_IN MEMORY_OUT SAFEPOINT EFFECT)
+    (node CALL          PINNED CTRL MEMORY_IN MEMORY_OUT SAFEPOINT EFFECT extra=TB_NodeCall)
     (node SYSCALL       parent=CALL)
-    (node TAILCALL      parent=CALL)
+    (node TAILCALL      END parent=CALL)
 
     // This is a safepoint used for traditional C debugging, each of these nodes
     // annotates a debug line location.
-    (node DEBUG_LOCATION) // (Control, Memory) -> (Control, Memory)
+    (node DEBUG_LOCATION PINNED CTRL MEMORY_IN MEMORY_OUT extra=TB_NodeDbgLoc) // (Control, Memory) -> (Control, Memory)
     // This special op tracks calls such that we can produce our cool call graph, there's
     // one call graph node per function that never moves.
     (node CALLGRAPH)      // (Call...) -> Void
@@ -109,16 +109,16 @@
     // be atomic) and thus produce side effects everywhere just like
     // volatiles except they have synchronization guarentees. the atomic
     // data ops will return the value before the operation is performed.
-    (node ATOMIC_LOAD   MEMORY_IN MEMORY_OUT EFFECT) // (Control, Memory, Ptr)        -> (Memory, Data)
-    (node ATOMIC_XCHG   MEMORY_IN MEMORY_OUT EFFECT) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
-    (node ATOMIC_ADD    MEMORY_IN MEMORY_OUT EFFECT) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
-    (node ATOMIC_AND    MEMORY_IN MEMORY_OUT EFFECT) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
-    (node ATOMIC_XOR    MEMORY_IN MEMORY_OUT EFFECT) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
-    (node ATOMIC_OR     MEMORY_IN MEMORY_OUT EFFECT) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
-    (node ATOMIC_PTROFF MEMORY_IN MEMORY_OUT EFFECT) // (Control, Memory, Ptr, Ptr)   -> (Memory, Ptr)
+    (node ATOMIC_LOAD   MEMORY_IN MEMORY_OUT EFFECT extra=TB_NodeAtomic) // (Control, Memory, Ptr)        -> (Memory, Data)
+    (node ATOMIC_XCHG   MEMORY_IN MEMORY_OUT EFFECT extra=TB_NodeAtomic) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+    (node ATOMIC_ADD    MEMORY_IN MEMORY_OUT EFFECT extra=TB_NodeAtomic) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+    (node ATOMIC_AND    MEMORY_IN MEMORY_OUT EFFECT extra=TB_NodeAtomic) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+    (node ATOMIC_XOR    MEMORY_IN MEMORY_OUT EFFECT extra=TB_NodeAtomic) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+    (node ATOMIC_OR     MEMORY_IN MEMORY_OUT EFFECT extra=TB_NodeAtomic) // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+    (node ATOMIC_PTROFF MEMORY_IN MEMORY_OUT EFFECT extra=TB_NodeAtomic) // (Control, Memory, Ptr, Ptr)   -> (Memory, Ptr)
     // Atomic CAS returns the old value and a boolean for success (true if
     // the value was changed)
-    (node ATOMIC_CAS    MEMORY_IN MEMORY_OUT EFFECT) // (Control, Memory, Data, Data) -> (Memory, Data, Bool)
+    (node ATOMIC_CAS    MEMORY_IN MEMORY_OUT EFFECT extra=TB_NodeAtomic) // (Control, Memory, Data, Data) -> (Memory, Data, Bool)
     //   volatile memory barrier
     (node HARD_BARRIER  MEMORY_IN MEMORY_OUT EFFECT) // (Control, Memory, MemOp) -> Memory
 
@@ -126,9 +126,9 @@
     // POINTERS
     ////////////////////////////////
     //   LOCAL will statically allocate stack space
-    (node LOCAL NO_GVN)  // () & (Int, Int) -> Ptr
+    (node LOCAL NO_GVN extra=TB_NodeLocal) // () & (Int, Int) -> Ptr
     //   SYMBOL will return a pointer to a (node Symbol
-    (node SYMBOL)        // () & (node Symbol* -> Ptr
+    (node SYMBOL extra=TB_NodeSymbol)      // () & (node Symbol* -> Ptr
     //   offsets pointer by byte amount (handles all ptr math you actually want)
     (node PTR_OFFSET)    // (Ptr, Int) -> Ptr
 
@@ -192,6 +192,9 @@
     (node CMP_FLT   COMPARE extra=TB_NodeCompare)
     (node CMP_FLE   COMPARE extra=TB_NodeCompare)
 
+    // Extra float ops
+    (node FSQRT)
+
     (node FRAME_PTR)
     // Consumes a value to force it to stay alive
     (node BLACKHOLE CTRL EFFECT) // (Control) -> (Control)
@@ -210,7 +213,7 @@
     (node VA_START)
 
     // general machine nodes:
-    (node MACH_COPY)
+    (node MACH_COPY extra=TB_NodeMachCopy)
     // (Control) -> Control
     (node MACH_JUMP)
     // just... it) idk) it's the frame ptr
@@ -219,8 +222,8 @@
     (node MACH_JIT_THREAD_PTR)
     // isn't the pointer value itself) just a placeholder for
     // referring to a global.
-    (node MACH_SYMBOL)
-    (node MACH_TEMP NO_GVN)
+    (node MACH_SYMBOL extra=TB_NodeMachSymbol)
+    (node MACH_TEMP NO_GVN extra=TB_NodeMachTemp)
 )
 
 #ifdef TB_HAS_X64

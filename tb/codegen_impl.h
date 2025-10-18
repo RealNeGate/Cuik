@@ -918,7 +918,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 bool empty = true;
 
                 size_t item_count = aarray_length(bb->items);
-                if (cfg_is_region(bb->items[0])) {
+                if (NODE_ISA(bb->items[0], REGION)) {
                     // if it's all phis then we've got an empty enough block for forwarding
                     FOR_N(j, 1, item_count) {
                         if (bb->items[j]->type != TB_PHI) {
@@ -979,7 +979,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                 // insert jump for the fallthru case, this matters most for the platforms which can
                 // bundle jumps (branch delay slots and VLIWs)
-                if (!cfg_is_terminator(bb->end)) {
+                if (!tb_node_is_terminator(bb->end)) {
                     TB_Node* succ_n = cfg_next_control(bb->end);
                     TB_BasicBlock* succ_bb = nl_map_get_checked(ctx.cfg.node_to_block, succ_n);
                     if (succ_bb->fwd != fallthru) {

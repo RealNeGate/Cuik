@@ -286,7 +286,7 @@ if added["tb"] then
     -- command("tb/x64/x64_gen.h include/tb_x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine tb/x64/x64_gen.h include/tb_x64_gen.h", "tb/x64/x64.machine")
     -- TODO: reenable; command("tb/aarch64/a64_gen.h include/tb_a64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/aarch64/a64.machine tb/aarch64/a64_gen.h include/tb_a64_gen.h", "tb/aarch64/a64.machine")
 
-    command("tb/tb_gen_private.h include/tb_gen_public.h", "meta/new_dsl.lua", arg[-1].." $in tb/tb.dsl tb/tb_gen_private.h include/tb_gen_public.h \""..archs.."\"", "tb/tb.dsl")
+    command("tb/tb_gen_private.h include/tb_gen_public.h", "meta/new_dsl.lua", arg[-1].." $in tb/tb.dsl tb/tb_gen_private.h include/tb_gen_public.h \""..archs.."\"", "tb/tb.dsl tb/x64/x64.dsl meta/arch_isel.lua")
 end
 
 -- New lexgen

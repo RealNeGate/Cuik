@@ -1,7 +1,12 @@
 #include "../tb_internal.h"
 
 static size_t extra_bytes(TB_Node* n) {
-    switch (n->type) {
+    TB_ASSERT(n->type != TB_VSHUFFLE);
+    // TB_NodeVShuffle* v = TB_NODE_GET_EXTRA(n);
+    // return sizeof(TB_NodeVShuffle) + (v->width * sizeof(int));
+    return tb_node_extra_bytes(n->type);
+
+    /* switch (n->type) {
         case TB_ICONST:   return sizeof(TB_NodeInt);
         case TB_F32CONST: return sizeof(TB_NodeFloat32);
         case TB_F64CONST: return sizeof(TB_NodeFloat64);
@@ -9,8 +14,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_LOCAL:    return sizeof(TB_NodeLocal);
 
         case TB_VSHUFFLE: {
-            TB_NodeVShuffle* v = TB_NODE_GET_EXTRA(n);
-            return sizeof(TB_NodeVShuffle) + (v->width * sizeof(int));
         }
 
         case TB_BRANCH:
@@ -154,7 +157,7 @@ static size_t extra_bytes(TB_Node* n) {
         default: {
             tb_todo();
         }
-    }
+    } */
 }
 
 uint32_t gvn_hash(void* a) {

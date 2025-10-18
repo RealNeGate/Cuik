@@ -254,7 +254,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Nod
             set_input(f, st, addr, 2);
             set_input(f, st, arg,  3);
             set_input(f, mem, st, 1);
-            TB_NODE_SET_EXTRA(st, TB_NodeMemAccess, .align = 8, .is_volatile = false);
+            TB_NODE_SET_EXTRA(st, TB_NodeMemAccess, .align = 8);
         }
 
         subsume_node(f, va_start_n, va_list_n);

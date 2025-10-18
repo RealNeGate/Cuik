@@ -26,9 +26,9 @@ static TB_Node* cfg_next_control0(TB_Node* n) {
 
 // walks until the terminator or other critical edge
 static TB_Node* end_of_bb(TB_Node* n) {
-    while (!cfg_is_terminator(n)) {
+    while (!tb_node_is_terminator(n)) {
         TB_Node* next = cfg_next_control0(n);
-        if (next == NULL || cfg_is_region(next)) {
+        if (next == NULL || NODE_ISA(next, REGION)) {
             break;
         }
         n = next;
@@ -50,7 +50,7 @@ static Block* create_block(TB_Arena* arena, TB_Function* f, TB_Node* n) {
         FOR_USERS(u, end) if (cfg_is_cproj(USERN(u))) {
             succ_count += 1;
         }
-    } else if (!cfg_is_endpoint(end)) {
+    } else if (!tb_node_is_end(end)) {
         succ_count = 1;
     }
 
