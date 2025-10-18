@@ -44,7 +44,7 @@ static int spill_map_get2(NL_Table* spill_map, TB_Node* n) {
 }
 
 static bool should_skip_over(TB_Node* n) {
-    return is_proj(n) || n->type == TB_PHI || n->type == TB_MACH_FRAME_PTR;
+    return IS_PROJ(n) || n->type == TB_PHI || n->type == TB_MACH_FRAME_PTR;
 }
 
 static TB_Node* alloc_spill_node(Ctx* ctx, Rogers* ra, RegMask* spill_mask, TB_Node* def) {
@@ -67,11 +67,11 @@ static TB_Node* alloc_spill_node(Ctx* ctx, Rogers* ra, RegMask* spill_mask, TB_N
 static void insert_op_at_end(Ctx* ctx, Rogers* ra, TB_BasicBlock* bb, TB_Node* n) {
     int pos = aarray_length(bb->items);
     TB_Node* last = bb->items[pos - 1];
-    if (is_proj(last)) { last = last->inputs[0]; }
-    if (cfg_is_terminator(last)) {
+    if (IS_PROJ(last)) { last = last->inputs[0]; }
+    if (tb_node_is_terminator(last)) {
         pos--;
 
-        while (pos > 0 && bb->items[pos] != bb->start && is_proj(bb->items[pos])) {
+        while (pos > 0 && bb->items[pos] != bb->start && IS_PROJ(bb->items[pos])) {
             pos--;
         }
     }
@@ -642,7 +642,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
         }
 
         // process phi defs
-        if (cfg_is_region(header)) {
+        if (NODE_ISA(header, REGION)) {
             FOR_USERS(u, header) {
                 if (USERN(u)->type != TB_PHI) {
                     continue;
@@ -728,7 +728,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
             TB_Node* n = bb->items[j];
 
             // ignore the newly inserted nodes, they don't need any fun treatment
-            if (cfg_is_region(n) || n->type == TB_PHI || n->gvn >= old_node_count) {
+            if (NODE_ISA(n, REGION) || n->type == TB_PHI || n->gvn >= old_node_count) {
                 continue;
             }
 

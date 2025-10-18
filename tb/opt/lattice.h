@@ -283,14 +283,14 @@ static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
     // count projs
     int projs = 0;
     FOR_USERS(u, n) {
-        if (is_proj(USERN(u))) { projs++; }
+        if (IS_PROJ(USERN(u))) { projs++; }
     }
 
     size_t size = sizeof(Lattice) + projs*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = projs };
     FOR_USERS(u, n) {
-        if (!is_proj(USERN(u))) { continue; }
+        if (!IS_PROJ(USERN(u))) { continue; }
         int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
         l->elems[index] = lattice_from_dt(f, USERN(u)->dt);
     }

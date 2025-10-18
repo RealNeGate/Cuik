@@ -418,7 +418,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
 
     // if the endpoint is a not a terminator, we've hit some implicit GOTO edge
     TB_Node* end = bb->end;
-    if (!cfg_is_terminator(end)) {
+    if (!tb_node_is_terminator(end)) {
         // writeback phis
         FOR_N(i, 0, dyn_array_length(ctx->phi_vals)) {
             PhiVal* v = &ctx->phi_vals[i];
@@ -436,7 +436,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
 }
 
 static TB_Node** successors(Ctx* ctx, TB_Worklist* ws, TB_Node* end, size_t* out_succ_count) {
-    size_t succ_count = !cfg_is_endpoint(end);
+    size_t succ_count = !tb_node_is_end(end);
     if (end->type == TB_BRANCH) {
         succ_count = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count;
     }
@@ -454,7 +454,7 @@ static TB_Node** successors(Ctx* ctx, TB_Worklist* ws, TB_Node* end, size_t* out
                 succ_blocks[index] = succ;
             }
         }
-    } else if (!cfg_is_endpoint(end)) {
+    } else if (!tb_node_is_end(end)) {
         TB_Node* succ = cfg_next_control(end);
         if (succ) { succ_blocks[0] = succ; }
     }
@@ -476,7 +476,7 @@ static bool wasm_is_natural_loop(Ctx* ctx, TB_Node* header) {
 }
 
 static bool has_merge_root(Ctx* ctx, TB_Node* n, int id) {
-    if (!cfg_is_region(n)) {
+    if (!NODE_ISA(n, REGION)) {
         return false;
     }
 

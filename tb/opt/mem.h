@@ -328,7 +328,7 @@ static TB_Node* next_of_memory_sese(TB_Node* curr) {
             return NULL;
         }
 
-        if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
+        if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_is_memory_out(use_n))) {
             if (next == NULL) { next = use_n; }
             else { return NULL; }
         }
@@ -359,7 +359,7 @@ static MemoryState* start_of_memory_sese(NL_Table* sese2set, TB_Node* n) {
         TB_ASSERT(n->type != TB_PHI);
 
         int mem_slot = 1;
-        if (is_proj(n)) { mem_slot = 0; }
+        if (IS_PROJ(n)) { mem_slot = 0; }
         else if (n->type == TB_MERGEMEM) { mem_slot = 2; }
 
         n = n->inputs[mem_slot];
@@ -532,7 +532,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             if (use_n->type == TB_PHI || is_mem_end_op(use_n) || use_n->type == TB_MERGEMEM) {
                 next = NULL;
                 break;
-            } else if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
+            } else if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_is_memory_out(use_n))) {
                 if (next == NULL) { next = use_n; }
                 else { next = NULL; break; }
             }
@@ -634,7 +634,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                     worklist_push(ctx->dead_worklist, curr);
                 }
             }
-        } else if (curr->type != TB_PROJ && curr->type != TB_PHI && tb_node_has_mem_out(curr)) {
+        } else if (curr->type != TB_PROJ && curr->type != TB_PHI && tb_node_is_memory_out(curr)) {
             // unknown memory access, clobber everything
             nl_table_clear(non_aliasing);
 
@@ -788,7 +788,7 @@ static void postorder_memory(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
             // not a real memory use
         } else if (is_mem_end_op(use_n)) {
             // don't traverse past it
-        } else if (use_n->type == TB_MERGEMEM || use_n->type == TB_PHI || cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
+        } else if (use_n->type == TB_MERGEMEM || use_n->type == TB_PHI || cfg_is_mproj(use_n) || (use_i == 1 && tb_node_is_memory_out(use_n))) {
             postorder_memory(f, sese2set, sese_worklist, use_n, local_count);
         }
     }

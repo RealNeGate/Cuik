@@ -215,7 +215,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Nod
     size_t va_list_size = (call_site->input_count - 3) - kid->prototype->param_count;
     for (size_t i = 0; i < call_site->user_count;) {
         TB_Node* un = USERN(&call_site->users[i]);
-        if (is_proj(un)) {
+        if (IS_PROJ(un)) {
             int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
             if (index >= 2) { index += 1; }
 
@@ -254,7 +254,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Nod
             set_input(f, st, addr, 2);
             set_input(f, st, arg,  3);
             set_input(f, mem, st, 1);
-            TB_NODE_SET_EXTRA(st, TB_NodeMemAccess, .align = 8, .is_volatile = false);
+            TB_NODE_SET_EXTRA(st, TB_NodeMemAccess, .align = 8);
         }
 
         subsume_node(f, va_start_n, va_list_n);

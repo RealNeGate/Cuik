@@ -209,7 +209,7 @@ static void briggs_insert_op(Ctx* ctx, Briggs* ra, int bb_id, TB_Node* n, int po
 
     // skip phis and projections so that they stay nice and snug
     size_t cnt = aarray_length(bb->items);
-    while (pos < cnt && (is_proj(bb->items[pos]) || bb->items[pos]->type == TB_PHI)) {
+    while (pos < cnt && (IS_PROJ(bb->items[pos]) || bb->items[pos]->type == TB_PHI)) {
         pos += 1;
     }
 

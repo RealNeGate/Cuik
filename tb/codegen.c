@@ -80,7 +80,7 @@ size_t tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) 
         i += 1;
 
         // skip projs and phis
-        while (i < cnt && (is_proj(bb->items[i]) || bb->items[i]->type == TB_PHI)) { i++; }
+        while (i < cnt && (IS_PROJ(bb->items[i]) || bb->items[i]->type == TB_PHI)) { i++; }
 
         aarray_push(bb->items, NULL);
         memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));

@@ -10,150 +10,6 @@ static int cool_ansi_color(uint32_t x) {
     else { return 32 + y; }
 }
 
-const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
-    switch (n_type) {
-        case TB_NULL: return "NULL";
-        case TB_UNREACHABLE: return "unreachable";
-
-        case TB_BRANCH_PROJ: return "br_proj";
-        case TB_MACH_JIT_THREAD_PTR: return "jit_thread_ptr";
-
-        case TB_ROOT:   return "root";
-        case TB_RETURN: return "return";
-        case TB_PROJ:   return "proj";
-        case TB_REGION: return "region";
-        case TB_NATURAL_LOOP: return "loop";
-        case TB_AFFINE_LOOP: return "loop.affine";
-        case TB_CALLGRAPH: return "callgraph";
-        case TB_SYMBOL_TABLE: return "symbol_table";
-        case TB_FRAME_PTR: return "frame_ptr";
-
-        case TB_LOCAL: return "local";
-        case TB_ENTRY_FORK: return "entry_fork";
-
-        case TB_VA_START: return "vastart";
-        case TB_DEBUGBREAK: return "dbgbrk";
-        case TB_BLACKHOLE: return "blackhole";
-
-        case TB_POISON: return "poison";
-        case TB_DEAD: return "dead";
-        case TB_TRAP: return "trap";
-        case TB_ICONST: return "int";
-        case TB_F32CONST: return "float32";
-        case TB_F64CONST: return "float64";
-
-        case TB_PHI: return "phi";
-        case TB_SELECT: return "select";
-
-        case TB_PTR_OFFSET: return "ptr_offset";
-
-        case TB_CYCLE_COUNTER: return "cyclecnt";
-        case TB_PREFETCH: return "prefetch";
-        case TB_INLINE_ASM: return "inlineasm";
-        case TB_DEBUG_LOCATION: return "dbgloc";
-        case TB_DEBUG_SCOPES: return "dbgscopes";
-        case TB_SAFEPOINT: return "safepoint";
-
-        case TB_MEMSET: return "memset";
-        case TB_MEMCPY: return "memcpy";
-        case TB_SPLITMEM: return "split";
-        case TB_MERGEMEM: return "merge";
-
-        case TB_BSWAP: return "bswap";
-        case TB_POPCNT: return "popcnt";
-        case TB_ZERO_EXT: return "zxt";
-        case TB_SIGN_EXT: return "sxt";
-        case TB_FLOAT_TRUNC: return "fptrunc";
-        case TB_FLOAT_EXT: return "fpxt";
-        case TB_TRUNCATE: return "trunc";
-        case TB_BITCAST: return "bitcast";
-        case TB_UINT2FLOAT: return "uint2float";
-        case TB_INT2FLOAT: return "int2float";
-        case TB_FLOAT2UINT: return "float2uint";
-        case TB_FLOAT2INT: return "float2int";
-        case TB_SYMBOL: return "symbol";
-
-        case TB_CMP_NE: return "cmp.ne";
-        case TB_CMP_EQ: return "cmp.eq";
-        case TB_CMP_ULT: return "cmp.ult";
-        case TB_CMP_ULE: return "cmp.ule";
-        case TB_CMP_SLT: return "cmp.slt";
-        case TB_CMP_SLE: return "cmp.sle";
-        case TB_CMP_FLT: return "cmp.lt";
-        case TB_CMP_FLE: return "cmp.le";
-
-        case TB_ATOMIC_LOAD: return "atomic.load";
-        case TB_ATOMIC_XCHG: return "atomic.xchg";
-        case TB_ATOMIC_ADD: return "atomic.add";
-        case TB_ATOMIC_AND: return "atomic.and";
-        case TB_ATOMIC_XOR: return "atomic.xor";
-        case TB_ATOMIC_OR: return "atomic.or";
-        case TB_ATOMIC_PTROFF: return "atomic.ptroff";
-        case TB_ATOMIC_CAS: return "atomic.cas";
-
-        case TB_CLZ: return "clz";
-        case TB_CTZ: return "ctz";
-        case TB_AND: return "and";
-        case TB_OR: return "or";
-        case TB_XOR: return "xor";
-        case TB_ADD: return "add";
-        case TB_SUB: return "sub";
-        case TB_MUL: return "mul";
-        case TB_UDIV: return "udiv";
-        case TB_SDIV: return "sdiv";
-        case TB_UMOD: return "umod";
-        case TB_SMOD: return "smod";
-        case TB_SHL: return "shl";
-        case TB_SHR: return "shr";
-        case TB_ROL: return "rol";
-        case TB_ROR: return "ror";
-        case TB_SAR: return "sar";
-
-        case TB_FADD: return "fadd";
-        case TB_FSUB: return "fsub";
-        case TB_FMUL: return "fmul";
-        case TB_FDIV: return "fdiv";
-        case TB_FMAX: return "fmax";
-        case TB_FMIN: return "fmin";
-        case TB_FNEG: return "fneg";
-
-        case TB_UMULPAIR: return "umulpair";
-        case TB_SMULPAIR: return "smulpair";
-        case TB_LOAD:     return "load";
-        case TB_STORE:    return "store";
-        case TB_DEAD_STORE: return "dead_store";
-        case TB_VSHUFFLE: return "vshuffle";
-        case TB_VBROADCAST: return "vbroadcast";
-        case TB_HARD_BARRIER: return "hard_barrier";
-
-        case TB_CALL:     return "call";
-        case TB_SYSCALL:  return "syscall";
-        case TB_BRANCH:   return "branch";
-        case TB_IF:       return "if";
-        case TB_AFFINE_LATCH: return "affine_latch";
-        case TB_NEVER_BRANCH: return "never_branch";
-        case TB_TAILCALL: return "tailcall";
-
-        case TB_MACH_TEMP: return "mach_temp";
-        case TB_MACH_JUMP: return "mach_jump";
-        case TB_MACH_COPY: return "mach_copy";
-        case TB_MACH_PROJ: return "mach_proj";
-        case TB_MACH_SYMBOL: return "mach_symbol";
-        case TB_MACH_FRAME_PTR: return "mach_frameptr";
-
-        case TB_X86INTRIN_LDMXCSR: return "x86_ldmxcsr";
-        case TB_X86INTRIN_STMXCSR: return "x86_stmxcsr";
-        case TB_X86INTRIN_SQRT:  return "x86_sqrt";
-        case TB_X86INTRIN_RSQRT: return "x86_rsqrt";
-
-        default: {
-            int family = n_type / 0x100;
-            TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
-            return tb_codegen_families[family].node_name(n_type);
-        }
-    }
-}
-
 static const char* plain_type_name(TB_DataType dt) {
     switch (dt.type) {
         case TB_TAG_VOID:    return "void";
@@ -224,7 +80,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, OutStream* s, bool de
             }
             s_writef(s, ")");
         }
-    } else if (cfg_is_region(n)) {
+    } else if (NODE_ISA(n, REGION)) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
         s_color(s, cool_ansi_color(n->gvn));
         if (r->tag != NULL) {
@@ -310,10 +166,10 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, OutStream* s, bool fa
 
     // print phi args
     s_writef(s, "(");
-    if (cfg_is_region(target)) {
+    if (NODE_ISA(target, REGION)) {
         int phi_i = -1;
         FOR_USERS(u, n) {
-            if (cfg_is_region(USERN(u))) {
+            if (NODE_ISA(USERN(u), REGION)) {
                 phi_i = 1 + USERI(u);
                 break;
             }
@@ -452,7 +308,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
             }
 
             default: {
-                if (cfg_is_branch(n)) {
+                if (NODE_ISA(n, BRANCH)) {
                     s_writef(s, "  %s ", tb_node_get_name(n->type));
                 } else if (n->dt.type == TB_TAG_TUPLE) {
                     // print with multiple returns
@@ -580,7 +436,6 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
                     case TB_CALL:
                     case TB_TAILCALL:
                     case TB_SYSCALL:
-                    case TB_SAFEPOINT:
                     case TB_MERGEMEM:
                     case TB_SPLITMEM:
                     break;
@@ -643,10 +498,10 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
                             tb_codegen_families[family].print_extra(s, n);
                         }
 
-                        if (cfg_is_if(n)) {
+                        if (NODE_ISA(n, IF)) {
                             TB_NodeIf* br = TB_NODE_GET_EXTRA(n);
                             s_writef(s, " // prob: %f", br->prob);
-                        } else if (cfg_is_branch(n)) {
+                        } else if (NODE_ISA(n, BRANCH)) {
                             TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
                             TB_Node** restrict succ = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_Node**));
 
@@ -694,7 +549,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
     }
     dyn_array_clear(ws->items);
 
-    if (!cfg_is_terminator(bb->end)) {
+    if (!tb_node_is_terminator(bb->end)) {
         s_writef(s, "  goto ");
         print_branch_edge(ctx, bb->end, s, true);
         s_newline(s);

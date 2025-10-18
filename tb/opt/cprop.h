@@ -199,7 +199,7 @@ static void push_cprop_users(TB_Function* f, CProp* cprop, TB_Node* n) {
             continue;
         }
 
-        if (cfg_is_region(un)) {
+        if (NODE_ISA(un, REGION)) {
             FOR_USERS(phi, un) if (USERN(phi)->type == TB_PHI) {
                 push_cprop(f, cprop, USERN(phi));
             }
@@ -534,7 +534,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 /*if (n->dt.type == TB_TAG_TUPLE) {
                     TB_ASSERT(new_type->tag == LATTICE_TUPLE);
                     FOR_USERS(u, n) {
-                        if (is_proj(USERN(u))) {
+                        if (IS_PROJ(USERN(u))) {
                             int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                             TB_ASSERT(index < new_type->_elem_count);
 
@@ -986,7 +986,7 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
             continue;
         }
 
-        /*if (cfg_is_region(n)) {
+        /*if (NODE_ISA(n, REGION)) {
             FOR_N(j, 0, n->input_count) {
                 printf("N%d -> N%d\n", n->inputs[j]->gvn, n->gvn);
             }
@@ -1009,7 +1009,7 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
                 worklist_push(ws, k);
                 subsume_node2(f, n, k);
 
-                if (n->user_count == 0 && !is_proj(n)) {
+                if (n->user_count == 0 && !IS_PROJ(n)) {
                     tb_kill_node(f, n);
                 }
                 n = k;

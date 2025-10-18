@@ -27,7 +27,7 @@ static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* c
 
         if (offset >= configs[i].offset && max <= max2) {
             // they overlap... but is it a clean overlap?
-            if (offset == configs[i].offset && max == max2 && TB_DATA_TYPE_EQUALS(dt, configs[i].dt)) {
+            if (offset == configs[i].offset && max == max2 && dt.raw == configs[i].dt.raw) {
                 return i;
             }
 

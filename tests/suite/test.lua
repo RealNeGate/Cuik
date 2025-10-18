@@ -98,47 +98,38 @@ for i=1,#x do
         goto skip
     end
 
-    print("  Cuik:", configs[1])
-    local code = os.execute(string.format("cuik %s %s && %s %s > cuik.txt", x[i], configs[1], exe_name, args))
-    if code ~= 0 then
-        print("    BAD CUIK!!!", configs[1])
-        goto skip
-    end
-
-    -- Compare the flavors of cuik compiles first
-    for j=2,#configs do
+    -- Compare against clang
+    local pass = true
+    for j=1,#configs do
         print("  Cuik:", configs[j])
-        code = os.execute(string.format("cuik %s %s && %s %s > cuik2.txt", x[i], configs[j], exe_name, args))
-        if code ~= 0 then
+        code = os.execute(string.format("cuik %s %s && %s %s > cuik.txt", x[i], configs[j], exe_name, args))
+        if code == 0 then
+            local diff = os.execute("diff clang.txt cuik.txt")
+            if diff ~= 0 then
+                print("    BAD DIFF!!!")
+                pass = false
+            end
+        else
             print("    BAD CUIK!!!", configs[j])
-            goto skip
-        end
-
-        local diff = os.execute("diff cuik.txt cuik2.txt")
-        if diff ~= 0 then
-            print("    BAD DIFF!!!")
-            goto skip
+            pass = false
         end
     end
 
-    local diff = os.execute("diff cuik.txt clang.txt")
-    if diff == 0 then
+    if pass then
         print("    Pass!")
         passed = passed + 1
+    end
 
-        if false then
-            -- we're doing the real deal now
-            if x[i] == "nbody.c" then
-                args = "10000000"
-            end
-
-            comp_test(string.format("clang %s", x[i]), args)
-            comp_test(string.format("cuik %s", x[i]), args)
-            comp_test(string.format("clang %s -O1", x[i]), args)
-            comp_test(string.format("cuik %s -O", x[i]), args)
+    if false then
+        -- we're doing the real deal now
+        if x[i] == "nbody.c" then
+            args = "10000000"
         end
-    else
-        print("    BAD!!!")
+
+        comp_test(string.format("clang %s", x[i]), args)
+        comp_test(string.format("cuik %s", x[i]), args)
+        comp_test(string.format("clang %s -O1", x[i]), args)
+        comp_test(string.format("cuik %s -O", x[i]), args)
     end
     ::skip::
 end

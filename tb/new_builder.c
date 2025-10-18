@@ -21,6 +21,58 @@ struct TB_GraphBuilder {
     TB_Node** params;
 };
 
+// From the optimizer
+static TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
+static TB_Node* identity_phi(TB_Function* f, TB_Node* n);
+
+static TB_Node* get_callgraph(TB_Function* f) { return f->root_node->inputs[0]; }
+
+static uint64_t tb_sign_ext(TB_Module* m, TB_DataType dt, uint64_t imm) {
+    int bits = tb_data_type_bit_size(m, dt.type);
+    return tb__sxt(imm, bits, 64);
+}
+
+TB_Node* tb_alloc_node_dyn(TB_Function* f, int type, TB_DataType dt, int input_count, int input_cap, size_t extra) {
+    assert(input_count < UINT16_MAX && "too many inputs!");
+    TB_Node* n = tb_arena_alloc(&f->arena, sizeof(TB_Node) + extra);
+
+    n->type = type;
+    n->input_cap = input_cap;
+    n->input_count = input_count;
+    n->dt = dt;
+    n->gvn = f->node_count++;
+
+    if (input_cap > 0) {
+        n->inputs = tb_arena_alloc(&f->arena, input_cap * sizeof(TB_Node*));
+        FOR_N(i, 0, input_cap) { n->inputs[i] = NULL; }
+    } else {
+        n->inputs = NULL;
+    }
+
+    // most nodes don't have many users, although the ones which do will have a shit load (root node)
+    n->user_count = 0;
+    n->user_cap   = 4;
+    n->users = tb_arena_alloc(&f->arena, 4 * sizeof(TB_User));
+    memset(n->users, 0xF0, 4 * sizeof(TB_User));
+
+    if (extra > 0) {
+        memset(n->extra, 0, extra);
+    }
+    return n;
+}
+
+TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra) {
+    return tb_alloc_node_dyn(f, type, dt, input_count, input_count, extra);
+}
+
+TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int index) {
+    assert(src->dt.type == TB_TAG_TUPLE);
+    TB_Node* proj = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
+    set_input(f, proj, src, 0);
+    TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = index);
+    return proj;
+}
+
 static TB_Node* xfer_ctrl(TB_GraphBuilder* g, TB_Node* n) {
     TB_Node* old = g->curr->inputs[0];
     set_input(g->f, g->curr, n, 0);
@@ -88,7 +140,7 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
             int align = debug_type_align(abi, type);
 
             // place values into memory
-            TB_Node* v = tb_inst_param(f, i + has_aggregate_return);
+            TB_Node* v = f->params[f, 3 + i + has_aggregate_return];
 
             RegClass rg = classify_reg(abi, type);
             if (rg != RG_MEMORY) {
@@ -380,7 +432,7 @@ TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t offset
     }
 
     TB_Function* f = g->f;
-    TB_Node* con = g->peep(f, tb_inst_sint(f, TB_TYPE_I64, offset));
+    TB_Node* con = make_int_node(f, TB_TYPE_I64, offset);
     TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, base->dt, 3, 0);
     set_input(f, n, base, 1);
     set_input(f, n, con,  2);
@@ -415,23 +467,6 @@ void tb_builder_merge_mem(TB_GraphBuilder* g, int out_mem, int split_count, int 
     set_input(f, g->curr, n, 2 + out_mem);
 }
 
-void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args) {
-    TB_Function* f = g->f;
-    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_TUPLE, 3 + arg_count, sizeof(TB_NodeBranch));
-    set_input(f, n, mem_op, 2);
-    FOR_N(i, 0, arg_count) {
-        set_input(f, n, args[i], i+3);
-    }
-
-    TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
-    set_input(f, n, xfer_ctrl(g, cproj), 0);
-
-    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
-    set_input(f, n, xfer_mem(g, mproj, mem_var), 1);
-
-    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, .userdata = userdata, .saved_val_count = arg_count);
-}
-
 TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_Node* addr, TB_CharUnits align, bool is_volatile) {
     TB_Function* f = g->f;
     assert(addr->dt.type == TB_TAG_PTR);
@@ -442,7 +477,7 @@ TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Data
     }
     set_input(f, n, peek_mem(g, mem_var), 1);
     set_input(f, n, addr, 2);
-    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align, .is_volatile = is_volatile);
+    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
     n = g->peep(f, n);
 
     if (is_volatile) {
@@ -466,7 +501,6 @@ TB_Node* tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Nod
     set_input(f, n, xfer_mem(g, n, mem_var), 1);
     set_input(f, n, addr, 2);
     set_input(f, n, val, 3);
-    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align, .is_volatile = is_volatile);
 
     if (is_volatile) {
         // volatile operations just have a memory barrier right after them, this will stop the
@@ -629,7 +663,7 @@ void tb_builder_label_complete(TB_GraphBuilder* g, TB_Node* label) {
     TB_Function* f = g->f;
     TB_Node* top_ctrl = label->inputs[1];
 
-    if (cfg_is_region(top_ctrl)) {
+    if (NODE_ISA(top_ctrl, REGION)) {
         FOR_USERS(u, top_ctrl) {
             TB_Node* un = USERN(u);
             if (un->type == TB_PHI) {
@@ -654,7 +688,7 @@ TB_Node* tb_builder_label_get(TB_GraphBuilder* g) {
 }
 
 int tb_builder_label_pred_count(TB_GraphBuilder* g, TB_Node* label) {
-    if (cfg_is_region(label->inputs[1])) {
+    if (NODE_ISA(label->inputs[1], REGION)) {
         return label->inputs[1]->input_count;
     } else {
         return 1;
@@ -784,7 +818,7 @@ TB_Node* tb_builder_key_case(TB_GraphBuilder* g, TB_Node* br_syms, uint64_t key,
 }
 
 TB_Node* tb_builder_phi(TB_GraphBuilder* g, int val_count, TB_Node** vals) {
-    TB_ASSERT(cfg_is_region(g->curr->inputs[1]));
+    TB_ASSERT(NODE_ISA(g->curr->inputs[1], REGION));
     TB_ASSERT(g->curr->inputs[1]->input_count == val_count);
 
     TB_Function* f = g->f;
@@ -1047,33 +1081,17 @@ void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int count, TB_Node** args) 
     g->curr = NULL;
 }
 
-TB_Node* tb_builder_x86_ldmxcsr(TB_GraphBuilder* g, TB_Node* a) {
-    TB_ASSERT(a->dt.type == TB_TAG_I32);
-
-    TB_Function* f = g->f;
-    TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_LDMXCSR, TB_TYPE_I32, 2, 0);
-    set_input(f, n, a, 1);
-    return n;
-}
-
 TB_Node* tb_builder_cycle_counter(TB_GraphBuilder* g) {
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, TB_CYCLE_COUNTER, TB_TYPE_I64, 1, 0);
-    set_input(f, n, f->trace.bot_ctrl, 0);
+    set_input(f, n, g->curr->inputs[0], 0);
     return n;
 }
 
 TB_Node* tb_builder_prefetch(TB_GraphBuilder* g, TB_Node* addr, int level) {
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, TB_PREFETCH, TB_TYPE_MEMORY, 2, sizeof(TB_NodePrefetch));
-    set_input(f, n, addr, 1);
+    set_input(f, n, g->curr->inputs[0], 0);
     TB_NODE_SET_EXTRA(n, TB_NodePrefetch, .level = level);
-    return n;
-}
-
-TB_Node* tb_builder_x86_stmxcsr(TB_GraphBuilder* g) {
-    TB_Function* f = g->f;
-    TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_STMXCSR, TB_TYPE_I32, 1, 0);
-    set_input(f, n, f->trace.bot_ctrl, 0);
     return n;
 }

@@ -411,7 +411,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             TB_Node* un = USERN(&n->users[i]);
             int ui      = USERI(&n->users[i]);
 
-            if (cloned[un->gvn] == NULL && !is_proj(un)) {
+            if (cloned[un->gvn] == NULL && !IS_PROJ(un)) {
                 TB_Node* bb = ctx->ctrl[un->gvn];
                 TB_LoopTree* use_loop = nl_table_get(&ctx->loop_map, bb);
                 if (loop_inside(loop, use_loop)) {
@@ -1189,7 +1189,7 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
         bb->freq *= 1 << (depth * 3);
 
         // single-entry? inherit the parent's edge frequency
-        if (i != 0 && !cfg_is_region(bb->start)) {
+        if (i != 0 && !NODE_ISA(bb->start, REGION)) {
             TB_Node* pred = cfg_get_pred(cfg, bb->start, 0);
             TB_BasicBlock* pred_bb = nl_map_get_checked(cfg->node_to_block, pred);
 
@@ -1198,7 +1198,7 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
         }
 
         TB_Node* fallthru = bb->end;
-        if (!cfg_is_terminator(fallthru)) {
+        if (!tb_node_is_terminator(fallthru)) {
             // if we're forced to jump to a different block, then we
             // inherit it's frequency if it's low.
             fallthru = cfg_next_control(fallthru);
@@ -1343,7 +1343,7 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
         if (!loop->is_natural) { continue; }
 
         TB_Node* header = loop->header;
-        if (!cfg_is_region(header) && header->input_count >= 2) { continue; }
+        if (!NODE_ISA(header, REGION) && header->input_count >= 2) { continue; }
 
         // find all backedges
         dyn_array_clear(backedges);
@@ -1570,7 +1570,7 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                         taken = 1.0f - taken;
                     }
 
-                    TB_ASSERT(cfg_is_if(bot_cloned));
+                    TB_ASSERT(NODE_ISA(bot_cloned, IF));
                     TB_NodeIf* br = TB_NODE_GET_EXTRA(bot_cloned);
                     br->prob = taken;
                 }
@@ -1580,7 +1580,7 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 size_t snapshot_count = f->node_count;
                 aarray_for(i, cloned_list) {
                     TB_Node* n = cloned_list[i];
-                    if (n->dt.type == TB_TAG_CONTROL || cfg_is_fork(n)) {
+                    if (n->dt.type == TB_TAG_CONTROL || tb_node_is_fork_ctrl(n)) {
                         continue;
                     }
 
@@ -1740,13 +1740,13 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                 }
 
                 // set branch probabilities
-                if (cfg_is_natural_loop(header) && header->inputs[1]->type == TB_PROJ && cfg_is_if(header->inputs[1]->inputs[0])) {
+                if (NODE_ISA(header, NATURAL_LOOP) && header->inputs[1]->type == TB_PROJ && NODE_ISA(header->inputs[1]->inputs[0], IF)) {
                     float taken = 0.9f;
 
                     int cont_loop_i = TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
                     TB_NodeIf* br = TB_NODE_GET_EXTRA(header->inputs[1]->inputs[0]);
                     br->prob = cont_loop_i ? taken : 1.0f - taken;
-                } else if (latch == NULL && cfg_is_if(header_end)) {
+                } else if (latch == NULL && NODE_ISA(header_end, IF)) {
                     exit_proj = get_simple_loop_exit(ctx, loop, header, header_end);
                     if (exit_proj) {
                         float taken = 0.9f;

@@ -208,7 +208,7 @@ static void construct_prologue_epilogue(Ctx* restrict ctx, TB_Function* f) {
 
     // find all projections
     TB_Node** projs = tb_arena_alloc(&f->tmp_arena, (1 + ctx->param_count) * sizeof(TB_Node*));
-    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+    FOR_USERS(u, n) if (IS_PROJ(USERN(u))) {
         TB_Node* un = USERN(u);
         int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
         if (index >= 2) {
@@ -396,7 +396,7 @@ static bool postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node*
 }
 
 static void print_tree(Set* shared, TB_Node* n) {
-    if (is_proj(n) && set_get(shared, n->inputs[0]->gvn)) {
+    if (IS_PROJ(n) && set_get(shared, n->inputs[0]->gvn)) {
         int idx = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
         printf(" %%%u.%d", n->inputs[0]->gvn, idx);
         return;
@@ -404,7 +404,7 @@ static void print_tree(Set* shared, TB_Node* n) {
 
     printf(" (%s", tb_node_get_name(n->type));
 
-    if (is_proj(n)) {
+    if (IS_PROJ(n)) {
         int idx = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
         printf(" %d", idx);
     } else if (n->type == TB_ICONST) {
@@ -442,7 +442,7 @@ static bool safe_to_dup(TB_Node* n) {
     // certain nodes can be duplicated safely
     if (n->type == TB_PHI) {
         return false;
-    } else if (n->type == TB_ROOT || (cfg_flags(n) & (NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT))) {
+    } else if (n->type == TB_ROOT || (tb_node_get_flags(n) & (NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT))) {
         return false;
     } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
         // don't dedup compares, it's basically always gonna fail
@@ -545,7 +545,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         worklist_push(ws, f->root_node);
         for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
             TB_Node* n = ws->items[i];
-            if (tb_node_is_pinned(n) && !is_proj(n)) {
+            if (tb_node_is_pinned(n) && !IS_PROJ(n)) {
                 aarray_push(pins, n);
                 set_put(&visited, n->gvn);
             }
@@ -567,7 +567,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         // dead node elim
         CUIK_TIMED_BLOCK("dead node elim") {
             for (TB_Node* n; n = worklist_pop(ws), n;) {
-                if (n->user_count == 0 && !is_proj(n) && n != ctx.frame_ptr) {
+                if (n->user_count == 0 && !IS_PROJ(n) && n != ctx.frame_ptr) {
                     // TB_OPTDEBUG(ISEL)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
                     tb_kill_node(f, n);
                 }
@@ -621,7 +621,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         while (worklist_count(ws)) {
             int start = worklist_count(ws);
             TB_Node* n = ws->items[start - 1];
-            if (n->user_count == 0 && !is_proj(n)) {
+            if (n->user_count == 0 && !IS_PROJ(n)) {
                 worklist_pop(ws);
 
                 tb__gvn_remove(f, n);
@@ -695,7 +695,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             size_t write_head = start-1;
             while (read_head < worklist_count(ws)) {
                 TB_Node* k = ws->items[read_head];
-                if (k->user_count == 0 && !is_proj(k)) {
+                if (k->user_count == 0 && !IS_PROJ(k)) {
                     // technically the visited bit stays on in this path but i don't care, it's dead
                     TB_OPTDEBUG(ISEL)(printf("  KILL "), tb_print_dumb_node(NULL, k), printf("\n"));
                     tb__gvn_remove(f, k);
@@ -710,7 +710,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             }
             dyn_array_set_length(ws->items, write_head);
 
-            if (is_proj(n)) {
+            if (IS_PROJ(n)) {
                 n = n->inputs[0];
             }
             node_add_tmps(&ctx, n);
@@ -793,7 +793,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                 // projections cannot emit code
                 #if TB_OPTDEBUG_SCHED2
-                if (!cfg_is_region(n)) {
+                if (!NODE_ISA(n, REGION)) {
                     print_pretty(&ctx, n);
                     printf("\n");
                 }
@@ -918,7 +918,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 bool empty = true;
 
                 size_t item_count = aarray_length(bb->items);
-                if (cfg_is_region(bb->items[0])) {
+                if (NODE_ISA(bb->items[0], REGION)) {
                     // if it's all phis then we've got an empty enough block for forwarding
                     FOR_N(j, 1, item_count) {
                         if (bb->items[j]->type != TB_PHI) {
@@ -979,7 +979,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                 // insert jump for the fallthru case, this matters most for the platforms which can
                 // bundle jumps (branch delay slots and VLIWs)
-                if (!cfg_is_terminator(bb->end)) {
+                if (!tb_node_is_terminator(bb->end)) {
                     TB_Node* succ_n = cfg_next_control(bb->end);
                     TB_BasicBlock* succ_bb = nl_map_get_checked(ctx.cfg.node_to_block, succ_n);
                     if (succ_bb->fwd != fallthru) {
@@ -1054,7 +1054,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 TB_Node* n = bb->items[i];
 
                 // projections cannot emit code
-                if (is_proj(n) || cfg_is_region(n)) {
+                if (IS_PROJ(n) || NODE_ISA(n, REGION)) {
                     continue;
                 }
 
@@ -1085,7 +1085,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 }
 
                 // can't have two safepoints in the same bundle
-                bool is_sfpt = cfg_flags(n) & NODE_SAFEPOINT;
+                bool is_sfpt = tb_node_is_safepoint(n);
                 if (bundle.has_safepoint && is_sfpt) {
                     legal = false;
                 }

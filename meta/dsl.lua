@@ -1,5 +1,4 @@
 local inspect = require "meta/inspect"
-
 require "meta/prelude"
 
 local unpack = unpack or table.unpack
@@ -77,42 +76,6 @@ lines[#lines + 1] = "#include \"../emitter.h\""
 lines[#lines + 1] = "#include \"../tb_internal.h\""
 lines[#lines + 1] = "#include <string.h>"
 lines[#lines + 1] = ""
-
-function decl_type(n)
-    local name = n[2]
-    local kind = n[1]
-
-    if name == "___" then
-        lines[#lines + 1] = kind.." {"
-    else
-        lines[#lines + 1] = "typedef "..kind.." "..name.." {"
-    end
-
-    if kind == "struct" or kind == "union" then
-
-    elseif kind == "enum" then
-        local ord = 0
-        for i=3,#n do
-            local name = n[i]
-            if type(n[i]) == "table" then
-                ord = n[i][2]
-                name = n[i][1]
-            end
-
-            lines[#lines + 1] = string.format("    %s = %d,", name, ord)
-            ord = ord + 1
-        end
-    else
-        assert(false, "bad")
-    end
-
-    if name == "___" then
-        lines[#lines + 1] = "};"
-    else
-        lines[#lines + 1] = "} "..name..";"
-    end
-    lines[#lines + 1] = ""
-end
 
 while true do
     local t = lex()
@@ -383,8 +346,6 @@ while true do
             lines[#lines + 1] = "    return 0;"
             lines[#lines + 1] = "}"
             lines[#lines + 1] = ""
-
-            pub_lines[#pub_lines + 1] = ""
         elseif n[1] == "reg_class" then
             reg_classes[#reg_classes + 1] = { n[2], math.max(1, #n - 2) }
 
@@ -1810,6 +1771,8 @@ if true then
 end
 
 if true then
+    -- print(table.concat(lines, "\n"))
+else
     local f = io.open(arg[2], "w")
     f:write(table.concat(lines, "\n"))
     f:close()

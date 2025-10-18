@@ -81,6 +81,7 @@ local supported_archs = {
 }
 
 local in_use_archs = {}
+local archs = ""
 
 -- command lines
 local has_arch = false
@@ -88,7 +89,7 @@ for i = 1, #arg do
     if arg[i]:sub(1, 1) == "-" then
         local a = arg[i]:sub(2)
         if supported_archs[a] then
-            cflags = cflags.." "..supported_archs[a]
+            archs = archs.." "..supported_archs[a]
             in_use_archs[a] = true
             has_arch = true
         else
@@ -96,6 +97,7 @@ for i = 1, #arg do
         end
     end
 end
+cflags = cflags..archs
 
 if not has_arch then
     print("Listen brosef, you gotta pass me an arch (or archs) to compile:")
@@ -281,8 +283,10 @@ rule("run", {
 -- TB's DSL
 if added["tb"] then
     -- need to generate even if arch not added
-    command("tb/x64/x64_gen.h include/tb_x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine tb/x64/x64_gen.h include/tb_x64_gen.h", "tb/x64/x64.machine")
+    -- command("tb/x64/x64_gen.h include/tb_x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine tb/x64/x64_gen.h include/tb_x64_gen.h", "tb/x64/x64.machine")
     -- TODO: reenable; command("tb/aarch64/a64_gen.h include/tb_a64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/aarch64/a64.machine tb/aarch64/a64_gen.h include/tb_a64_gen.h", "tb/aarch64/a64.machine")
+
+    command("tb/tb_gen_private.h include/tb_gen_public.h", "meta/new_dsl.lua", arg[-1].." $in tb/tb.dsl tb/tb_gen_private.h include/tb_gen_public.h \""..archs.."\"", "tb/tb.dsl tb/x64/x64.dsl meta/arch_isel.lua")
 end
 
 -- New lexgen
@@ -334,10 +338,6 @@ for i, f in ipairs(src) do
     if added["cuik_pp"] then
         extra[#extra+1] = "cuik_pp/keywords.h"
         extra[#extra+1] = "cuik_pp/dfa.h"
-    end
-    if added["tb"] then
-        extra[#extra+1] = "include/tb_x64_gen.h"
-        -- extra[#extra+1] = "include/tb_a64_gen.h"
     end
     if #extra > 0 then
         ninja:write(" | ")
