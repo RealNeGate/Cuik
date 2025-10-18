@@ -129,17 +129,6 @@ struct Lattice {
 ////////////////////////////////
 // Cool properties
 ////////////////////////////////
-uint32_t cfg_flags(TB_Node* n);
-bool cfg_is_region(TB_Node* n);
-bool cfg_is_natural_loop(TB_Node* n);
-bool cfg_is_if(TB_Node* n);
-bool cfg_is_branch(TB_Node* n);
-bool cfg_is_fork(TB_Node* n);
-bool cfg_is_terminator(TB_Node* n);
-bool cfg_is_endpoint(TB_Node* n);
-
-bool tb_node_is_safepoint(TB_Node* n);
-bool tb_node_has_mem_out(TB_Node* n);
 bool tb_node_mem_read_only(TB_Node* n);
 TB_Node* tb_node_mem_in(TB_Node* n);
 
@@ -150,21 +139,13 @@ static bool cant_signed_overflow(TB_Node* n) {
     return TB_NODE_GET_EXTRA_T(n, TB_NodeBinopInt)->ab & TB_ARITHMATIC_NSW;
 }
 
-static bool is_proj(TB_Node* n) {
-    return n->type == TB_PROJ || n->type == TB_MACH_PROJ || n->type == TB_BRANCH_PROJ;
-}
-
 static uint64_t tb__mask(uint64_t bits) {
     return ~UINT64_C(0) >> (64 - bits);
 }
 
-static bool cfg_is_cproj(TB_Node* n) {
-    return is_proj(n) && n->dt.type == TB_TAG_CONTROL;
-}
-
-static bool cfg_is_mproj(TB_Node* n) {
-    return n->type == TB_PROJ && n->dt.type == TB_TAG_MEMORY;
-}
+#define IS_PROJ(n) NODE_ISA(n, PROJ)
+static bool cfg_is_cproj(TB_Node* n) { return NODE_ISA(n, PROJ) && n->dt.type == TB_TAG_CONTROL; }
+static bool cfg_is_mproj(TB_Node* n) { return NODE_ISA(n, PROJ) && n->dt.type == TB_TAG_MEMORY;  }
 
 // includes tuples which have control flow
 static bool cfg_is_control(TB_Node* n) {
@@ -178,9 +159,9 @@ static bool cfg_is_control(TB_Node* n) {
 }
 
 static bool cfg_is_bb_entry(TB_Node* n) {
-    if (cfg_is_region(n)) {
+    if (NODE_ISA(n, REGION)) {
         return true;
-    } else if (cfg_is_cproj(n) && (n->inputs[0]->type == TB_ROOT || cfg_is_fork(n->inputs[0]))) {
+    } else if (cfg_is_cproj(n) && (n->inputs[0]->type == TB_ROOT || tb_node_is_fork_ctrl(n->inputs[0]))) {
         // Start's control proj or a branch target
         return true;
     } else {
@@ -196,18 +177,6 @@ static bool single_use(TB_Node* n) {
     return n->user_count == 1;
 }
 
-static TB_User* get_single_use(TB_Node* n) {
-    return n->user_count == 1 ? &n->users[0] : NULL;
-}
-
-static bool tb_node_is_pinned(TB_Node* n) {
-    if ((n->type >= TB_ROOT && n->type <= TB_SAFEPOINT) || is_proj(n) || cfg_is_control(n) || n->type == TB_MACH_FRAME_PTR) {
-        return true;
-    }
-
-    return cfg_flags(n) & NODE_PINNED;
-}
-
 ////////////////////////////////
 // CFG analysis
 ////////////////////////////////
@@ -218,7 +187,7 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
 }
 
 static TB_User* proj_with_index(TB_Node* n, int i) {
-    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+    FOR_USERS(u, n) if (IS_PROJ(USERN(u))) {
         TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
         if (p->index == i) { return u; }
     }
@@ -235,7 +204,7 @@ static TB_User* cfg_next_user(TB_Node* n) {
 }
 
 static bool cfg_has_phis(TB_Node* n) {
-    if (!cfg_is_region(n)) { return false; }
+    if (!NODE_ISA(n, REGION)) { return false; }
     FOR_USERS(u, n) {
         if (USERN(u)->type == TB_PHI) { return true; }
     }
@@ -262,7 +231,7 @@ static TB_Node* cfg_get_pred(TB_CFG* cfg, TB_Node* n, int i) {
     n = n->inputs[i];
     for (;;) {
         ptrdiff_t search = nl_map_get(cfg->node_to_block, n);
-        if (search >= 0 || n->type == TB_DEAD || cfg_is_region(n)) {
+        if (search >= 0 || n->type == TB_DEAD || NODE_ISA(n, REGION)) {
             return n;
         }
 
@@ -276,7 +245,7 @@ static TB_BasicBlock* cfg_get_pred_bb(TB_CFG* cfg, TB_Node* n, int i) {
         ptrdiff_t search = nl_map_get(cfg->node_to_block, n);
         if (search >= 0) {
             return cfg->node_to_block[search].v;
-        } else if (n->type == TB_DEAD || cfg_is_region(n)) {
+        } else if (n->type == TB_DEAD || NODE_ISA(n, REGION)) {
             return NULL;
         }
 
@@ -328,7 +297,7 @@ typedef struct {
 static SuccIter succ_iter(TB_Node* n) {
     if (n->dt.type == TB_TAG_TUPLE) {
         return (SuccIter){ n, NULL, 0 };
-    } else if (!cfg_is_endpoint(n)) {
+    } else if (!tb_node_is_end(n)) {
         return (SuccIter){ n, NULL, -1 };
     } else {
         return (SuccIter){ n, NULL, n->user_count };
@@ -363,11 +332,8 @@ bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b);
 TB_Node* gcf_congruent_leader(TB_Function* f, TB_Node* n);
 
 // lovely properties
-bool cfg_is_region(TB_Node* n);
-bool cfg_is_natural_loop(TB_Node* n);
-bool cfg_is_terminator(TB_Node* n);
-bool cfg_is_endpoint(TB_Node* n);
-bool tb_node_is_compare(TB_Node* n);
+bool tb_node_is_terminator(TB_Node* n);
+bool tb_node_is_end(TB_Node* n);
 
 // debug server
 void dbg_startup_server(TB_Module* m);
@@ -447,3 +413,4 @@ static TB_Node* int_binop(TB_Function* f, int type, TB_Node* lhs, TB_Node* rhs) 
     worklist_push(f->worklist, n);
     return n;
 }
+

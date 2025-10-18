@@ -14,13 +14,31 @@ function OrderedSet()
         end
     end
 
+    function t:get(k)
+        return self.entries[k]
+    end
+
+    function t:count()
+        return #self.ord
+    end
+
+    -- return a table of keys to ordinals
+    function t:transpose()
+        local out = {}
+        for i=1,#self.ord do
+            out[self.ord[i]] = i
+        end
+        return out
+    end
+
     function t:iter()
         local i = 0
         local n = #self.ord
         return function ()
             i = i + 1
             if i <= n then
-                return self.ord[i]
+                local k = self.ord[i]
+                return k, self.entries[k]
             end
         end
     end
@@ -57,6 +75,10 @@ function Partitions()
             list[#list + 1] = v[i]
         end
         return is_new
+    end
+
+    function t:get(k)
+        return self.entries[k]
     end
 
     function t:at(i)
@@ -216,7 +238,7 @@ function parse_node(lex)
         t = lex()
     end
 
-    while t ~= ")" do
+    while t and t ~= ")" do
         if t == "(" then
             n[#n + 1] = parse_node(lex)
             t = lex()
@@ -243,5 +265,22 @@ function add_if_new(set, v)
 
     set[#set + 1] = v
     return #set
+end
+
+function shr1(x)
+    return math.floor(x / 2)
+end
+
+function xor8(a,b)
+    local out = 0
+    for i=0,7 do
+        local ab = math.fmod(a, 2) == 1
+        local bb = math.fmod(b, 2) == 1
+        local ob = (ab or bb) and not (ab and bb)
+        if ob then out = out + 2^i end
+        a = shr1(a)
+        b = shr1(b)
+    end
+    return out
 end
 

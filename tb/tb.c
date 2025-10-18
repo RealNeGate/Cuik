@@ -1,3 +1,4 @@
+#include "tb.h"
 #include "tb_internal.h"
 #include "host.h"
 #include <hashes.h>
@@ -181,37 +182,23 @@ char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
     return newstr;
 }
 
-TB_FeatureSet tb_features_from_profile_str(TB_Module* m, const char* name) {
-    TB_FeatureSet features = { 0 };
+int tb_features_parse(TB_FeatureSet* out, TB_Module* m, const char* str) {
+    *out = (TB_FeatureSet) { 0 };
 
     switch (m->target_arch) {
-        case TB_ARCH_X86_64: {
-            features.x64 |= TB_FEATURE_X64_SSE2;
-            if (name == NULL || strncmp(name, "x86_64-v", 8) != 0) {
-                break;
-            }
-
-            int level = name[8] - '0';
-            if (level >= 2) {
-                features.x64 |= TB_FEATURE_X64_SSE3;
-                features.x64 |= TB_FEATURE_X64_SSE41;
-                features.x64 |= TB_FEATURE_X64_SSE42;
-                features.x64 |= TB_FEATURE_X64_POPCNT;
-            }
-
-            if (level >= 3) {
-                features.x64 |= TB_FEATURE_X64_AVX;
-                features.x64 |= TB_FEATURE_X64_AVX2;
-                features.x64 |= TB_FEATURE_X64_BMI1;
-                features.x64 |= TB_FEATURE_X64_BMI2;
-            }
-        } break;
+        #ifdef TB_HAS_X64
+        case TB_ARCH_X86_64:
+        if (TB_X86_FeatureSet__parse(&out->x86, str)) {
+            return 1;
+        }
+        break;
+        #endif
 
         default:
         break;
     }
 
-    return features;
+    return 0;
 }
 
 TB_Module* tb_module_create_for_host(bool is_jit) {
@@ -468,10 +455,6 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
     f->params[0] = tb__make_proj(f, TB_TYPE_CONTROL, f->root_node, 0);
     f->params[1] = tb__make_proj(f, TB_TYPE_MEMORY, f->root_node, 1);
     f->params[2] = tb__make_proj(f, TB_TYPE_PTR, f->root_node, 2);
-
-    // initial trace
-    f->trace.top_ctrl = f->trace.bot_ctrl = f->params[0];
-    f->trace.mem = f->params[1];
 
     // create parameter projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);

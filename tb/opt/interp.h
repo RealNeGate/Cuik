@@ -113,7 +113,7 @@ uint64_t tb_interpret(TB_Function* f, TB_Worklist* ws, uint64_t* params) {
     // populate the function projections
     FOR_USERS(u, f->root_node) {
         TB_Node* un = USERN(u);
-        if (is_proj(un)) {
+        if (IS_PROJ(un)) {
             int i = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
             if (i >= 3) {
                 interp.values[un->gvn].i = params[i - 3];
@@ -136,7 +136,7 @@ uint64_t tb_interpret(TB_Function* f, TB_Worklist* ws, uint64_t* params) {
         TB_Node* next_n = USERN(next);
 
         // phi transition
-        if (cfg_is_region(next_n)) {
+        if (NODE_ISA(next_n, REGION)) {
             int path = 1 + USERI(next);
 
             dyn_array_clear(phis);

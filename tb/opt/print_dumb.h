@@ -29,7 +29,7 @@ void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, OutStream* s) {
         FOR_N(i, l, 5) { s_writef(s, " "); }
     }
     s_writef(s, " = %s ", tb_node_get_name(n->type));
-    if (is_proj(n)) {
+    if (IS_PROJ(n)) {
         int idx = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
         s_writef(s, "%d", idx);
         if (n->type == TB_BRANCH_PROJ && idx > 0) {
@@ -147,7 +147,7 @@ static void dumb_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
         FOR_USERS(u, n) if (USERN(u)->type == TB_PROJ) {
             dumb_walk(f, ws, USERN(u));
         }
-    } else if (cfg_is_region(n)) {
+    } else if (NODE_ISA(n, REGION)) {
         FOR_USERS(u, n) if (USERN(u)->type != TB_PHI) {
             dumb_walk(f, ws, USERN(u));
         }
@@ -158,21 +158,21 @@ static void dumb_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
         FOR_USERS(u, n) { dumb_walk(f, ws, USERN(u)); }
     }
 
-    if (is_proj(n) || n->type == TB_PHI) { return; }
+    if (IS_PROJ(n) || n->type == TB_PHI) { return; }
     // we wanna place projs & phis underneath the region
-    if (cfg_is_region(n)) {
+    if (NODE_ISA(n, REGION)) {
         FOR_USERS(u, n) if (USERN(u)->type == TB_PHI) {
             dyn_array_put(ws->items, USERN(u));
         }
     } else if (n->dt.type == TB_TAG_TUPLE) {
-        FOR_USERS(u, n) if (is_proj(USERN(u))) {
+        FOR_USERS(u, n) if (IS_PROJ(USERN(u))) {
             dyn_array_put(ws->items, USERN(u));
         }
     }
     dyn_array_put(ws->items, n);
 }
 
-static bool cfg_is_fork_proj(TB_Node* n) { return cfg_is_cproj(n) && cfg_is_fork(n->inputs[0]); }
+static bool cfg_is_fork_proj(TB_Node* n) { return cfg_is_cproj(n) && tb_node_is_fork_ctrl(n->inputs[0]); }
 void tb_print_dumb_raw(TB_Function* f, OutStream* s, bool use_fancy_types) {
     s_writef(s, "====== DUMP %-20s ======\n", f->super.name);
 
@@ -188,7 +188,7 @@ void tb_print_dumb_raw(TB_Function* f, OutStream* s, bool use_fancy_types) {
         // extra newline on BB boundaries
         if (i + 1 < dyn_array_length(ws.items) && cfg_is_fork_proj(ws.items[i + 1]) && !cfg_is_fork_proj(ws.items[i])) {
             s_writef(s, "\n");
-        } else if (cfg_is_region(ws.items[i])) {
+        } else if (NODE_ISA(ws.items[i], REGION)) {
             s_writef(s, "\n");
         }
         tb_print_dumb_node_raw(types, ws.items[i], s);

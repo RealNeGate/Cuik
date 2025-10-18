@@ -110,3 +110,5 @@ void  tls_restore(void* p);
 
 void* cuik__valloc(size_t sz);
 void  cuik__vfree(void* p, size_t sz);
+
+int tb_string_case_cmp(const char *_l, const char *_r, size_t n);

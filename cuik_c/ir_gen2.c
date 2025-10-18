@@ -8,6 +8,9 @@ static thread_local bool muh_default;
 // i still hate forward decls
 static TB_Node* cg_rval(TranslationUnit* tu, TB_GraphBuilder* g, Cuik_Expr* restrict e);
 
+// TODO(NeGate): Fix this up later!!!
+static thread_local TB_SourceFile* cached_file;
+static thread_local const char* cached_filepath;
 static void emit_loc(TranslationUnit* tu, TB_GraphBuilder* g, SourceLoc loc) {
     if (!tu->has_tb_debug_info) {
         return;
@@ -351,7 +354,6 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             } else if (t->kind == KIND_DOUBLE) {
                 return (ValDesc){ RVALUE, .n = tb_builder_float64(g, e->int_lit.lit) };
             } else {
-                // TODO(NeGate): maybe this should use tb_inst_sint?
                 return (ValDesc){ RVALUE, .n = tb_builder_uint(g, dt, e->int_lit.lit) };
             }
         }

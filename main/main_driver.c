@@ -200,12 +200,12 @@ int main(int argc, const char** argv) {
     #endif
 
     if (false) {
-        CuikGo_Parser parser = {
+        /* CuikGo_Parser parser = {
             .locate = cuikpp_locate_file,
             .fs     = cuikpp_default_fs,
         };
 
-        cuikgo_parse_file(&parser, args.sources[0]);
+        cuikgo_parse_file(&parser, args.sources[0]);*/
     } else {
         // compile source files
         size_t obj_count = dyn_array_length(args.sources);

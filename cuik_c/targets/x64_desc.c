@@ -33,11 +33,12 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
 
 static TB_Node* compile_builtin(TranslationUnit* tu, TB_GraphBuilder* g, const char* name, int arg_count, ValDesc* args) {
     // x64 specific builtins
-    if (strcmp(name, "_mm_setcsr") == 0) {
+    /* if (strcmp(name, "_mm_setcsr") == 0) {
         return tb_builder_x86_ldmxcsr(g, as_rval(tu, g, &args[1]));
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         return tb_builder_x86_stmxcsr(g);
-    } else if (strcmp(name, "__rdtsc") == 0) {
+    } */
+    if (strcmp(name, "__rdtsc") == 0) {
         return tb_builder_cycle_counter(g);
     } else if (strcmp(name, "__readgsqword") == 0) {
         // TODO(NeGate): implement readgs/writegs with all the type variants

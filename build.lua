@@ -81,6 +81,7 @@ local supported_archs = {
 }
 
 local in_use_archs = {}
+local archs = ""
 
 -- command lines
 local has_arch = false
@@ -88,7 +89,7 @@ for i = 1, #arg do
     if arg[i]:sub(1, 1) == "-" then
         local a = arg[i]:sub(2)
         if supported_archs[a] then
-            cflags = cflags.." "..supported_archs[a]
+            archs = archs.." "..supported_archs[a]
             in_use_archs[a] = true
             has_arch = true
         else
@@ -96,6 +97,7 @@ for i = 1, #arg do
         end
     end
 end
+cflags = cflags..archs
 
 if not has_arch then
     print("Listen brosef, you gotta pass me an arch (or archs) to compile:")
@@ -221,7 +223,7 @@ function walk(name)
 end
 
 walk("mimalloc")
-walk("cuik_go")
+-- walk("cuik_go")
 
 if options.cuik then
     walk("cuik_c")
@@ -283,13 +285,11 @@ rule("run", {
 
 -- TB's DSL
 if added["tb"] then
-    if in_use_archs["x64"] then
-        command("tb/x64/x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine tb/x64/x64_gen.h", "tb/x64/x64.machine")
-    end
+    -- need to generate even if arch not added
+    -- command("tb/x64/x64_gen.h include/tb_x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine tb/x64/x64_gen.h include/tb_x64_gen.h", "tb/x64/x64.machine")
+    -- TODO: reenable; command("tb/aarch64/a64_gen.h include/tb_a64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/aarch64/a64.machine tb/aarch64/a64_gen.h include/tb_a64_gen.h", "tb/aarch64/a64.machine")
 
-    if in_use_archs["a64"] then
-        command("tb/aarch64/a64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/aarch64/a64.machine tb/aarch64/a64_gen.h", "tb/aarch64/a64.machine")
-    end
+    command("tb/tb_gen_private.h include/tb_gen_public.h", "meta/new_dsl.lua", arg[-1].." $in tb/tb.dsl tb/tb_gen_private.h include/tb_gen_public.h \""..archs.."\"", "tb/tb.dsl tb/x64/x64.dsl meta/arch_isel.lua")
 end
 
 -- New lexgen
@@ -337,8 +337,17 @@ local objs = {}
 for i, f in ipairs(src) do
     local out = "bin/objs/"..filename(f)..".o"
     ninja:write("build "..out..": cc "..f)
+    local extra = {}
     if added["cuik_pp"] then
-        ninja:write(" | cuik_pp/keywords.h cuik_pp/dfa.h")
+        extra[#extra+1] = "cuik_pp/keywords.h"
+        extra[#extra+1] = "cuik_pp/dfa.h"
+    end
+    if #extra > 0 then
+        ninja:write(" | ")
+        for _, x in ipairs(extra) do
+            ninja:write(" ")
+            ninja:write(x)
+        end
     end
     ninja:write("\n")
     objs[#objs + 1] = out

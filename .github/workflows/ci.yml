@@ -24,7 +24,7 @@ jobs:
       - name: Build Cuik DLL
         shell: cmd
         timeout-minutes: 10
-        run: luajit build.lua -shared -cuik -tb -x64
+        run: lua build.lua -shared -cuik -tb -x64
 
       - name: upload artifacts
         uses: actions/upload-artifact@v4

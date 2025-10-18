@@ -62,7 +62,7 @@ static TB_Node* ideal_libcall(TB_Function* f, TB_Node* n) {
             }
 
             // If we support a builtin sqrt intrinsic, we can wrap it in a guard
-            TB_Node* n2 = tb_alloc_node(f, TB_X86INTRIN_SQRT, proj2->dt, 2, 0);
+            TB_Node* n2 = tb_alloc_node(f, TB_FSQRT, proj2->dt, 2, 0);
             set_input(f, n2, n->inputs[3], 1); // mem
             mark_node(f, n2);
 

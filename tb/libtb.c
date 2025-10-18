@@ -1,6 +1,7 @@
 // This is the TB unity build
 void* tb_jit_stack_create(size_t);
 
+#define TB_GEN_IMPL
 #include "tb.c"
 #include "hash.c"
 #include "abi.c"
@@ -13,8 +14,8 @@ void* tb_jit_stack_create(size_t);
 #include "jit.c"
 
 // Optimizer
-#include "opt/optimizer.c"
 #include "new_builder.c"
+#include "opt/optimizer.c"
 
 // Regalloc
 #include "codegen.c"

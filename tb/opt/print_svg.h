@@ -28,7 +28,7 @@ static int rank_walk(TB_Function* f, TB_Node* n) {
     }
 
     // we don't layout projections or phis
-    if (is_proj(n) || n->type == TB_PHI) { return -1; }
+    if (IS_PROJ(n) || n->type == TB_PHI) { return -1; }
     if (rank < 0) { rank = 0; }
 
     rank += 1;
@@ -107,7 +107,7 @@ void tb_print_svg(TB_Function* f) {
         if (n->dt.type == TB_TAG_TUPLE) {
             int proj_count = 0;
             FOR_USERS(u, n) {
-                if (is_proj(USERN(u)) && USERN(u)->dt.type != TB_TAG_CONTROL) { proj_count++; }
+                if (IS_PROJ(USERN(u)) && USERN(u)->dt.type != TB_TAG_CONTROL) { proj_count++; }
             }
 
             float per_proj_w = w / proj_count;
@@ -141,7 +141,7 @@ void tb_print_svg(TB_Function* f) {
 
             // projections & phis as a little piece of their parent node
             float xy2[2];
-            if (is_proj(in)) {
+            if (IS_PROJ(in)) {
                 int idx = TB_NODE_GET_EXTRA_T(in, TB_NodeProj)->index;
 
                 in = in->inputs[0];
@@ -166,7 +166,7 @@ void tb_print_svg(TB_Function* f) {
             if (cfg_is_control(n) && n->type != TB_ROOT) {
                 TB_Node* ctrl = n->inputs[0];
                 float off = h;
-                if (is_proj(ctrl)) { ctrl = ctrl->inputs[0], off += 10.0f; }
+                if (IS_PROJ(ctrl)) { ctrl = ctrl->inputs[0], off += 10.0f; }
 
                 float xy2[2];
                 node_layout(ctrl, &svg_layout[ctrl->gvn], xy2);
