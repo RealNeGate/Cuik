@@ -11,6 +11,36 @@
 --
 --
 
+HELP = [[
+build.lua - The build script for Cuik, TB and the linker.
+
+build.lua <arch> [modules...] [options...]
+
+This script generates the ninja build script for the specified modules and
+starts the build. Before running, make sure you have updated the git
+submodules and run this with luajit.
+
+Inputs:
+  <arch>      | The architecture to compile for can be one of the following:
+              | -x64 Build for x64 (aka x86-64, AMD64, Intel64, etc).
+              | -a64 Build for AArch64.
+Modules:
+  -tb         | Build the TB backend.
+  -cuik       | Build the CuikC compiler.
+  -driver     | Build the CuikC command line.
+
+Options:
+  -shared     | Build the specified module as a shared object (`.so` or `.dll`).
+  -debug      | Build in debug mode.
+  -asan       | Use the address sanitizer.
+  -spall_auto | Use the instrumented profiling into the module using spall
+              | auto-trace.
+  -lld        | Use `lld` as the linker instead of the default linker.
+  -gcc        | Use the GCC toolchain for building. This will use `gcc` instead
+              | of `clang` for compilation, and `ar` instead of `llvm-ar` for
+              | making archive files into `.lib` or `.a` archives.
+]]
+
 -- silly little OS detection
 local is_windows = package.config:sub(1,1) == "\\"
 
@@ -85,9 +115,14 @@ local archs = ""
 
 -- command lines
 local has_arch = false
+local bro_needs_help = false
 for i = 1, #arg do
     if arg[i]:sub(1, 1) == "-" then
         local a = arg[i]:sub(2)
+        if a == "h" or a == "help" or a == "-help" then
+            bro_needs_help = true
+            break
+        end
         if supported_archs[a] then
             archs = archs.." "..supported_archs[a]
             in_use_archs[a] = true
@@ -99,12 +134,18 @@ for i = 1, #arg do
 end
 cflags = cflags..archs
 
+if bro_needs_help then
+    print(HELP)
+    os.exit(0)
+end
+
 if not has_arch then
     print("Listen brosef, you gotta pass me an arch (or archs) to compile:")
     for k,v in pairs(supported_archs) do
-        print(k)
+        print("    build.lua -"..k.." [modules...] [options...]")
     end
-    os.exit(0)
+    print("Also see build.lua --help for details")
+    os.exit(2)
 end
 
 if options.asan then
