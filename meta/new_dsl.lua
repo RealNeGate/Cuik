@@ -258,7 +258,7 @@ for k,v in all_nodes:iter() do
         attributes:put(f, k)
     end
 end
-print(inspect(attributes.entries))
+-- print(inspect(attributes.entries))
 
 --------------------------
 -- Generate public file
