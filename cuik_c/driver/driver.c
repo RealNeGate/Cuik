@@ -709,7 +709,7 @@ void cuikpp_dump_tokens(TokenStream* s) {
         }
 
         // Normal token printing
-        printf("%.*s", (int) t->content.length, t->content.data);
+        printf("%s", t->atom);
     }
     printf("\n");
 }
@@ -880,8 +880,8 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
 
     TB_FeatureSet features;
     if (1) {
-       int err = tb_features_parse(&features, mod, "x86_64-v1");
-       assert(!err);
+        int err = tb_features_parse(&features, mod, "x86_64-v1");
+        assert(!err);
     }
 
     if (tp != NULL) {

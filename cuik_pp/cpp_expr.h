@@ -16,8 +16,12 @@ static intmax_t eval(Cuik_CPP* restrict ctx, Lexer* restrict in) {
     // place all the tokens on this line into the buffer to be expanded
     Token t;
     for (;;) {
+        unsigned char* saved = in->current;
         t = lexer_read(in);
-        if (t.type == 0 || t.hit_line) { break; }
+        if (t.type == 0 || t.hit_line) {
+            in->current = saved;
+            break;
+        }
         push_token(ctx, t);
 
         size_t def_i;
@@ -25,7 +29,7 @@ static intmax_t eval(Cuik_CPP* restrict ctx, Lexer* restrict in) {
             SourceLoc loc = t.location;
             int head = dyn_array_length(tokens) - 1;
 
-            if (string_equals_cstr(&t.content, "defined")) {
+            if (t.atom == atom_defined) {
                 bool paren = false;
                 t = lexer_read(in);
                 if (t.type == '(') {
@@ -39,8 +43,9 @@ static intmax_t eval(Cuik_CPP* restrict ctx, Lexer* restrict in) {
                 }
 
                 // Replaced defined(MACRO) => 0/1
-                bool found = is_defined(ctx, t.content.data, t.content.length);
-                tokens[head] = (Token){ .type = TOKEN_INTEGER, .location = loc, .content = string_cstr(found ? "1" : "0") };
+                // TODO(NeGate): cache these atoms
+                bool found = find_define(ctx, t.atom) != NULL;
+                tokens[head] = (Token){ .type = TOKEN_INTEGER, .location = loc, .atom = atoms_putc(found ? "1" : "0") };
 
                 if (paren) {
                     t = lexer_read(in);
@@ -50,7 +55,7 @@ static intmax_t eval(Cuik_CPP* restrict ctx, Lexer* restrict in) {
                     }
                 }
             } else {
-                MacroDef* def = find_define(ctx, t.content.data, t.content.length);
+                MacroDef* def = find_define(ctx, t.atom);
                 if (def != NULL) {
                     expand_identifier(ctx, in, NULL, head, head+1, 0, def, 0, NULL);
                 }
@@ -60,12 +65,11 @@ static intmax_t eval(Cuik_CPP* restrict ctx, Lexer* restrict in) {
             FOR_N(i, head, dyn_array_length(tokens)) {
                 if (tokens[i].type == TOKEN_IDENTIFIER) {
                     tokens[i].type = TOKEN_INTEGER;
-                    tokens[i].content = string_cstr("0");
+                    tokens[i].atom = atoms_putc("0");
                 }
             }
         }
     }
-    in->current = (unsigned char*) t.content.data;
 
     // EOL token
     push_token(ctx, (Token){ 0 });
@@ -105,12 +109,12 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, ExprParser* in) {
     Token t = CONSUME(in);
     if (t.type == TOKEN_INTEGER) {
         Cuik_IntSuffix suffix;
-        val = parse_int(t.content.length, (const char*) t.content.data, &suffix);
+        val = parse_int(atoms_len(t.atom), t.atom, &suffix);
     } else if (t.type == TOKEN_IDENTIFIER) {
         val = 0;
     } else if (t.type == TOKEN_STRING_SINGLE_QUOTE) {
         int ch;
-        ptrdiff_t distance = parse_char(t.content.length, (const char*) t.content.data, &ch);
+        ptrdiff_t distance = parse_char(atoms_len(t.atom), (const char*) t.atom, &ch);
         if (distance < 0) {
             // report(REPORT_ERROR, NULL, s, t.location, "could not parse char literal");
             longjmp(eval__restore_point, 1);

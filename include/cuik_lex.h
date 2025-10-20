@@ -120,7 +120,7 @@ typedef struct Token {
 
 // This is what MacroIDs refer to
 typedef struct MacroInvoke {
-    String name;
+    Atom name;
 
     uint32_t depth;
     // 0 means it's got no parent

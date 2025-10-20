@@ -373,15 +373,15 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
         case EXPR_STR:
         case EXPR_WSTR: {
             // The string is preprocessed to be a flat and nice byte buffer by the semantics pass
-            size_t len = e->str.end - e->str.start;
-            uint32_t hash = tb__murmur3_32(e->str.start, len);
+            size_t len = atoms_len(e->str);
+            uint32_t hash = tb__murmur3_32(e->str, len);
 
             TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
             ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
-            tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, 1, 1);
+            tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len+1, 1, 1);
 
             char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
-            memcpy(dst, e->str.start, len);
+            memcpy(dst, e->str, len);
 
             return (ValDesc){ RVALUE, .n = tb_builder_symbol(g, (TB_Symbol*) dummy) };
         }

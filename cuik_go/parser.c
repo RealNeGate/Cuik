@@ -1230,13 +1230,15 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
     tb_symbol_bind_ptr((TB_Symbol*) lvb_trap_fn,   lvb_handler);
     tb_symbol_bind_ptr((TB_Symbol*) gc_alloc_fn,   gc_alloc);
 
+    TB_FeatureSet features = { 0 };
+    features.gen |= TB_FEATURE_STACK_MAPS;
+    tb_features_parse(&features, ir_mod, "x86_64-v3");
+
     // IR alloc
     for (CuikGo_Word* w = &ctx->base->words[0]; w != end_word;) {
         if (w->tag == WORD_FUNC) {
             w->ir.f = tb_function_create(ir_mod, -1, w->name, TB_LINKAGE_PUBLIC);
 
-            TB_FeatureSet features = tb_features_from_profile_str(ir_mod, "x86_64-v3");
-            features.gen |= TB_FEATURE_STACK_MAPS;
             tb_function_set_features(w->ir.f, &features);
             w = next_word(w->ref);
         } else if (w->tag == WORD_DECL) {

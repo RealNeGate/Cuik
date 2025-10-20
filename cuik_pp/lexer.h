@@ -119,6 +119,10 @@ static SourceLoc offset_source_loc(SourceLoc loc, uint32_t offset) {
     return (SourceLoc){ loc.raw + offset };
 }
 
+static uint32_t file_loc_offset(SourceLoc loc) {
+    return loc.raw & ((1u << SourceLoc_FilePosBits) - 1);
+}
+
 static SourceLoc encode_file_loc(uint32_t file_id, uint32_t file_offset) {
     // Big files take up several file IDs
     uint32_t real_file_id = file_id + (file_offset >> SourceLoc_FilePosBits);

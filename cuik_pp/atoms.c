@@ -62,6 +62,22 @@ Atom atoms_put(size_t len, const unsigned char* str) {
     return k;
 }
 
+Atom atoms_reserve(size_t len) {
+    Atom newstr = tb_arena_unaligned_alloc(&atoms_arena, len + 5);
+    uint32_t len32 = len;
+    memcpy(newstr, &len32, 4);
+    return newstr + 4;
+}
+
+Atom atoms_commit(Atom newstr) {
+    Atom k = atomhs_intern(&atoms_table, newstr);
+    if (k != newstr+4) {
+        size_t len = atoms_len(newstr);
+        tb_arena_free(&atoms_arena, newstr - 4, len + 5);
+    }
+    return k;
+}
+
 Atom atoms_putc(const char* str) {
     return atoms_put(strlen(str), (const unsigned char*) str);
 }
@@ -77,5 +93,5 @@ Atom atoms_eat_token(TokenStream* restrict s) {
     }
 
     tokens_next(s);
-    return atoms_put(t->content.length, t->content.data);
+    return t->atom;
 }
