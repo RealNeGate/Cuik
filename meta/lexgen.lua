@@ -243,12 +243,14 @@ function complex_sigil_rule(str)
     local tab = {}
     tab[1] = str:byte(1)
     for i=2,#str do
-        if str:byte(i) == str:byte(1) then
+        if false and str:byte(i) == str:byte(1) then
             tab[#tab + 1] = "S"
         else
             tab[#tab + 1] = str:byte(i)
         end
     end
+
+    print(inspect(tab), str)
     return tab
 end
 
@@ -259,14 +261,14 @@ function add_rules_raw(patterns, tag)
     end
 end
 
--- add_rule("[A-Za-z_$][A-Za-z0-9_$]*",     "IDENT")
--- add_rule("(0|[1-9][0-9]+)(\\.[0-9]*)?",  "NUMBER")
-add_rule("(0|[1-9][0-9]+)",  "NUMBER")
+add_rule("[A-Za-z_$][A-Za-z0-9_$]*",     "IDENT")
+add_rule("(0|[1-9][0-9]+)",              "NUMBER")
 add_rule("0[0-7]+",                      "NUMBER")
 add_rule("0[bB][01]+",                   "NUMBER")
 add_rule("0[xX][0-9A-Fa-f]+",            "NUMBER")
--- add_rules_raw(patterns,                  "SIGIL")
+add_rules_raw(patterns,                  "SIGIL")
 
+-- add_rule("(0|[1-9][0-9]+)(\\.[0-9]*)?",  "NUMBER")
 -- add_rule("0[0-7]*(A|B)", "NUMBER")
 
 print(inspect(rules))
@@ -302,10 +304,10 @@ end
 
 function dfa_transition(q_prime, curr, next)
     if next then
-        print("", inspect(curr[1][curr[2]]), "=>", inspect(next[1][next[2]]))
+        -- print("", inspect(curr[1][curr[2]]), "=>", inspect(next[1][next[2]]))
         table.insert(q_prime, next)
     else
-        print("", inspect(curr[1][curr[2]]), "=>", "END")
+        -- print("", inspect(curr[1][curr[2]]), "=>", "END")
     end
 end
 
@@ -385,12 +387,10 @@ function dfa_compile(state, q)
         chars[i] = string.char(inputs[i])
     end
 
-    print()
-    print("Inputs", state, table.concat(chars))
-
+    -- print("Inputs", state, table.concat(chars))
     for i=1,#inputs do
         local input = inputs[i]
-        print("INPUT", string.char(input))
+        -- print("INPUT", string.char(input))
 
         -- step forward
         local q_prime = {}
@@ -415,11 +415,13 @@ function dfa_compile(state, q)
             if not next then
                 next = dfa_gen_state()
                 dfa_cache[#dfa_cache + 1] = { q_prime, next }
-                print("ADD", input, inspect(q_prime), next)
+                -- print("ADD", input, inspect(q_prime), next)
 
                 DFA[state][input] = next
                 table.insert(worklist, { next, q_prime })
             end
+        else
+            DFA[state][input] = 1
         end
     end
 end
@@ -456,201 +458,6 @@ if true then
 end
 
 os.exit(0)
-
-do
-    local groups = Partitions()
-    for i=1,#patterns do
-        groups:put(patterns[i]:sub(1, 1), i)
-    end
-
-    local common = Partitions()
-    for ch,list in groups:iter() do
-        local hash = {}
-        for _,pat_i in ipairs(list) do
-            local pat = complex_sigil_rule(patterns[pat_i])
-            hash[#hash + 1] = pat
-        end
-        hash = table.concat(hash, " | ")
-
-        common:put_list(hash, list)
-        -- print(ch, #list, hash)
-    end
-    -- print()
-
-    -- each partition here gets its own equivalence class
-    local spares = {}
-    for hash,list in common:iter() do
-        local chars = {}
-        for i=1,#list do
-            local ch = patterns[list[i]]:sub(1,1)
-            add_if_new(chars, ch)
-        end
-
-        local class = dfa_gen_class(table.concat(chars, " "))
-        for i=1,#list do
-            local str = patterns[list[i]]
-            local ch = patterns[list[i]]:byte(1)
-            for j=2,#str do
-                if str:byte(j,j) ~= str:byte(1,1) then
-                    add_if_new(spares, str:byte(1,1))
-                end
-            end
-
-            eq_classes[ch] = class
-        end
-        print(#list, hash, class)
-    end
-
-    for i=1,#spares do
-        local str = string.char(spares[i])
-        -- print("New class", str)
-        eq_classes[spares[i]] = dfa_gen_class(str)
-    end
-
-    function key_str(k)
-        local strs = {}
-        for i=1,#k do
-            strs[i] = k[i]
-        end
-        return table.concat(strs, ",")
-    end
-
-    function array_match(a, b)
-        if #a ~= #b then return false end
-        for i=1,#a do
-            if type(a[i]) == type(b[i]) and type(a[i]) == "table" then
-                if not array_match(a[i], b[i]) then return false end
-            elseif a[i] ~= b[i] then
-                return false
-            end
-        end
-        return true
-    end
-
-    function array_slice(a, s, e)
-        local b = {}
-        for i=s,e do b[#b + 1] = a[i] end
-        return b
-    end
-
-    local active = {}
-    for hash,list in common:iter() do
-        for i=1,#list do
-            local str = patterns[list[i]]
-            local pat = complex_sigil_rule(str)
-
-            local key = {}
-            for j=1,#str do
-                if pat:sub(j,j) == "S" then
-                    key[#key + 1] = 2
-                else
-                    key[#key + 1] = eq_classes[str:byte(j)]
-                end
-            end
-
-            local found = false
-            for k=1,#active do
-                if array_match(key, active[k]) then
-                    -- print(string.format("%-8s %-8s %s (CACHED)", str, pat, inspect(key)))
-                    found = true
-                    break
-                end
-            end
-
-            if not found then
-                -- print(string.format("%-8s %-8s %s", str, pat, inspect(key)))
-                active[#active + 1] = key
-            end
-        end
-    end
-
-    local dfa_cache = {}
-    function dfa_compile(state, q, pos, first)
-        for input=1,eq_count do
-            -- step forward
-            local q_prime = {}
-            for i=1,#q do
-                if q[i][1] == input then
-                    q_prime[#q_prime + 1] = array_slice(q[i], 2, #q[i])
-                end
-            end
-
-            if #q_prime > 0 then
-                -- any states already exist for this active set?
-                local next = nil
-                for k=1,#dfa_cache do
-                    if array_match(q_prime, dfa_cache[k][1]) then
-                        next = dfa_cache[k][2]
-                        -- print("CACHED", inspect(q_prime), next)
-                        break
-                    end
-                end
-
-                if not next then
-                    next = dfa_gen_state()
-                    dfa_cache[#dfa_cache + 1] = { q_prime, next }
-                    -- print("ADD", inspect(q_prime), next)
-                end
-
-                -- print("IN", input, eq_names[input], pos, next)
-                DFA[state][input] = next
-
-                dfa_compile(next, q_prime, pos+1)
-            end
-        end
-    end
-
-    dfa_compile(1, active, 1, nil)
-end
-
-print("HHEHEHE")
-os.exit(0)
-
-local ident = 0 -- eq_match("A-Za-z$_", "IDENT")
-for i=192,255 do
-   eq_classes[i] = ident
-end
-
-local Q_class = dfa_gen_class("QUOTE")
-eq_classes[string.byte("'")] = Q_class
-eq_classes[string.byte("\"")] = Q_class
-
-local num = 0 -- eq_match("0-9",      "NUM")
-local dot = eq_classes[string.byte(".")]
-
-do
-    -- Define identifier: IDENT(IDENT | NUM)*
-    local state = dfa_gen_state()
-
-    DFA[1][ident]       = state
-    DFA[state][ident]   = state
-    DFA[state][num]     = state
-    DFA[state][2]       = state
-
-    -- Number: (0 IDENT)? (NUM | IDENT)+
-    local num_state = dfa_gen_state()
-    DFA[1][num]             = num_state
-    DFA[num_state][num]     = num_state
-    DFA[num_state][ident]   = num_state
-    DFA[num_state][2]       = num_state
-
-    DFA[1][Q_class] = 2
-
-    -- print("Ident", (state-1)*6)
-    -- print("Number", (num_state-1)*6)
-end
-
--- Dump DFA
-if true then
-    for i=1,state_count do
-        print("State", i)
-
-        for input,next in pairs(DFA[i]) do
-            print("", input, eq_names[input], "=>", next)
-        end
-        print()
-    end
-end
 
 local lines = {}
 lines[#lines + 1] = "static const char keywords[][16] = {"
