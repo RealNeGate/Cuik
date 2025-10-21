@@ -147,7 +147,9 @@ function parse_regex(str, i)
         local first = str:byte(i)
         local subpat = nil
         if str:byte(i) == string.byte("(") then
+            local p = i
             subpat, i = parse_regex(str, i + 1)
+            i = i + 1
         elseif str:byte(i) == string.byte(")") then
             break
         elseif str:byte(i) == string.byte("[") then
@@ -178,6 +180,10 @@ function parse_regex(str, i)
                 else
                     subpat[#subpat + 1] = first
                 end
+            end
+
+            if #subpat == 2 then
+                subpat = subpat[2]
             end
             i = i + 1
         else
@@ -226,36 +232,230 @@ end
 
 function add_rule(str, tag)
     local pat = parse_regex(str, 1)
+    if type(pat) == "table" and pat[1] == "or" then
+        pat = { pat }
+    end
+
     rules[#rules + 1] = { tag=tag, pat=pat }
 end
 
-function add_rules_raw(list)
-
+function complex_sigil_rule(str)
+    local tab = {}
+    tab[1] = str:byte(1)
+    for i=2,#str do
+        if str:byte(i) == str:byte(1) then
+            tab[#tab + 1] = "S"
+        else
+            tab[#tab + 1] = str:byte(i)
+        end
+    end
+    return tab
 end
 
-add_rule("(A|B|C)", "A")
-add_rule("[A-Za-z_$][A-Za-z0-9_$]*", "IDENT")
+function add_rules_raw(patterns, tag)
+    for i=1,#patterns do
+        local pat = complex_sigil_rule(patterns[i])
+        rules[#rules + 1] = { tag=tag, pat=pat }
+    end
+end
 
-add_rule("(0|[1-9][0-9]+)(.[0-9]*)?",    "NUMBER")
-add_rule("0[0-7]+",            "NUMBER")
-add_rule("0[bB][01]+",         "NUMBER")
-add_rule("0[xX][0-9A-Za-z]+",  "NUMBER")
+-- add_rule("[A-Za-z_$][A-Za-z0-9_$]*",     "IDENT")
+-- add_rule("(0|[1-9][0-9]+)(\\.[0-9]*)?",  "NUMBER")
+add_rule("(0|[1-9][0-9]+)",  "NUMBER")
+add_rule("0[0-7]+",                      "NUMBER")
+add_rule("0[bB][01]+",                   "NUMBER")
+add_rule("0[xX][0-9A-Fa-f]+",            "NUMBER")
+-- add_rules_raw(patterns,                  "SIGIL")
+
+-- add_rule("0[0-7]*(A|B)", "NUMBER")
 
 print(inspect(rules))
 
--- Compile complex sigils
-function complex_sigil_rule(str)
-    local tab = {}
-    tab[1] = "C"
-    for i=2,#str do
-        if str:byte(i,i) == str:byte(1,1) then
-            tab[#tab + 1] = "S"
-        else
-            tab[#tab + 1] = str:sub(i, i)
+to_tag = {}
+function walk(n, id)
+    print(inspect(n), id)
+    to_tag[n] = id
+    for i=1,#n do
+        local kid = n[i]
+        if type(kid) == "table" then
+            walk(kid, id)
         end
     end
-    return table.concat(tab)
 end
+
+for i=1,#rules do
+    walk(rules[i].pat, rules[i].tag)
+end
+
+local dfa_cache = {}
+function array_match(a, b)
+    if #a ~= #b then return false end
+    for i=1,#a do
+        if type(a[i]) == type(b[i]) and type(a[i]) == "table" then
+            if not array_match(a[i], b[i]) then return false end
+        elseif a[i] ~= b[i] then
+            return false
+        end
+    end
+    return true
+end
+
+function dfa_transition(q_prime, curr, next)
+    if next then
+        print("", inspect(curr[1][curr[2]]), "=>", inspect(next[1][next[2]]))
+        table.insert(q_prime, next)
+    else
+        print("", inspect(curr[1][curr[2]]), "=>", "END")
+    end
+end
+
+function dfa_pattern_next(n)
+    local k = { n[1], n[2]+1, n[3], n[4], n[5] }
+    while k and k[2] > k[3] do
+        k = k[5]
+    end
+    return k
+end
+
+function dfa_pattern_step(q_prime, og, n, input, peek)
+    local pat  = n[1]
+    local pos  = n[2]
+    local edge = pat[pos]
+    if type(edge) == "table" then
+        if edge[1] == "or" then
+            -- step into each
+            local after = dfa_pattern_next(n)
+            for i=2,#edge do
+                dfa_pattern_step(q_prime, og, { edge, i, i, 0, after }, input, peek)
+            end
+        elseif edge[1] == "range" then
+            if not input then
+                for i=edge[2],edge[3] do
+                    add_if_new(q_prime, i)
+                end
+            elseif input >= edge[2] and input <= edge[3] then
+                dfa_transition(q_prime, og, n[5])
+            end
+        elseif edge[1] == "plus" or edge[1] == "star" then
+            -- stars can always match against what's past them, plus can
+            -- do that after matching once.
+            local after = dfa_pattern_next(n)
+            if after and (edge[1] == "star" or n[4] > 0) then
+                dfa_pattern_step(q_prime, og, after, input, true)
+            end
+
+            local primed = n
+            if edge[1] == "plus" then
+                primed = { n[1], n[2], n[3], 1, n[5] }
+            end
+            dfa_pattern_step(q_prime, og, { edge, 2, 2, 0, primed }, input)
+        else
+            -- step into
+            local curr = { edge, 1, #edge, 0, n[5] }
+            local after = dfa_pattern_next(curr)
+            curr[5] = after
+            dfa_pattern_step(q_prime, og, curr, input, peek)
+
+            -- assert(false, "TODO "..inspect(edge[1]))
+        end
+    else
+        if not input then
+            add_if_new(q_prime, edge)
+        elseif edge == input then
+            if not peek then
+                n = dfa_pattern_next(n)
+            end
+
+            dfa_transition(q_prime, og, n)
+        end
+    end
+end
+
+local worklist = {}
+function dfa_compile(state, q)
+    -- accumulate the inputs based on what
+    -- everyone can parse at this time
+    local inputs = {}
+    for i=1,#q do
+        dfa_pattern_step(inputs, q[i], q[i], nil)
+    end
+
+    local chars = {}
+    for i=1,#inputs do
+        chars[i] = string.char(inputs[i])
+    end
+
+    print()
+    print("Inputs", state, table.concat(chars))
+
+    for i=1,#inputs do
+        local input = inputs[i]
+        print("INPUT", string.char(input))
+
+        -- step forward
+        local q_prime = {}
+        for i=1,#q do
+            local curr = q[i]
+            dfa_pattern_step(q_prime, curr, curr, input)
+        end
+
+        if #q_prime > 0 then
+            -- any states already exist for this active set?
+            local next = nil
+            for k=1,#dfa_cache do
+                if array_match(q_prime, dfa_cache[k][1]) then
+                    next = dfa_cache[k][2]
+                    DFA[state][input] = next
+
+                    -- print("CACHED", inspect(q_prime), next)
+                    break
+                end
+            end
+
+            if not next then
+                next = dfa_gen_state()
+                dfa_cache[#dfa_cache + 1] = { q_prime, next }
+                print("ADD", input, inspect(q_prime), next)
+
+                DFA[state][input] = next
+                table.insert(worklist, { next, q_prime })
+            end
+        end
+    end
+end
+
+-- Every pattern is currently matching for the first char
+local active = {}
+for i=1,#rules do
+    -- { pat pos limit times prev }
+    active[i] = { rules[i].pat, 1, #rules[i].pat, 0, nil }
+end
+
+table.insert(worklist, { 1, active })
+while #worklist > 0 do
+    local n = table.remove(worklist)
+    dfa_compile(n[1], n[2])
+end
+
+-- Dump DFA
+if true then
+    for i=1,state_count do
+        print("State", i)
+
+        local delta = Partitions()
+        for input,next in pairs(DFA[i]) do
+            delta:put(next, string.char(input))
+        end
+
+        for next,list in delta:iter() do
+            table.sort(list)
+            print("", table.concat(list), "=>", next)
+        end
+        print()
+    end
+end
+
+os.exit(0)
 
 do
     local groups = Partitions()
