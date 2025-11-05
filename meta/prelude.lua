@@ -61,6 +61,18 @@ function Partitions()
         end
     end
 
+    function t:put_if_new(k, v)
+        local list = self.entries[k]
+        if not list then
+            self.entries[k] = { v }
+            self.ord[#self.ord + 1] = k
+            return true
+        else
+            add_if_new(list, v)
+            return false
+        end
+    end
+
     function t:put_list(k, v)
         local list = self.entries[k]
         local is_new = false

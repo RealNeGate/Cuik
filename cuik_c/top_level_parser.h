@@ -186,8 +186,11 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     //
     // init-declarator:
     //   declarator ('=' initializer)?
+static int hhh = 0;
     bool has_semicolon = true;
     while (!tokens_eof(s) && tokens_get(s)->type != ';') {
+        hhh++;
+
         size_t start_decl_token = s->list.current;
         Decl decl = parse_declarator2(parser, s, type, false);
 

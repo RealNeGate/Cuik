@@ -227,7 +227,11 @@ static _Atomic(Atom) atom_ifndef;
 static _Atomic(Atom) atom_elif;
 static _Atomic(Atom) atom_else;
 static _Atomic(Atom) atom_endif;
+static _Atomic(Atom) atom_undef;
+static _Atomic(Atom) atom_pragma;
+static _Atomic(Atom) atom_define;
 static _Atomic(Atom) atom_message;
+static _Atomic(Atom) atom_include;
 static _Atomic(Atom) atom_once;
 
 // include this if you want to enable the preprocessor debugger
@@ -330,7 +334,11 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
     atomic_store_explicit(&atom_elif, atoms_putc("elif"), memory_order_relaxed);
     atomic_store_explicit(&atom_else, atoms_putc("else"), memory_order_relaxed);
     atomic_store_explicit(&atom_endif, atoms_putc("endif"), memory_order_relaxed);
+    atomic_store_explicit(&atom_undef, atoms_putc("undef"), memory_order_relaxed);
+    atomic_store_explicit(&atom_pragma, atoms_putc("pragma"), memory_order_relaxed);
+    atomic_store_explicit(&atom_define, atoms_putc("define"), memory_order_relaxed);
     atomic_store_explicit(&atom_message, atoms_putc("message"), memory_order_relaxed);
+    atomic_store_explicit(&atom_include, atoms_putc("include"), memory_order_relaxed);
     atomic_store_explicit(&atom_once, atoms_putc("once"), memory_order_relaxed);
 
     {
@@ -672,18 +680,17 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
 
             // Slow code, defines
             DirectiveResult result = DIRECTIVE_UNKNOWN;
-            String directive = { atoms_len(first.atom), (unsigned char*) first.atom };
 
             // shorthand for calling the directives in cpp_directive.h
-            #define MATCH(str)                                         \
-            if (memcmp(directive.data, #str, sizeof(#str) - 1) == 0) { \
-                result = cpp__ ## str(ctx, slot, in);                  \
-                break;                                                 \
+            #define MATCH(str)                                                              \
+            if (first.atom == atomic_load_explicit(&atom_ ## str,  memory_order_relaxed)) { \
+                result = cpp__ ## str(ctx, slot, in);                                       \
+                break;                                                                      \
             }
 
             // all the directives go here
             cuikperf_region_start2("directive", atoms_len(first.atom), first.atom);
-            switch (directive.length) {
+            switch (atoms_len(first.atom)) {
                 case 2:
                 MATCH(if);
                 break;
@@ -729,7 +736,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                 return CUIKPP_ERROR;
             } else if (result == DIRECTIVE_UNKNOWN) {
                 SourceRange r = get_token_range(&first);
-                diag_err(s, r, "unknown directive %_S", directive);
+                diag_err(s, r, "unknown directive %s", first.atom);
                 return CUIKPP_ERROR;
             }
         }

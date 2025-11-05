@@ -18,10 +18,10 @@ typedef enum {
 static DirectiveResult skip_directive_body(Lexer* restrict in) {
     int depth = 0;
 
+    unsigned char* savepoint = in->current;
     Token t = lexer_read(in);
     while (t.type) {
         if (t.type == '#') {
-            unsigned char* savepoint = in->current;
             t = lexer_read(in);
 
             if (t.type == TOKEN_IDENTIFIER) {
@@ -43,6 +43,7 @@ static DirectiveResult skip_directive_body(Lexer* restrict in) {
                 }
             }
         } else {
+            savepoint = in->current;
             t = lexer_read(in);
         }
     }
@@ -94,7 +95,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
     if (key.type != TOKEN_IDENTIFIER) {
         SourceRange r = { key_loc, get_end_location(&key) };
-        diag_err(&ctx->tokens, r, "expected identifier");
+        diag_err(&ctx->tokens, r, "expected identifier, got '%s'", key.atom);
         return DIRECTIVE_ERROR;
     }
 
@@ -104,6 +105,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         params = in->current;
         Token t = lexer_read(in);
 
+        t = lexer_read(in);
         int arg_count = 0;
         while (t.type != 0 && t.type != ')') {
             if (arg_count) {
@@ -116,7 +118,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
             if (t.type != TOKEN_TRIPLE_DOT && t.type != TOKEN_IDENTIFIER) {
                 SourceRange r = { t.location, get_end_location(&t) };
-                diag_err(&ctx->tokens, r, "expected identifier");
+                diag_err(&ctx->tokens, r, "expected identifier, got '%s'", t.atom);
                 return DIRECTIVE_ERROR;
             } else {
                 arg_count++;
@@ -193,7 +195,7 @@ static DirectiveResult cpp__ifdef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     Token t = lexer_read(in);
     SourceRange r = get_token_range(&t);
     if (t.type != TOKEN_IDENTIFIER) {
-        diag_err(&ctx->tokens, r, "expected identifier");
+        diag_err(&ctx->tokens, r, "expected identifier, got '%s'", t.atom);
         return DIRECTIVE_ERROR;
     }
 
@@ -212,7 +214,7 @@ static DirectiveResult cpp__ifndef(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     Token t = lexer_read(in);
     SourceRange r = get_token_range(&t);
     if (t.type != TOKEN_IDENTIFIER) {
-        diag_err(&ctx->tokens, r, "expected identifier");
+        diag_err(&ctx->tokens, r, "expected identifier, got '%s'", t.atom);
         return DIRECTIVE_ERROR;
     }
 
@@ -281,7 +283,7 @@ static DirectiveResult cpp__undef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     Token key = lexer_read(in);
     if (key.type != TOKEN_IDENTIFIER) {
         SourceRange r = { key.location, get_end_location(&key) };
-        diag_err(&ctx->tokens, r, "expected identifier");
+        diag_err(&ctx->tokens, r, "expected identifier, got '%s'", key.atom);
         return DIRECTIVE_ERROR;
     }
 
@@ -491,7 +493,7 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         diag_note(s, r, "%s", t.atom);
     } else {
         // convert to #pragma blah => _Pragma("blah")
-        Token t2 = { .type = TOKEN_KW_Pragma, .location = loc, .atom = atoms_putc("_Pragma") };
+        Token t2 = { .type = TOKEN_IDENTIFIER, .location = loc, .atom = atoms_putc("_Pragma") };
         push_token(ctx, t2);
 
         t2 = (Token){ .type = '(', .location = loc, .atom = atoms_putc("(") };

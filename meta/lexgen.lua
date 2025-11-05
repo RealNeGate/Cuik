@@ -110,28 +110,15 @@ local patterns = {
 rules = {}
 
 local state_count = 1
-
-local eq_count = 2
-local eq_classes = {}
-local eq_names = {}
-
-eq_names[1] = "NIL"
-eq_names[2] = "SAME"
+local dfa_to_tag = {}
 
 -- DFA[state][input] = {}
 local DFA = {}
-for i=1,40 do
-    DFA[i] = {}
-end
-
-function dfa_gen_class(tag)
-    eq_count = eq_count + 1
-    eq_names[eq_count] = tag
-    return eq_count
-end
-
 function dfa_gen_state()
     state_count = state_count + 1
+    if not DFA[state_count] then
+        DFA[state_count] = {}
+    end
     return state_count
 end
 
@@ -186,6 +173,9 @@ function parse_regex(str, i)
                 subpat = subpat[2]
             end
             i = i + 1
+        elseif str:byte(i) == string.byte(".") then
+            subpat = "any"
+            i = i + 1
         else
             subpat = first
             i = i + 1
@@ -223,7 +213,7 @@ function parse_regex(str, i)
     end
 
     -- not a real group
-    if type(pat) == "table" and #pat == 1 then
+    if type(pat) == "table" and #pat == 1 and type(pat[1]) == "table" then
         pat = pat[1]
     end
 
@@ -249,8 +239,6 @@ function complex_sigil_rule(str)
             tab[#tab + 1] = str:byte(i)
         end
     end
-
-    print(inspect(tab), str)
     return tab
 end
 
@@ -266,16 +254,19 @@ add_rule("(0|[1-9][0-9]+)",              "NUMBER")
 add_rule("0[0-7]+",                      "NUMBER")
 add_rule("0[bB][01]+",                   "NUMBER")
 add_rule("0[xX][0-9A-Fa-f]+",            "NUMBER")
+add_rule("\"",                           "QUOTE")
+add_rule("\'",                           "QUOTE")
+add_rule("L\"",                          "QUOTE")
+add_rule("L\'",                          "QUOTE")
 add_rules_raw(patterns,                  "SIGIL")
 
 -- add_rule("(0|[1-9][0-9]+)(\\.[0-9]*)?",  "NUMBER")
 -- add_rule("0[0-7]*(A|B)", "NUMBER")
-
-print(inspect(rules))
+-- print(inspect(rules))
 
 to_tag = {}
 function walk(n, id)
-    print(inspect(n), id)
+    -- print(inspect(n), id)
     to_tag[n] = id
     for i=1,#n do
         local kid = n[i]
@@ -303,7 +294,10 @@ function array_match(a, b)
 end
 
 function dfa_transition(q_prime, curr, next)
-    if next then
+    if type(next) == "string" then
+        -- print("", inspect(curr[1][curr[2]]), "=>", next)
+        table.insert(q_prime, next)
+    elseif next then
         -- print("", inspect(curr[1][curr[2]]), "=>", inspect(next[1][next[2]]))
         table.insert(q_prime, next)
     else
@@ -313,17 +307,34 @@ end
 
 function dfa_pattern_next(n)
     local k = { n[1], n[2]+1, n[3], n[4], n[5] }
-    while k and k[2] > k[3] do
+    while type(k) == "table" and k[2] > k[3] do
         k = k[5]
     end
-    return k
+
+    if not k then
+        return to_tag[n[1]]
+    else
+        return k
+    end
 end
 
 function dfa_pattern_step(q_prime, og, n, input, peek)
+    if type(n) ~= "table" then
+        return
+    end
+
     local pat  = n[1]
     local pos  = n[2]
     local edge = pat[pos]
-    if type(edge) == "table" then
+    if edge == "any" then
+        if not input then
+            for i=1,255 do
+                add_if_new(q_prime, i)
+            end
+        else
+            dfa_transition(q_prime, og, n[5])
+        end
+    elseif type(edge) == "table" then
         if edge[1] == "or" then
             -- step into each
             local after = dfa_pattern_next(n)
@@ -373,6 +384,17 @@ function dfa_pattern_step(q_prime, og, n, input, peek)
     end
 end
 
+function int_array_to_str(inputs)
+    local chars = {}
+    for i=1,#inputs do
+        chars[i] = string.char(inputs[i])
+    end
+    table.sort(chars)
+    return table.concat(chars)
+end
+
+DFA[1] = {}
+
 local worklist = {}
 function dfa_compile(state, q)
     -- accumulate the inputs based on what
@@ -382,12 +404,7 @@ function dfa_compile(state, q)
         dfa_pattern_step(inputs, q[i], q[i], nil)
     end
 
-    local chars = {}
-    for i=1,#inputs do
-        chars[i] = string.char(inputs[i])
-    end
-
-    -- print("Inputs", state, table.concat(chars))
+    -- print("Inputs", state, int_array_to_str(inputs))
     for i=1,#inputs do
         local input = inputs[i]
         -- print("INPUT", string.char(input))
@@ -415,13 +432,32 @@ function dfa_compile(state, q)
             if not next then
                 next = dfa_gen_state()
                 dfa_cache[#dfa_cache + 1] = { q_prime, next }
-                -- print("ADD", input, inspect(q_prime), next)
+
+                local leader = nil
+                for k=1,#q_prime do
+                    local tag = q_prime[k]
+                    if type(q_prime[k]) == "string" then
+                        tag = q_prime[k]
+                    else
+                        tag = to_tag[q_prime[k][1]]
+                    end
+
+                    if not leader then
+                        leader = tag
+                    elseif leader ~= tag then
+                        leader = nil
+                        break
+                    end
+                end
+
+                if leader then
+                    dfa_to_tag[next] = leader
+                end
+                -- print("ADD", input, inspect(q_prime), next, leader)
 
                 DFA[state][input] = next
                 table.insert(worklist, { next, q_prime })
             end
-        else
-            DFA[state][input] = 1
         end
     end
 end
@@ -440,24 +476,208 @@ while #worklist > 0 do
 end
 
 -- Dump DFA
-if true then
-    for i=1,state_count do
-        print("State", i)
-
-        local delta = Partitions()
-        for input,next in pairs(DFA[i]) do
-            delta:put(next, string.char(input))
+function dump_dfa(eq_classes)
+    if eq_classes then
+        for i=1,state_count do
+            print("State", i-1, dfa_to_tag[i])
+            for input,next in pairs(DFA[i]) do
+                local eq = eq_classes:get(eq_classes:at(input))
+                print("", input, int_array_to_str(eq), "=>", next-1)
+            end
+            print()
         end
+    else
+        for i=1,state_count do
+            print("State", i, dfa_to_tag[i])
 
-        for next,list in delta:iter() do
-            table.sort(list)
-            print("", table.concat(list), "=>", next)
+            local delta = Partitions()
+            for input,next in pairs(DFA[i]) do
+                delta:put(next, string.char(input))
+            end
+
+            for next,list in delta:iter() do
+                table.sort(list)
+                print("", table.concat(list), "=>", next)
+            end
+            print()
         end
-        print()
     end
 end
 
-os.exit(0)
+-- dump_dfa()
+
+local eq_classes = Partitions()
+local eq_cnt = 1
+local to_eq = {}
+do
+    local non_F = {}
+    local to_part = {}
+
+    local inv_deltas = {}
+    for i=1,state_count do
+        inv_deltas[i] = {}
+    end
+
+    local F = {}
+    local P = { non_F }
+    for i=1,state_count do
+        local deltas = 0
+        for input,next in pairs(DFA[i]) do
+            table.insert(inv_deltas[next], { input, i })
+            deltas = deltas + 1
+        end
+
+        if deltas == 0 then
+            local tag = dfa_to_tag[i]
+            assert(tag, i)
+
+            local A = F[tag]
+            if A then
+                table.insert(A, i)
+                to_part[i] = A
+            else
+                F[tag] = { i }
+                to_part[i] = F[tag]
+                table.insert(P, F[tag])
+            end
+        else
+            table.insert(non_F, i)
+            to_part[i] = non_F
+        end
+    end
+
+    local W = {}
+    for i=1,#P do
+        W[i] = P[i]
+    end
+
+    while #W > 0 do
+        local A = table.remove(W)
+
+        local sigma = {}
+        local uses  = {}
+        for i=1,#A do
+            local d = inv_deltas[A[i]]
+            for j=1,#d do
+                add_if_new(sigma, d[j][1])
+                add_if_new(uses,  d[j])
+            end
+        end
+
+        -- print("WORK", inspect(A), int_array_to_str(sigma))
+        for i=1,#sigma do
+            local touched = {}
+            local touched_n = {}
+            local input = sigma[i]
+
+            for j=1,#uses do
+                if input == uses[j][1] then
+                    touched_n[uses[j][2]] = true
+                    add_if_new(touched, to_part[uses[j][2]])
+                end
+            end
+
+            for j=1,#touched do
+                local Z = touched[j]
+                local split = 0
+                for k=1,#Z do
+                    if touched_n[Z[k]] then
+                        split = split + 1
+                    end
+                end
+
+                if split > 0 and split < #Z then
+                    -- print("SPLIT", #Z, split)
+                    local new_z = {}
+
+                    local k = 1
+                    while k <= #Z do
+                        if touched_n[Z[k]] then
+                            to_part[Z[k]] = new_z
+                            table.insert(new_z, Z[k])
+
+                            -- remove swap
+                            Z[k]  = Z[#Z]
+                            Z[#Z] = nil
+                        else
+                            k = k + 1
+                        end
+                    end
+
+                    -- print("", string.char(input), ":", inspect(Z), inspect(new_z))
+
+                    table.insert(P, new_z)
+                    table.insert(W, new_z)
+                end
+            end
+        end
+    end
+
+    -- print()
+
+    local dual = Partitions()
+    for i=1,#P do
+        local A = P[i]
+
+        local sigma = {}
+        local uses  = {}
+        for j=1,#A do
+            local d = inv_deltas[A[j]]
+            for k=1,#d do
+                add_if_new(sigma, d[k][1])
+                dual:put_if_new(d[k][1], i)
+            end
+        end
+
+        -- print("PART", i, inspect(A), int_array_to_str(sigma))
+    end
+
+    for input,list in dual:iter() do
+        local key = table.concat(list,",")
+        eq_classes:put(key, input)
+    end
+
+    -- print()
+
+    for k,list in eq_classes:iter() do
+        local id = eq_cnt
+        eq_cnt = eq_cnt + 1
+
+        for i=1,#list do
+            to_eq[list[i]] = id
+        end
+        -- print("CLASS", id, int_array_to_str(list))
+    end
+
+    local new_DFA = {}
+    local new_state_count = 0
+    local new_to_tag = {}
+    local function walk(A)
+        if A.leader then
+            return A.leader
+        end
+
+        new_state_count = new_state_count + 1
+        local from = new_state_count
+        A.leader = from
+        new_DFA[new_state_count] = {}
+        new_to_tag[new_state_count] = dfa_to_tag[A[1]]
+
+        for input,next in pairs(DFA[A[1]]) do
+            local to = walk(to_part[next])
+            local eq = to_eq[input]
+            new_DFA[from][eq] = to
+        end
+        return from
+    end
+    walk(to_part[1])
+
+    dfa_to_tag = new_to_tag
+    state_count = new_state_count
+    DFA = new_DFA
+end
+
+-- dump_dfa(eq_classes)
 
 local lines = {}
 lines[#lines + 1] = "static const char keywords[][16] = {"
@@ -475,23 +695,19 @@ end
 
 lines[#lines + 1] = "static const uint8_t eq_classes[256] = {"
 local range_start = 1
-for j=0,256 do
-    if eq_classes[j] ~= eq_classes[range_start] then
-        -- print("R", j, range_start, eq_classes[j], eq_classes[range_start])
-        if eq_classes[range_start] then
-            if j-1 == range_start then
-                lines[#lines + 1] = string.format("    [%d] = %d,", j-1, eq_classes[range_start]-1)
-            else
-                lines[#lines + 1] = string.format("    [%d ... %d] = %d,", range_start, j-1, eq_classes[range_start]-1)
-            end
-        end
-        range_start = j
+for j=0,15 do
+    local row = {}
+    for i=0,15 do
+        local k = j*16 + i
+        local v = to_eq[k] and to_eq[k] or 0
+        row[i+1] = string.format("%-2d", v, k)
     end
+    lines[#lines + 1] = string.format("    %s, // 0x%02x", table.concat(row, ", "), j*16)
 end
 lines[#lines + 1] = "};"
 lines[#lines + 1] = ""
-lines[#lines + 1] = string.format("static const uint8_t dfa[%d][%d] = {", eq_count, state_count)
-for j=1,eq_count do
+lines[#lines + 1] = string.format("static const uint8_t dfa[%d][%d] = {", eq_cnt+1, state_count)
+for j=1,eq_cnt do
     local set = {}
     for i=1,state_count do
         if DFA[i][j] and DFA[i][j] ~= 1 then
@@ -504,17 +720,31 @@ for j=1,eq_count do
 
     if #set > 0 then
         set = table.concat(set, ", ")
-        lines[#lines + 1] = string.format("    [%2d] = { %s },", j-1, set)
+        lines[#lines + 1] = string.format("    [%2d] = { %s },", j, set)
     end
 end
 lines[#lines + 1] = "};"
 lines[#lines + 1] = ""
+
+local tag_enums = {}
+for i=1,state_count do
+    if dfa_to_tag[i] then
+        add_if_new(tag_enums, "L_"..dfa_to_tag[i])
+    end
+end
+
+lines[#lines + 1] = string.format("enum { L_ERROR, %s };", table.concat(tag_enums, ", "))
 lines[#lines + 1] = string.format("static const uint8_t lexer_final_state[%d] = {", state_count)
+for i=1,state_count do
+    if dfa_to_tag[i] then
+        lines[#lines + 1] = string.format("    [%d] = L_%s,", i - 1, dfa_to_tag[i])
+    end
+end
 lines[#lines + 1] = "};"
 lines[#lines + 1] = ""
 add_lines[[
 static bool lexer_is_space(int ch) {
-    uint64_t mask = (1ull << ' ') | (1ull << '\t') | (1ull << '\v') | (1ull << '\r') | (1ull << '\n') | (1ull << '/');
+    uint64_t mask = (1ull << ' ') | (1ull << '\t') | (1ull << '\v') | (1ull << '\r') | (1ull << '\n');
     return ch < 64 ? (mask >> ch) & 1 : false;
 }
 
@@ -530,14 +760,35 @@ Token lexer_read(Lexer* restrict l) {
     retry: {
         // skip whitespace
         while (lexer_is_space(*current)) {
-            t.hit_line = *current++ == '\n';
+            t.hit_line |= *current++ == '\n';
         }
 
         // check for comments
         if (current[0] == '/' && current[1] == '/') {
-            __debugbreak();
+            current += 2;
+
+            // skip until whitespace
+            while (*current && *current != '\n') {
+                current++;
+            }
+
+            current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
+            t.hit_line = true;
+            goto retry;
         } else if (current[0] == '/' && current[1] == '*') {
-            __debugbreak();
+            current += 2;
+
+            // skip until comment end
+            while (current[0] && !(current[0] == '*' && current[1] == '/')) {
+                t.hit_line |= *current++ == '\n';
+            }
+
+            current += 2;
+            goto retry;
+        } else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
+            current += 1;
+            current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
+            goto retry;
         }
     }
 
@@ -558,7 +809,6 @@ Token lexer_read(Lexer* restrict l) {
             uint8_t ch = *current;
             // read convert to class (compresses the DFA a lot)
             uint8_t eq_class = eq_classes[ch];
-            if (ch == first) { eq_class = 1; }
             // eval DFA
             uint64_t next = dfa[eq_class][state];
             if (next == 0) break;
@@ -567,9 +817,33 @@ Token lexer_read(Lexer* restrict l) {
     }
 
     uint64_t tag = lexer_final_state[state];
-    if (tag == 0) {
-        // these tokens are gonna get converted to real atoms
+    if (tag == L_IDENT) {
         t.atom = atoms_put(current - start, start);
+        t.type = TOKEN_IDENTIFIER;
+    } else if (tag == L_NUMBER) {
+        t.atom = atoms_put(current - start, start);
+        t.type = TOKEN_INTEGER;
+    } else if (tag == L_QUOTE) {
+        char quote_type = current[-1];
+        for (; *current && *current != quote_type; current++) {
+            // skip escape codes
+            if (*current == '\\') {
+                // this will skip twice because of the for loop's next
+                //  \  "  . . .
+                //  ^     ^
+                //  old   new
+                current += 1;
+            }
+        }
+
+        t.type = quote_type;
+        if (start[0] == 'L') {
+            t.type += 256;
+            start += 1;
+        }
+
+        t.atom = atoms_put(current - (start + 1), start + 1);
+        current += 1;
     } else {
         // these tokens have their contents embedded into the
         // Atom pointer.
@@ -582,7 +856,9 @@ Token lexer_read(Lexer* restrict l) {
         uint32_t chars;
         memcpy(&chars, start, sizeof(uint32_t));
 
-        t.atom = (Atom) ((uintptr_t) (chars & mask) | (tag << 56ull));
+        // t.atom = (Atom) ((uintptr_t) (chars & mask) | (tag << 56ull));
+        t.atom = atoms_put(current - start, start);
+        t.type = chars & mask;
     }
 
     // NOTE(NeGate): the lexer will modify code to allow for certain patterns
@@ -603,34 +879,35 @@ local f = io.open("cuik_pp/dfa.h", "w")
 f:write(final_src)
 f:close()
 
-lines = {}
-for i=1,#keywords do
-    local base = keywords[i]
+if false then
+    lines = {}
+    other_lines = { "static void init_lang_atoms(void) {" }
+    for i=1,#keywords do
+        local base = keywords[i]
 
-    local j = 1
-    while j < #base and base:sub(j, j) == "_" do
-        j = j + 1
+        local j = 1
+        while j < #base and base:sub(j, j) == "_" do
+            j = j + 1
+        end
+        base = base:sub(j)
+
+        j = #base
+        while j > 1 and base:sub(j, j) == "_" do
+            j = j - 1
+        end
+        base = base:sub(1, j)
+
+        lines[#lines + 1] = string.format("extern _Atomic(Atom) KW_%s;", base)
+        other_lines[#other_lines + 1] = string.format("    KW_%s = atoms_put(%d, \"%s\");", base, #keywords[i], keywords[i])
     end
-    base = base:sub(j)
 
-    j = #base
-    while j > 1 and base:sub(j, j) == "_" do
-        j = j - 1
-    end
-    base = base:sub(1, j)
+    final_src = table.concat(lines, "\n")
 
-    local str = ""
-    if i == 1 then
-        str = " = 0x800000"
-    end
+    f = io.open("cuik_pp/keywords.h", "w")
+    f:write(final_src)
+    f:close()
 
-    lines[#lines + 1] = string.format("TOKEN_KW_%s%s,", base, str)
+    print(final_src)
 end
 
-final_src = table.concat(lines, "\n")
-f = io.open("cuik_pp/keywords.h", "w")
-f:write(final_src)
-f:close()
-
--- print(table.concat(lines, "\n"))
 -- print(state_count, eq_count)

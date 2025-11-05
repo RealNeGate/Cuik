@@ -369,6 +369,67 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
     bool noret = false;
     PendingExpr* alignas_pending_expr = NULL;
 
+    // type-specifier:
+    //   void _Bool char short int long float double
+    // storage-class-specifier:
+    //   _Thread_local typedef extern static inline auto register _Noreturn
+    static struct {
+        const char* name;
+        int index;
+        int cap;
+    } simple_rules[] = {
+        // primitive base types
+        { "void",     BIN_BASE_TYPE },
+        { "_Bool",    BIN_BASE_TYPE },
+        { "char",     BIN_BASE_TYPE },
+        { "int",      BIN_BASE_TYPE },
+        { "float",    BIN_BASE_TYPE },
+        { "double",   BIN_BASE_TYPE },
+        // qualifiers
+        { "unsigned", UNSIGNED      },
+        { "signed",   SIGNED        },
+        { "volatile", VOLATILE      },
+        { "const",    CONST         },
+        // counting qualifiers
+        { "short",    SHORT         },
+        { "long",     LONG          },
+    };
+
+    enum {
+        BIN_BASE_TYPE,
+        BIN_SHORT,
+        BIN_LONG,
+        BIN_MAX,
+    };
+
+    int bins[BIN_MAX] = { 0 };
+
+    // Combine identifiers to make type specifier
+    while (tokens_get(s)->type == TOKEN_IDENTIFIER) {
+        Atom atom = tokens_get(s)->atom;
+
+        if (0) {}
+        else if (atom == atom_short)  { counter += SHORT; }
+        else if (atom == atom_long)   { counter += LONG; }
+        else if (atom == atom_char)   { counter += CHAR; }
+        else if (atom == atom__Bool)  { counter += BOOL; }
+        else if (atom == atom_int)    { counter += INT; }
+        else if (atom == atom_long)   { counter += LONG; }
+        else if (atom == atom_float)  { counter += FLOAT; }
+        else if (atom == atom_double) { counter += DOUBLE; }
+        else if (atom == atom__Complex || atom == atom__Imaginary) {
+            diag_err(s, loc, "Complex types are not supported in CuikC");
+        }
+    }
+
+    // FANCY OPS:
+    //  __declspec
+    //  enum
+    //  struct/union
+    //  _Typeof
+    //  _Vector
+    //  _Atomic
+
     SourceRange loc = tokens_get_range(s);
     do {
         TknType tkn_type = tokens_get(s)->type;

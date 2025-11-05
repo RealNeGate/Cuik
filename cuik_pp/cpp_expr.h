@@ -38,7 +38,7 @@ static intmax_t eval(Cuik_CPP* restrict ctx, Lexer* restrict in) {
                 }
 
                 if (t.type != TOKEN_IDENTIFIER) {
-                    diag_err(&ctx->tokens, get_token_range(&t), "expected identifier");
+                    diag_err(&ctx->tokens, get_token_range(&t), "expected identifier, got '%s'", t.atom);
                     goto error;
                 }
 
@@ -131,7 +131,7 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, ExprParser* in) {
             longjmp(eval__restore_point, 1);
         }
     } else {
-        diag_err(&c->tokens, get_token_range(&t), "could not parse macro expression");
+        diag_err(&c->tokens, get_token_range(&t), "could not parse macro expression, got \"%s\"", t.atom);
         longjmp(eval__restore_point, 1);
     }
 

@@ -330,6 +330,34 @@ static void* NBHM_FN(raw_lookup)(NBHM* hs, NBHM_Table* table, uint32_t h, void* 
     return NULL;
 }
 
+static void* NBHM_FN(freeze_item)(NBHM* hs, NBHM_Table* table, uint32_t h, void* key) {
+    size_t cap = table->cap;
+    size_t first = NBHM_FN(hash2index)(table, h), i = first;
+    do {
+        void* v = atomic_load(&table->data[i].val);
+        void* k = atomic_load(&table->data[i].key);
+
+        if (k == NULL) {
+            return NULL;
+        } else if (NBHM_FN(cmp)(k, key)) {
+            // freeze the values by adding a prime bit.
+            while (((uintptr_t) v & NBHM_PRIME_BIT) == 0) {
+                uintptr_t primed_v = (v == &NBHM_TOMBSTONE ? 0 : (uintptr_t) v) | NBHM_PRIME_BIT;
+                if (atomic_compare_exchange_strong(&table->data[i].val, &v, (void*) primed_v)) {
+                    break;
+                }
+                // btw, CAS updated v
+            }
+            return v;
+        }
+
+        // inc & wrap around
+        i = (i == cap-1) ? 0 : i + 1;
+    } while (i != first);
+
+    return NULL;
+}
+
 static void* NBHM_FN(put_if_match)(NBHM* hs, NBHM_Table* latest, NBHM_Table* prev, void* key, void* val, void* exp) {
     assert(key);
 
@@ -404,7 +432,7 @@ static void* NBHM_FN(put_if_match)(NBHM* hs, NBHM_Table* latest, NBHM_Table* pre
         // "logically" moved it
         if (v == NULL && prev != NULL) {
             assert(prev->prev == NULL);
-            void* old = NBHM_FN(raw_lookup)(hs, prev, h, val);
+            void* old = NBHM_FN(freeze_item)(hs, prev, h, val);
             if (old != NULL) {
                 // the old value might've been primed, we don't want to propagate the prime bit tho
                 old = (void*) (((uintptr_t) old) & ~NBHM_PRIME_BIT);

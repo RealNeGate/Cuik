@@ -78,69 +78,72 @@ static const char keywords[][16] = {
 };
 
 static const uint8_t eq_classes[256] = {
-    [33] = 9,
-    [34] = 21,
-    [35] = 3,
-    [36] = 20,
-    [37] = 13,
-    [38] = 16,
-    [39] = 21,
-    [40 ... 41] = 2,
-    [42] = 11,
-    [43] = 14,
-    [44] = 2,
-    [45] = 17,
-    [46] = 8,
-    [47] = 12,
-    [48 ... 57] = 22,
-    [58 ... 59] = 2,
-    [60] = 18,
-    [61] = 3,
-    [62] = 19,
-    [63 ... 64] = 2,
-    [65 ... 90] = 20,
-    [91] = 2,
-    [93] = 2,
-    [94] = 10,
-    [95] = 20,
-    [97 ... 122] = 20,
-    [123] = 2,
-    [124] = 15,
-    [125 ... 126] = 2,
-    [192 ... 255] = 20,
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0x00
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0x10
+    0 , 14, 4 , 7 , 17, 14, 10, 4 , 5 , 5 , 14, 8 , 5 , 11, 13, 14, // 0x20
+    2 , 1 , 19, 19, 19, 19, 19, 19, 20, 20, 5 , 5 , 15, 6 , 12, 5 , // 0x30
+    5 , 18, 3 , 18, 18, 18, 18, 17, 17, 17, 17, 17, 16, 17, 17, 17, // 0x40
+    17, 17, 17, 17, 17, 17, 17, 17, 18, 17, 17, 5 , 0 , 5 , 14, 17, // 0x50
+    0 , 18, 3 , 18, 18, 18, 18, 17, 17, 17, 17, 17, 17, 17, 17, 17, // 0x60
+    17, 17, 17, 17, 17, 17, 17, 17, 18, 17, 17, 5 , 9 , 5 , 5 , 0 , // 0x70
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0x80
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0x90
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0xa0
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0xb0
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0xc0
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0xd0
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0xe0
+    0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , // 0xf0
 };
 
-static const uint8_t dfa[23][10] = {
-    [ 0] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [ 1] = {  0,  0,  1,  2,  0,  1,  1,  4,  8,  9 },
-    [ 2] = {  1,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [ 3] = {  2,  0,  0,  0,  1,  1,  1,  1,  0,  0 },
-    [ 4] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [ 5] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [ 6] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [ 7] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [ 8] = {  3,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [ 9] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [10] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [11] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [12] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [13] = {  4,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [14] = {  5,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [15] = {  5,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [16] = {  5,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [17] = {  6,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [18] = {  7,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [19] = {  7,  0,  0,  0,  0,  0,  1,  0,  0,  0 },
-    [20] = {  8,  0,  0,  0,  0,  0,  0,  0,  8,  9 },
-    [21] = {  1,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
-    [22] = {  9,  0,  0,  0,  0,  0,  0,  0,  8,  9 },
+static const uint8_t dfa[22][20] = {
+    [ 1] = { 15,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0, 13, 12, 13, 14, 15,  0,  0,  5,  0 },
+    [ 2] = { 11,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0, 13, 12, 13, 14, 15,  0,  0,  5,  0 },
+    [ 3] = {  5,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0, 14, 12,  0,  0,  0,  0,  0,  5,  0 },
+    [ 4] = {  3,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  3,  0 },
+    [ 5] = {  2,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 6] = {  1,  2,  0,  0,  0,  0,  2,  2,  2,  0,  0,  0,  0,  0,  0,  0,  2,  2,  0,  2 },
+    [ 7] = {  4,  0,  0,  0,  2,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 8] = {  7,  0,  0,  0,  0,  0,  0,  2,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [ 9] = { 19,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  2 },
+    [10] = {  6,  0,  0,  0,  0,  0,  2,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [11] = {  8,  0,  0,  0,  0,  0,  0,  0,  2,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [12] = { 17,  0,  0,  0,  0,  0,  0,  0,  2,  0,  0,  0,  0,  0,  0,  0,  0,  1,  0,  0 },
+    [13] = {  9,  0,  0,  0,  0,  0,  0,  0,  0, 10,  2,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [14] = {  1,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
+    [15] = { 16,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  0,  0,  0 },
+    [16] = { 18,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  5,  0 },
+    [17] = {  5,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  5,  0 },
+    [18] = {  5,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0, 12, 12,  0,  0,  0,  0,  0,  5,  0 },
+    [19] = { 15,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0, 13, 12, 13,  0, 15,  0,  0,  5,  0 },
+    [20] = { 15,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0,  0, 12,  0,  0, 15,  0,  0,  5,  0 },
+    [21] = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 },
 };
 
-static const uint8_t lexer_final_state[10] = {
+enum { L_ERROR, L_SIGIL, L_QUOTE, L_IDENT, L_NUMBER };
+static const uint8_t lexer_final_state[20] = {
+    [1] = L_SIGIL,
+    [2] = L_SIGIL,
+    [3] = L_QUOTE,
+    [4] = L_SIGIL,
+    [5] = L_IDENT,
+    [6] = L_SIGIL,
+    [7] = L_SIGIL,
+    [8] = L_SIGIL,
+    [9] = L_SIGIL,
+    [10] = L_SIGIL,
+    [11] = L_NUMBER,
+    [12] = L_NUMBER,
+    [13] = L_NUMBER,
+    [14] = L_NUMBER,
+    [15] = L_NUMBER,
+    [16] = L_SIGIL,
+    [17] = L_SIGIL,
+    [19] = L_SIGIL,
 };
 
 static bool lexer_is_space(int ch) {
-    uint64_t mask = (1ull << ' ') | (1ull << '\t') | (1ull << '\v') | (1ull << '\r') | (1ull << '\n') | (1ull << '/');
+    uint64_t mask = (1ull << ' ') | (1ull << '\t') | (1ull << '\v') | (1ull << '\r') | (1ull << '\n');
     return ch < 64 ? (mask >> ch) & 1 : false;
 }
 Token lexer_read(Lexer* restrict l) {
@@ -154,13 +157,30 @@ Token lexer_read(Lexer* restrict l) {
     retry: {
         // skip whitespace
         while (lexer_is_space(*current)) {
-            t.hit_line = *current++ == '\n';
+            t.hit_line |= *current++ == '\n';
         }
         // check for comments
         if (current[0] == '/' && current[1] == '/') {
-            __debugbreak();
+            current += 2;
+            // skip until whitespace
+            while (*current && *current != '\n') {
+                current++;
+            }
+            current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
+            t.hit_line = true;
+            goto retry;
         } else if (current[0] == '/' && current[1] == '*') {
-            __debugbreak();
+            current += 2;
+            // skip until comment end
+            while (current[0] && !(current[0] == '*' && current[1] == '/')) {
+                t.hit_line |= *current++ == '\n';
+            }
+            current += 2;
+            goto retry;
+        } else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
+            current += 1;
+            current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
+            goto retry;
         }
     }
     unsigned char* start = current;
@@ -178,7 +198,6 @@ Token lexer_read(Lexer* restrict l) {
             uint8_t ch = *current;
             // read convert to class (compresses the DFA a lot)
             uint8_t eq_class = eq_classes[ch];
-            if (ch == first) { eq_class = 1; }
             // eval DFA
             uint64_t next = dfa[eq_class][state];
             if (next == 0) break;
@@ -186,9 +205,31 @@ Token lexer_read(Lexer* restrict l) {
         }
     }
     uint64_t tag = lexer_final_state[state];
-    if (tag == 0) {
-        // these tokens are gonna get converted to real atoms
+    if (tag == L_IDENT) {
         t.atom = atoms_put(current - start, start);
+        t.type = TOKEN_IDENTIFIER;
+    } else if (tag == L_NUMBER) {
+        t.atom = atoms_put(current - start, start);
+        t.type = TOKEN_INTEGER;
+    } else if (tag == L_QUOTE) {
+        char quote_type = current[-1];
+        for (; *current && *current != quote_type; current++) {
+            // skip escape codes
+            if (*current == '\\') {
+                // this will skip twice because of the for loop's next
+                //  \  "  . . .
+                //  ^     ^
+                //  old   new
+                current += 1;
+            }
+        }
+        t.type = quote_type;
+        if (start[0] == 'L') {
+            t.type += 256;
+            start += 1;
+        }
+        t.atom = atoms_put(current - (start + 1), start + 1);
+        current += 1;
     } else {
         // these tokens have their contents embedded into the
         // Atom pointer.
@@ -198,7 +239,9 @@ Token lexer_read(Lexer* restrict l) {
         // potentially unaligned access :P
         uint32_t chars;
         memcpy(&chars, start, sizeof(uint32_t));
-        t.atom = (Atom) ((uintptr_t) (chars & mask) | (tag << 56ull));
+        // t.atom = (Atom) ((uintptr_t) (chars & mask) | (tag << 56ull));
+        t.atom = atoms_put(current - start, start);
+        t.type = chars & mask;
     }
     // NOTE(NeGate): the lexer will modify code to allow for certain patterns
     // if we wanna get rid of this we should make virtual code regions

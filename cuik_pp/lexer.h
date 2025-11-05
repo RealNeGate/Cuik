@@ -89,14 +89,7 @@ typedef enum TknType {
     TOKEN_RIGHT_SHIFT_EQUAL = TKN3('>', '>', '='),
     TOKEN_INCREMENT         = TKN2('+', '+'),
     TOKEN_DECREMENT         = TKN2('-', '-'),
-
-    // Keywords (they start far higher up to avoid problems)
-    #include "keywords.h"
 } TknType;
-
-enum {
-    FIRST_GLSL_KEYWORD = TOKEN_KW_discard
-};
 
 #undef TKN2
 #undef TKN3
@@ -176,8 +169,8 @@ static bool tokens_hit_line(TokenStream* restrict s) {
 }
 
 static bool tokens_eof(TokenStream* restrict s) {
-    return s->list.current >= dyn_array_length(s->list.tokens) - 1;
-    // return s->list.tokens[s->list.current].type == 0;
+    // return s->list.current >= dyn_array_length(s->list.tokens) - 1;
+    return s->list.tokens[s->list.current].type == 0;
 }
 
 static bool tokens_is(TokenStream* restrict s, TknType type) {
