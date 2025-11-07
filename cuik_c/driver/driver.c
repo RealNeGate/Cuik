@@ -709,7 +709,7 @@ void cuikpp_dump_tokens(TokenStream* s) {
         }
 
         // Normal token printing
-        printf("%s", t->atom);
+        printf("%.*s", (int) t->content.length, t->content.data);
     }
     printf("\n");
 }

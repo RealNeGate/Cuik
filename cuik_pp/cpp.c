@@ -22,11 +22,12 @@
 #endif
 
 #define CUIK__CPP_STATS 0
+#define MACRO_DEF_TOMBSTONE SIZE_MAX
 
 typedef struct {
     // if non-zero length, this holds the macro
     // that is queried for the guard.
-    Atom name;
+    String name;
     // if true, the header is only included if the
     // name is a defined macro.
     bool expected;
@@ -35,6 +36,12 @@ typedef struct {
 enum {
     CPP_MAX_SCOPE_DEPTH = 4096,
 };
+
+typedef struct {
+    String key;
+    String value;
+    SourceLoc loc;
+} MacroDef;
 
 struct Cuik_CPP {
     Cuik_Version version;
@@ -108,7 +115,7 @@ typedef enum {
 } LocateResult;
 
 // GOD I HATE FORWARD DECLARATIONS
-static bool is_defined(Cuik_CPP* restrict c, Atom atom);
+static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length);
 static void expect(TokenArray* restrict in, char ch);
 static intmax_t eval(Cuik_CPP* restrict c, Lexer* restrict in);
 
@@ -142,9 +149,31 @@ typedef struct CPPStackSlot {
             INCLUDE_GUARD_EXPECTING_NOTHING,
         } status;
         int if_depth; // the depth value we expect the include guard to be at
-        Atom define;
+        String define;
     } include_guard;
 } CPPStackSlot;
+
+// just the value (doesn't track the name of the parameter)
+typedef struct {
+    // for the first token
+    TknType type;
+    String key;
+    String val;
+    SourceRange loc;
+
+    // location in the local token cache of the expanded macros
+    int token_start, token_end;
+} MacroArg;
+
+typedef struct {
+    int key_count;
+    String* keys;
+
+    int value_count;
+    MacroArg* values;
+
+    bool has_varargs;
+} MacroArgs;
 
 static Token peek(TokenArray* restrict in) {
     return in->tokens[in->current];
@@ -167,9 +196,14 @@ static void expect_from_lexer(Cuik_CPP* c, Lexer* l, char ch) {
     Token t = lexer_read(l);
     if (t.type != ch) {
         ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t.location);
-        fprintf(stderr, "error %s:%d: expected '%c' got '%s'", r.file->filename, r.line, ch, t.atom);
+
+        fprintf(stderr, "error %s:%d: expected '%c' got '%.*s'", r.file->filename, r.line, ch, (int) t.content.length, t.content.data);
         abort();
     }
+}
+
+static String get_token_as_string(TokenStream* restrict in) {
+    return tokens_get(in)->content;
 }
 
 static LocateResult locate_file(Cuik_CPP* ctx, bool search_lib_first, const Cuik_Path* restrict dir, const char* og_path, Cuik_Path* restrict canonical) {
@@ -215,57 +249,10 @@ static LocateResult locate_file(Cuik_CPP* ctx, bool search_lib_first, const Cuik
 // easy to check for empty string which aren't NULL.
 static const char MAGIC_EMPTY_STRING[] = "";
 
-// lmao consensus object, it'll get slammed with the same value.
-static _Atomic(Atom) atom___COUNTER__;
-static _Atomic(Atom) atom___LINE__;
-static _Atomic(Atom) atom___FILE__;
-static _Atomic(Atom) atom_L__FILE__;
-static _Atomic(Atom) atom_defined;
-static _Atomic(Atom) atom_if;
-static _Atomic(Atom) atom_ifdef;
-static _Atomic(Atom) atom_ifndef;
-static _Atomic(Atom) atom_elif;
-static _Atomic(Atom) atom_else;
-static _Atomic(Atom) atom_endif;
-static _Atomic(Atom) atom_undef;
-static _Atomic(Atom) atom_pragma;
-static _Atomic(Atom) atom_define;
-static _Atomic(Atom) atom_message;
-static _Atomic(Atom) atom_include;
-static _Atomic(Atom) atom_once;
-
 // include this if you want to enable the preprocessor debugger
 // #include "cpp_dbg.h"
 
 #include "atoms.c"
-
-typedef struct {
-    Atom key;
-    String value;
-    const unsigned char* params;
-    SourceLoc loc;
-} MacroDef;
-
-// just the value (doesn't track the name of the parameter)
-typedef struct {
-    // for the first token
-    TknType type;
-    Atom key;
-    SourceRange loc;
-
-    // location in the local token cache of the expanded macros
-    int token_start, token_end;
-} MacroArg;
-
-typedef struct {
-    int key_count;
-    Atom* keys;
-
-    int value_count;
-    MacroArg* values;
-
-    bool has_varargs;
-} MacroArgs;
 
 // Basically a mini-unity build that takes up just the CPP module
 #include "cpp_symtab.h"
@@ -322,24 +309,6 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
     // FileID 0 is the builtin macro file or the NULL file depending on who you ask
     dyn_array_put(ctx->tokens.files, (Cuik_FileEntry){ .filename = "<builtin>", .content_length = (1u << SourceLoc_FilePosBits) - 1u });
     tls_init();
-
-    atomic_store_explicit(&atom___COUNTER__, atoms_putc("__COUNTER__"), memory_order_relaxed);
-    atomic_store_explicit(&atom___LINE__, atoms_putc("__LINE__"), memory_order_relaxed);
-    atomic_store_explicit(&atom___FILE__, atoms_putc("__FILE__"), memory_order_relaxed);
-    atomic_store_explicit(&atom_L__FILE__, atoms_putc("L__FILE__"), memory_order_relaxed);
-    atomic_store_explicit(&atom_defined, atoms_putc("defined"), memory_order_relaxed);
-    atomic_store_explicit(&atom_if, atoms_putc("if"), memory_order_relaxed);
-    atomic_store_explicit(&atom_ifdef, atoms_putc("ifdef"), memory_order_relaxed);
-    atomic_store_explicit(&atom_ifndef, atoms_putc("ifndef"), memory_order_relaxed);
-    atomic_store_explicit(&atom_elif, atoms_putc("elif"), memory_order_relaxed);
-    atomic_store_explicit(&atom_else, atoms_putc("else"), memory_order_relaxed);
-    atomic_store_explicit(&atom_endif, atoms_putc("endif"), memory_order_relaxed);
-    atomic_store_explicit(&atom_undef, atoms_putc("undef"), memory_order_relaxed);
-    atomic_store_explicit(&atom_pragma, atoms_putc("pragma"), memory_order_relaxed);
-    atomic_store_explicit(&atom_define, atoms_putc("define"), memory_order_relaxed);
-    atomic_store_explicit(&atom_message, atoms_putc("message"), memory_order_relaxed);
-    atomic_store_explicit(&atom_include, atoms_putc("include"), memory_order_relaxed);
-    atomic_store_explicit(&atom_once, atoms_putc("once"), memory_order_relaxed);
 
     {
         ctx->stack_ptr = 1;
@@ -650,24 +619,25 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                 if (first.type == TOKEN_HASH) {
                     break;
                 } else if (first.type == TOKEN_IDENTIFIER) {
-                    MacroDef* def = find_define(ctx, first.atom);
+                    MacroDef* def = find_define(ctx, first.content.data, first.content.length);
                     if (def != NULL) {
                         int start = dyn_array_length(ctx->tokens.list.tokens);
                         push_token(ctx, first);
 
-                        cuikperf_region_start2("expand", atoms_len(first.atom), first.atom);
+                        cuikperf_region_start2("expand", first.content.length, (const char*) first.content.data);
                         expand_identifier(ctx, in, NULL, start, start+1, 0, def, 0, NULL);
                         cuikperf_region_end();
 
                         // classify any newly-generated identifiers
-                        /* DynArray(Token) tokens = ctx->tokens.list.tokens;
+                        DynArray(Token) tokens = ctx->tokens.list.tokens;
                         FOR_N(i, start, dyn_array_length(tokens)) {
                             if (tokens[i].type == TOKEN_IDENTIFIER) {
                                 tokens[i].type = classify_ident(tokens[i].content.data, tokens[i].content.length, is_glsl);
                             }
-                        } */
+                            // diag_note(s, get_token_range(&tokens[i]), "A");
+                        }
                     } else {
-                        // first.type = classify_ident(first.content.data, first.content.length, is_glsl);
+                        first.type = classify_ident(first.content.data, first.content.length, is_glsl);
                         push_token(ctx, first);
                     }
                 } else {
@@ -680,17 +650,18 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
 
             // Slow code, defines
             DirectiveResult result = DIRECTIVE_UNKNOWN;
+            String directive = first.content;
 
             // shorthand for calling the directives in cpp_directive.h
-            #define MATCH(str)                                                              \
-            if (first.atom == atomic_load_explicit(&atom_ ## str,  memory_order_relaxed)) { \
-                result = cpp__ ## str(ctx, slot, in);                                       \
-                break;                                                                      \
+            #define MATCH(str)                                         \
+            if (memcmp(directive.data, #str, sizeof(#str) - 1) == 0) { \
+                result = cpp__ ## str(ctx, slot, in);                  \
+                break;                                                 \
             }
 
             // all the directives go here
-            cuikperf_region_start2("directive", atoms_len(first.atom), first.atom);
-            switch (atoms_len(first.atom)) {
+            cuikperf_region_start2("directive", first.content.length, (const char*) first.content.data);
+            switch (directive.length) {
                 case 2:
                 MATCH(if);
                 break;
@@ -736,7 +707,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                 return CUIKPP_ERROR;
             } else if (result == DIRECTIVE_UNKNOWN) {
                 SourceRange r = get_token_range(&first);
-                diag_err(s, r, "unknown directive %s", first.atom);
+                diag_err(s, r, "unknown directive %_S", directive);
                 return CUIKPP_ERROR;
             }
         }

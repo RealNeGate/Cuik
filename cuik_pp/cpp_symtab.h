@@ -2,19 +2,24 @@
 
 static bool macro_def_compare(void* a, void* b) {
     MacroDef *x = a, *y = b;
-    assert(y->key != NULL);
-    return x->key && x->key == y->key;
+
+    assert(y->key.length != MACRO_DEF_TOMBSTONE);
+    if (x->key.length == MACRO_DEF_TOMBSTONE) {
+        return false;
+    }
+
+    return string_equals(&x->key, &y->key);
 }
 
 static uint32_t macro_def_hash(void* a) {
     MacroDef *x = a;
-    assert(x->key != NULL);
-    return tb__murmur3_32((const unsigned char*) &x->key, sizeof(x->key));
+    assert(x->key.length != MACRO_DEF_TOMBSTONE);
+    return tb__murmur3_32((const unsigned char*) x->key.data, x->key.length);
 }
 
-static MacroDef* insert_symtab(Cuik_CPP* ctx, Atom key) {
+static MacroDef* insert_symtab(Cuik_CPP* ctx, size_t len, const char* key) {
     MacroDef* def = tb_arena_alloc(&ctx->perm_arena, sizeof(MacroDef));
-    *def = (MacroDef){ .key = key };
+    *def = (MacroDef){ .key = { len, (const unsigned char*) key } };
 
     void* actual_def = nl_hashset_put2(&ctx->macros, def, macro_def_hash, macro_def_compare);
     if (actual_def == NULL) {
@@ -50,7 +55,7 @@ void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
     while ((paren - newkey) < keylen && *paren != '(') paren++;
     keylen = *paren == '(' ? paren - newkey : keylen;
 
-    insert_symtab(ctx, atoms_put(keylen, (const unsigned char*) newkey));
+    insert_symtab(ctx, keylen, newkey);
 }
 
 void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
@@ -77,7 +82,7 @@ void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen,
         memset(newvalue + vallen, 0, rem);
     }
 
-    MacroDef* def = insert_symtab(ctx, atoms_put(keylen, (const unsigned char*) newkey));
+    MacroDef* def = insert_symtab(ctx, len, newkey);
     def->value = (String){ vallen, newvalue };
 }
 
@@ -86,7 +91,7 @@ void cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
 }
 
 void cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
-    MacroDef def = { .key = atoms_put(keylen, (const unsigned char*) key) };
+    MacroDef def = { .key = { keylen, (const unsigned char*) key } };
     nl_hashset_remove2(&ctx->macros, &def, macro_def_hash, macro_def_compare);
 }
 
@@ -117,12 +122,12 @@ static bool memory_equals16(const unsigned char* src1, const unsigned char* src2
     #endif
 }
 
-static MacroDef* find_define(Cuik_CPP* restrict ctx, Atom key) {
+static MacroDef* find_define(Cuik_CPP* restrict ctx, const unsigned char* start, size_t length) {
     #if CUIK__CPP_STATS
     uint64_t start_ns = cuik_time_in_nanos();
     #endif
 
-    MacroDef def = { .key = key };
+    MacroDef def = { .key = { length, start } };
     MacroDef* actual_def = nl_hashset_get2(&ctx->macros, &def, macro_def_hash, macro_def_compare);
 
     #if CUIK__CPP_STATS
@@ -135,33 +140,31 @@ static MacroDef* find_define(Cuik_CPP* restrict ctx, Atom key) {
 }
 
 bool cuikpp_find_define_cstr(Cuik_CPP* restrict ctx, Cuik_DefineIter* out_ref, const char* key) {
-    Atom atom = atoms_putc(key);
-    MacroDef* def = find_define(ctx, atom);
+    MacroDef* def = find_define(ctx, (const unsigned char*) key, strlen(key));
     out_ref->loc = def->loc;
-    out_ref->key = (String){ atoms_len(atom), (const unsigned char*) atom };
+    out_ref->key = def->key;
     out_ref->value = def->value;
     return true;
 }
 
 bool cuikpp_find_define(Cuik_CPP* restrict ctx, Cuik_DefineIter* out_ref, size_t keylen, const char key[]) {
-    Atom atom = atoms_put(keylen, (const unsigned char*) key);
-    MacroDef* def = find_define(ctx, atom);
+    MacroDef* def = find_define(ctx, (const unsigned char*) key, keylen);
     out_ref->loc = def->loc;
-    out_ref->key = (String){ atoms_len(atom), (const unsigned char*) atom };
+    out_ref->key = def->key;
     out_ref->value = def->value;
     return true;
 }
 
-static bool is_defined(Cuik_CPP* restrict c, Atom atom) {
-    return find_define(c, atom);
+static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length) {
+    return find_define(c, start, length);
 }
 
-static Atom hide_macro(Cuik_CPP* restrict c, MacroDef* def) {
-    Atom saved = def->key;
-    def->key = NULL;
+static size_t hide_macro(Cuik_CPP* restrict c, MacroDef* def) {
+    size_t saved = def->key.length;
+    def->key.length = MACRO_DEF_TOMBSTONE;
     return saved;
 }
 
-static void unhide_macro(Cuik_CPP* restrict c, MacroDef* def, Atom saved) {
-    def->key = saved;
+static void unhide_macro(Cuik_CPP* restrict c, MacroDef* def, size_t saved) {
+    def->key.length = saved;
 }

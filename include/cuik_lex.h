@@ -106,21 +106,20 @@ typedef struct {
     uint32_t* line_map;
 } Cuik_FileEntry;
 
-typedef char* Atom;
 typedef struct Token {
-    Atom atom;
-
+    // it's a TknType but GCC doesn't like incomplete enums
     uint32_t type      : 29;
     uint32_t expanded  : 1;
     uint32_t hit_line  : 1;
     uint32_t has_space : 1;
 
     SourceLoc location;
+    String content;
 } Token;
 
 // This is what MacroIDs refer to
 typedef struct MacroInvoke {
-    Atom name;
+    String name;
 
     uint32_t depth;
     // 0 means it's got no parent

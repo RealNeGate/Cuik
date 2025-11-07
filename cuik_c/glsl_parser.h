@@ -1,4 +1,7 @@
 
+#define X(name) static Atom atom_ ## name;
+#include "pseudo_keywords.h"
+
 static int parse_glsl_layout_attrib(TokenStream* restrict s, const SourceRange* r, Atom key, intmax_t value) {
     if (value < 0) {
         diag_err(s, *r, "layout '%s' cannot be negative or missing.", key);
@@ -50,7 +53,7 @@ static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, Token
                     SourceLoc start = tokens_get_location(s);
 
                     Token* t = tokens_get(s);
-                    Atom key = t->atom;
+                    Atom key = atoms_put(t->content.length, t->content.data);
                     tokens_next(s);
 
                     intmax_t value = -1;
@@ -128,7 +131,7 @@ static Cuik_Type* parse_glsl_type(Cuik_Parser* restrict parser, TokenStream* res
         case TOKEN_KW_ivec4: return cuik__new_vector2(&parser->types, int_type, 4);
 
         default:
-        diag_err(s, get_token_range(t), "unknown type name '%s'. https://www.khronos.org/opengl/wiki/Data_Type_(GLSL)", t->atom);
+        diag_err(s, get_token_range(t), "unknown type name. https://www.khronos.org/opengl/wiki/Data_Type_(GLSL)", t->content);
         return NULL;
     }
 }

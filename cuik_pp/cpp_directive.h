@@ -18,22 +18,24 @@ typedef enum {
 static DirectiveResult skip_directive_body(Lexer* restrict in) {
     int depth = 0;
 
-    unsigned char* savepoint = in->current;
     Token t = lexer_read(in);
     while (t.type) {
         if (t.type == '#') {
+            unsigned char* savepoint = (unsigned char*) t.content.data;
             t = lexer_read(in);
 
             if (t.type == TOKEN_IDENTIFIER) {
-                if (t.atom == atom_if || t.atom == atom_ifdef || t.atom == atom_ifndef) {
+                if (string_equals_cstr(&t.content, "if") ||
+                    string_equals_cstr(&t.content, "ifdef") ||
+                    string_equals_cstr(&t.content, "ifndef")) {
                     depth++;
-                } else if (t.atom == atom_elif || t.atom == atom_else) {
+                } else if (string_equals_cstr(&t.content, "elif") || string_equals_cstr(&t.content, "else")) {
                     // else/elif does both entering a scope and exiting one
                     if (depth == 0) {
                         in->current = savepoint;
                         return DIRECTIVE_SUCCESS;
                     }
-                } else if (t.atom == atom_endif) {
+                } else if (string_equals_cstr(&t.content, "endif")) {
                     if (depth == 0) {
                         // revert both the identifier and hash
                         in->current = savepoint;
@@ -43,7 +45,6 @@ static DirectiveResult skip_directive_body(Lexer* restrict in) {
                 }
             }
         } else {
-            savepoint = in->current;
             t = lexer_read(in);
         }
     }
@@ -55,14 +56,9 @@ static DirectiveResult skip_directive_body(Lexer* restrict in) {
 
 static void warn_if_newline(Lexer* restrict in) {
     Token t;
-    for (;;) {
-        unsigned char* savepoint = in->current;
-        t = lexer_read(in);
-        if (t.type == 0 || t.hit_line) {
-            in->current = savepoint;
-            break;
-        }
+    while (t = lexer_read(in), t.type && !t.hit_line) {
     }
+    in->current = (unsigned char*) t.content.data;
 }
 
 static SourceRange get_pp_tokens_until_newline(Cuik_CPP* ctx, Lexer* in) {
@@ -95,17 +91,17 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
     if (key.type != TOKEN_IDENTIFIER) {
         SourceRange r = { key_loc, get_end_location(&key) };
-        diag_err(&ctx->tokens, r, "expected identifier, got '%s'", key.atom);
+        diag_err(&ctx->tokens, r, "expected identifier");
         return DIRECTIVE_ERROR;
     }
 
     // if there's a parenthesis directly after the identifier
-    const unsigned char* params = NULL;
-    if (*in->current == '(') {
-        params = in->current;
-        Token t = lexer_read(in);
-
+    // it's a macro function... yes this is an purposeful off-by-one
+    // it's mostly ok tho
+    Token t = lexer_read(in);
+    if (key.content.data[key.content.length] == '(') {
         t = lexer_read(in);
+
         int arg_count = 0;
         while (t.type != 0 && t.type != ')') {
             if (arg_count) {
@@ -118,7 +114,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
             if (t.type != TOKEN_TRIPLE_DOT && t.type != TOKEN_IDENTIFIER) {
                 SourceRange r = { t.location, get_end_location(&t) };
-                diag_err(&ctx->tokens, r, "expected identifier, got '%s'", t.atom);
+                diag_err(&ctx->tokens, r, "expected identifier");
                 return DIRECTIVE_ERROR;
             } else {
                 arg_count++;
@@ -126,34 +122,40 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
             t = lexer_read(in);
         }
+
+        t = lexer_read(in);
     }
 
-    const unsigned char* start = in->current;
-    SourceLoc loc = encode_file_loc(in->file_id, start - in->start);
+    SourceLoc loc = t.location;
+    const unsigned char* start = t.content.data;
 
     #if USE_INTRIN && CUIK__IS_X64
     // SIMD whitespace skip
-    const unsigned char* end = start;
-    for (;;) {
-        if (*end == '\n') {
-            if (end[-1] == '\\' || (end[-1] == '\r' && end[-2] == '\\')) {
-                end += 1;
-            } else {
-                break;
+    const unsigned char* end = t.content.data;
+    if (!t.hit_line) {
+        end += t.content.length;
+
+        for (;;) {
+            if (*end == '\n') {
+                if (end[-1] == '\\' || (end[-1] == '\r' && end[-2] == '\\')) {
+                    end += 1;
+                } else {
+                    break;
+                }
             }
+
+            __m128i chars = _mm_loadu_si128((__m128i*) end);
+            __m128i mask = _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'));
+
+            uint32_t bits = _mm_movemask_epi8(mask);
+            if (bits == 0) {
+                end += 16;
+                continue;
+            }
+
+            int len = __builtin_ffs(bits);
+            end += len-1;
         }
-
-        __m128i chars = _mm_loadu_si128((__m128i*) end);
-        __m128i mask = _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'));
-
-        uint32_t bits = _mm_movemask_epi8(mask);
-        if (bits == 0) {
-            end += 16;
-            continue;
-        }
-
-        int len = __builtin_ffs(bits);
-        end += len-1;
     }
     #else
     while (t.type && !t.hit_line) {
@@ -168,10 +170,9 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     // printf("%.*s -> %.*s\n", (int)key.content.length, key.content.data, (int) (end - start), start);
 
     cuikperf_region_start("insert", NULL);
-    MacroDef* def = insert_symtab(ctx, key.atom);
+    MacroDef* def = insert_symtab(ctx, key.content.length, (const char*) key.content.data);
     def->value = (String){ end - start, start };
     def->loc = loc;
-    def->params = params;
     cuikperf_region_end();
 
     return DIRECTIVE_SUCCESS;
@@ -195,11 +196,11 @@ static DirectiveResult cpp__ifdef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     Token t = lexer_read(in);
     SourceRange r = get_token_range(&t);
     if (t.type != TOKEN_IDENTIFIER) {
-        diag_err(&ctx->tokens, r, "expected identifier, got '%s'", t.atom);
+        diag_err(&ctx->tokens, r, "expected identifier");
         return DIRECTIVE_ERROR;
     }
 
-    if (is_defined(ctx, t.atom)) {
+    if (is_defined(ctx, t.content.data, t.content.length)) {
         if (!push_scope(ctx, r, true)) return DIRECTIVE_ERROR;
     } else {
         if (!push_scope(ctx, r, false)) return DIRECTIVE_ERROR;
@@ -214,17 +215,17 @@ static DirectiveResult cpp__ifndef(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     Token t = lexer_read(in);
     SourceRange r = get_token_range(&t);
     if (t.type != TOKEN_IDENTIFIER) {
-        diag_err(&ctx->tokens, r, "expected identifier, got '%s'", t.atom);
+        diag_err(&ctx->tokens, r, "expected identifier");
         return DIRECTIVE_ERROR;
     }
 
-    if (!is_defined(ctx, t.atom)) {
+    if (!is_defined(ctx, t.content.data, t.content.length)) {
         if (!push_scope(ctx, r, true)) return DIRECTIVE_ERROR;
 
         // if we don't skip the body then maybe just maybe it's a guard macro
         if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_IF) {
             slot->include_guard.status = INCLUDE_GUARD_LOOKING_FOR_ENDIF;
-            slot->include_guard.define = t.atom;
+            slot->include_guard.define = t.content;
             slot->include_guard.if_depth = ctx->depth;
         }
     } else {
@@ -267,7 +268,7 @@ static DirectiveResult cpp__else(Cuik_CPP* restrict ctx, CPPStackSlot* restrict 
 static DirectiveResult cpp__endif(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, Lexer* restrict in) {
     SourceRange r = get_token_range(&ctx->directive_token);
     if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_ENDIF && slot->include_guard.if_depth == ctx->depth) {
-        if (!is_defined(ctx, slot->include_guard.define)) {
+        if (!is_defined(ctx, slot->include_guard.define.data, slot->include_guard.define.length)) {
             // the ifndef's macro needs to stay defined or else the include guard doesn't make sense
             slot->include_guard.status = INCLUDE_GUARD_INVALID;
         } else {
@@ -283,12 +284,11 @@ static DirectiveResult cpp__undef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     Token key = lexer_read(in);
     if (key.type != TOKEN_IDENTIFIER) {
         SourceRange r = { key.location, get_end_location(&key) };
-        diag_err(&ctx->tokens, r, "expected identifier, got '%s'", key.atom);
+        diag_err(&ctx->tokens, r, "expected identifier");
         return DIRECTIVE_ERROR;
     }
 
-    MacroDef def = { .key = key.atom };
-    nl_hashset_remove2(&ctx->macros, &def, macro_def_hash, macro_def_compare);
+    cuikpp_undef(ctx, key.content.length, (const char*) key.content.data);
     return DIRECTIVE_SUCCESS;
 }
 
@@ -298,17 +298,13 @@ static char* parse_directive_path(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     // place all the tokens on this line into the buffer to be expanded
     Token t;
     for (;;) {
-        unsigned char* savepoint = in->current;
         t = lexer_read(in);
-        if (t.type == 0 || t.hit_line) {
-            in->current = savepoint;
-            break;
-        }
+        if (t.type == 0 || t.hit_line) { break; }
         push_token(ctx, t);
 
         size_t def_i;
         if (t.type == TOKEN_IDENTIFIER) {
-            MacroDef* def = find_define(ctx, t.atom);
+            MacroDef* def = find_define(ctx, t.content.data, t.content.length);
             if (def != NULL) {
                 int head = dyn_array_length(ctx->tokens.list.tokens);
                 expand_identifier(ctx, in, NULL, head-1, head, 0, def, 0, NULL);
@@ -318,6 +314,7 @@ static char* parse_directive_path(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
 
     // revert to before the line
     int end = dyn_array_length(ctx->tokens.list.tokens);
+    in->current = (unsigned char*) t.content.data;
 
     size_t len = 0;
     char* filename = tb_arena_alloc(&ctx->perm_arena, FILENAME_MAX);
@@ -338,13 +335,13 @@ static char* parse_directive_path(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
             Token t = tokens[i];
             if (t.type == '>') { break; }
 
-            if (len + atoms_len(t.atom) >= FILENAME_MAX) {
+            if (len + t.content.length >= FILENAME_MAX) {
                 diag_err(&ctx->tokens, get_token_range(&t), "filename too long!");
                 return NULL;
             }
 
-            memcpy(&filename[len], t.atom, atoms_len(t.atom));
-            len += atoms_len(t.atom);
+            memcpy(&filename[len], t.content.data, t.content.length);
+            len += t.content.length;
         }
 
         // slap that null terminator on it like a boss bitch (i hate C strings)
@@ -360,13 +357,13 @@ static char* parse_directive_path(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
 
         int i = start;
         do {
-            size_t piece_len = atoms_len(tokens[i].atom);
+            size_t piece_len = tokens[i].content.length - 2;
             if (len+piece_len >= FILENAME_MAX) {
                 diag_err(&ctx->tokens, get_token_range(&tokens[i]), "filename too long!");
                 return NULL;
             }
 
-            memcpy(filename+len, tokens[i].atom, piece_len);
+            memcpy(filename+len, tokens[i].content.data + 1, piece_len);
             len += piece_len;
         } while (++i < end && tokens[i].type == TOKEN_STRING_DOUBLE_QUOTE);
         filename[len] = '\0';
@@ -406,7 +403,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     ptrdiff_t search = nl_map_get_cstr(ctx->include_once, canonical.data);
     if (search >= 0) {
         IncludeGuardEntry* guard = &ctx->include_once[search].v;
-        if (guard->name == NULL || is_defined(ctx, guard->name) == guard->expected) {
+        if (guard->name.length == 0 || is_defined(ctx, guard->name.data, guard->name.length) == guard->expected) {
             if (cuikperf_is_active()) {
                 cuikperf_region_end();
             }
@@ -463,56 +460,50 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
 // 'pragma' PP-TOKENS[OPT] NEWLINE
 static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, Lexer* restrict in) {
     TokenStream* restrict s = &ctx->tokens;
-    unsigned char* savepoint = in->current;
 
     Token t = lexer_read(in);
     SourceLoc loc = t.location;
-    Atom pragma_type = t.atom;
+    String pragma_type = t.content;
 
-    if (pragma_type == atomic_load_explicit(&atom_once, memory_order_relaxed)) {
+    if (string_equals_cstr(&pragma_type, "once")) {
         IncludeGuardEntry e = { 0 };
         nl_map_put_cstr(ctx->include_once, slot->filepath->data, e);
 
         // We gotta hit a line by now
         warn_if_newline(in);
-    } else if (pragma_type == atomic_load_explicit(&atom_message, memory_order_relaxed)) {
-        savepoint = in->current;
+    } else if (string_equals_cstr(&pragma_type, "message")) {
         t = lexer_read(in);
 
         int start = dyn_array_length(ctx->tokens.list.tokens);
         while (t.type && !t.hit_line) {
             push_token(ctx, t);
-
-            savepoint = in->current;
             t = lexer_read(in);
         }
-        in->current = savepoint;
+        in->current = (unsigned char*) t.content.data;
 
         SourceRange r = get_token_range(&ctx->directive_token);
         Token t = quote_token_array(ctx, loc, start, dyn_array_length(ctx->tokens.list.tokens));
-        diag_note(s, r, "%s", t.atom);
+        diag_note(s, r, "%!S", t.content);
     } else {
         // convert to #pragma blah => _Pragma("blah")
-        Token t2 = { .type = TOKEN_IDENTIFIER, .location = loc, .atom = atoms_putc("_Pragma") };
+        Token t2 = { TOKEN_KW_Pragma, .location = loc, .content = string_cstr("_Pragma") };
         push_token(ctx, t2);
 
-        t2 = (Token){ .type = '(', .location = loc, .atom = atoms_putc("(") };
+        t2 = (Token){ '(', .location = loc, .content = string_cstr("(") };
         push_token(ctx, t2);
 
         int start = dyn_array_length(ctx->tokens.list.tokens);
         while (t.type && !t.hit_line) {
             push_token(ctx, t);
-
-            savepoint = in->current;
             t = lexer_read(in);
         }
-        in->current = savepoint;
+        in->current = (unsigned char*) t.content.data;
 
         t = quote_token_array(ctx, loc, start, dyn_array_length(ctx->tokens.list.tokens));
         dyn_array_set_length(ctx->tokens.list.tokens, start);
         push_token(ctx, t);
 
-        t2 = (Token){ .type = ')', .location = loc, .atom = atoms_putc(")") };
+        t2 = (Token){ ')', .location = loc, .content = string_cstr(")") };
         push_token(ctx, t2);
     }
 

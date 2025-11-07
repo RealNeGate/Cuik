@@ -1,4 +1,3 @@
-
 static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restrict s) {
     if (tokens_get(s)->type != TOKEN_KW_Pragma) {
         return NO_PARSE;
@@ -14,10 +13,10 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
 
     // Slap it into a proper C string so we don't accidentally
     // walk off the end and go random places
-    size_t len = atoms_len(tokens_get(s)->atom) - 1;
+    size_t len = (tokens_get(s)->content.length) - 1;
     unsigned char* out = tls_push(len);
     {
-        const char* in = tokens_get(s)->atom;
+        const char* in = (const char*) tokens_get(s)->content.data;
 
         size_t out_i = 0, in_i = 1;
         while (in_i < len) {
@@ -37,7 +36,8 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
     }
 
     Lexer pragma_lex = { 0, 0, out, out };
-    if (lexer_read(&pragma_lex).atom == atom_comment) {
+    String pragma_name = lexer_read(&pragma_lex).content;
+    if (string_equals_cstr(&pragma_name, "comment")) {
         // https://learn.microsoft.com/en-us/cpp/preprocessor/comment-c-cpp?view=msvc-170
         //   'comment' '(' comment-type [ ',' "comment-string" ] ')'
         // supported comment types:
@@ -48,7 +48,7 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
         }
 
         String comment_string = { 0 };
-        Atom comment_type = lexer_read(&pragma_lex).atom;
+        String comment_type = lexer_read(&pragma_lex).content;
 
         t = lexer_read(&pragma_lex);
         if (t.type == ',') {
@@ -57,7 +57,9 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
                 diag_err(s, tokens_get_range(s), "expected string literal");
             }
 
-            comment_string = (String){ atoms_len(t.atom) - 2, (const unsigned char*) t.atom + 1 };
+            comment_string = t.content;
+            comment_string.length -= 2;
+            comment_string.data += 1;
 
             t = lexer_read(&pragma_lex);
             while (t.type == TOKEN_STRING_DOUBLE_QUOTE) {
@@ -69,9 +71,9 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
             diag_err(s, tokens_get_range(s), "expected )");
         }
 
-        if (comment_type == atom_linker) {
+        if (string_equals_cstr(&comment_type, "linker")) {
             // TODO(NeGate): implement /linker, it just passes arguments to the linker
-        } else if (comment_type == atom_lib) {
+        } else if (string_equals_cstr(&comment_type, "lib")) {
             if (comment_string.length == 0) {
                 diag_err(s, tokens_get_range(s), "pragma comment lib expected lib name");
             }
@@ -141,12 +143,12 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
         SourceLoc opening_loc = tokens_get_location(s);
         expect_char(s, '(');
 
-        if (tokens_match(s, atom_noreturn)) {
+        if (tokens_match(s, sizeof("noreturn")-1, "noreturn")) {
             attr.is_noret = true;
             tokens_next(s);
 
             expect_closing_paren(s, opening_loc);
-        } else if (tokens_match(s, atom_noinline)) {
+        } else if (tokens_match(s, sizeof("noinline")-1, "noinline")) {
             attr.is_noinline = true;
             tokens_next(s);
 
@@ -186,11 +188,8 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     //
     // init-declarator:
     //   declarator ('=' initializer)?
-static int hhh = 0;
     bool has_semicolon = true;
     while (!tokens_eof(s) && tokens_get(s)->type != ';') {
-        hhh++;
-
         size_t start_decl_token = s->list.current;
         Decl decl = parse_declarator2(parser, s, type, false);
 
@@ -477,13 +476,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     TB_Arena arena;
     tb_arena_create(&arena, "Parse");
 
-    if (atom_noreturn == NULL) {
-        atom_noreturn = atoms_putc("noreturn");
-
-        #define X(name) atom_ ## name = atoms_putc(#name);
-        #include "pseudo_keywords.h"
-    }
-
     int r;
     Cuik_Parser parser = { 0 };
     parser.version = version;
@@ -502,6 +494,11 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
 
     parser.symbols = cuik_symtab_create(NULL);
     parser.tags = cuik_symtab_create(&(Cuik_Type*){ NULL });
+
+    if (parser.version == CUIK_VERSION_GLSL) {
+        #define X(name) atom_ ## name = atoms_putc(#name);
+        #include "pseudo_keywords.h"
+    }
 
     if (pending_exprs) {
         dyn_array_clear(pending_exprs);

@@ -1,8 +1,8 @@
 
-static ptrdiff_t find_arg(ArenaArray(MacroArg) args, Atom name) {
+static ptrdiff_t find_arg(ArenaArray(MacroArg) args, String name) {
     if (args) {
         aarray_for(i, args) {
-            if (args[i].key == name) {
+            if (string_equals(&args[i].key, &name)) {
                 return i;
             }
         }
@@ -23,16 +23,17 @@ static SourceLoc macroify_loc(SourceLoc loc, uint32_t parent_macro) {
 }
 
 static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
-    if (t->atom == atomic_load_explicit(&atom___FILE__, memory_order_relaxed) || t->atom == atomic_load_explicit(&atom_L__FILE__, memory_order_relaxed)) {
+    if (string_equals_cstr(&t->content, "__FILE__") || string_equals_cstr(&t->content, "L__FILE__")) {
         ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t->location);
 
         // filepath as a string
-        unsigned char* output_path_start = tb_arena_alloc(&c->tmp_arena, FILENAME_MAX + 2);
+        unsigned char* output_path_start = tb_arena_alloc(&c->tmp_arena, FILENAME_MAX + 4);
         unsigned char* output_path = output_path_start;
 
-        bool is_wide = (t->atom[0] == 'L');
+        bool is_wide = (t->content.data[0] == 'L');
         if (is_wide) *output_path++ = 'L';
 
+        *output_path++ = '\"';
         {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
@@ -49,29 +50,31 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
                 }
             }
         }
-        *output_path = '\0';
+
+        *output_path++ = '\"';
+        *output_path++ = '\0';
 
         t->type = is_wide ? TOKEN_STRING_WIDE_DOUBLE_QUOTE : TOKEN_STRING_DOUBLE_QUOTE;
-        t->atom = atoms_put(output_path - output_path_start, output_path_start);
+        t->content = string_from_range(output_path_start, output_path - 1);
         return true;
-    } else if (t->atom == atomic_load_explicit(&atom___COUNTER__, memory_order_relaxed)) {
+    } else if (string_equals_cstr(&t->content, "__COUNTER__")) {
         // line number as a string
-        char out[10];
-        size_t length = snprintf(out, 10, "%d", c->unique_counter);
+        unsigned char* out = tb_arena_alloc(&c->tmp_arena, 10);
+        size_t length = sprintf_s((char*)out, 10, "%d", c->unique_counter);
 
         t->type = TOKEN_INTEGER;
-        t->atom = atoms_put(length, (const unsigned char*) out);
+        t->content = (String){ length, out };
         return true;
-    } else if (t->atom == atomic_load_explicit(&atom___LINE__, memory_order_relaxed)) {
+    } else if (string_equals_cstr(&t->content, "__LINE__")) {
         ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t->location);
 
         // line number as a string
-        char out[10];
-        size_t length = snprintf(out, 10, "%d", r.line);
+        unsigned char* out = tb_arena_alloc(&c->tmp_arena, 10);
+        size_t length = sprintf_s((char*)out, 10, "%d", r.line);
         // trim_the_shtuffs(c, &out[length + 1]);
 
         t->type = TOKEN_INTEGER;
-        t->atom = atoms_put(length, (const unsigned char*) out);
+        t->content = (String){ length, out };
         return true;
     } else {
         return false;
@@ -99,7 +102,7 @@ static void dump_tokens(Cuik_CPP* restrict ctx, const char* tag, int start, int 
 }
 
 static Token quote_token_array(Cuik_CPP* restrict ctx, SourceLoc loc, int start, int end) {
-    int last_pos = -1, str_len = 0;
+    int last_pos = -1, str_len = 2;
     FOR_N(i, start, end) {
         Token* t = &ctx->tokens.list.tokens[i];
 
@@ -109,20 +112,22 @@ static Token quote_token_array(Cuik_CPP* restrict ctx, SourceLoc loc, int start,
         }
 
         // find any chars that need to be escaped
-        FOR_N(j, 0, atoms_len(t->atom)) {
-            if (t->atom[j] == '\\' || t->atom[j] == '\'' || t->atom[j] == '\"') {
+        FOR_N(j, 0, t->content.length) {
+            if (t->content.data[j] == '\\' || t->content.data[j] == '\'' || t->content.data[j] == '\"') {
                 str_len += 1;
             }
         }
 
         // insert some whitespace padding based on the line info
-        str_len += atoms_len(t->atom);
-        last_pos = pos + atoms_len(t->atom);
+        str_len += t->content.length;
+        last_pos = pos + t->content.length;
     }
 
     // at best we might double the string length from backslashes
-    Atom stringized = atoms_reserve(str_len);
+    unsigned char* stringized = tb_arena_alloc(&ctx->perm_arena, str_len + 1);
+
     last_pos = -1, str_len = 0;
+    stringized[str_len++] = '"';
     FOR_N(i, start, end) {
         Token* t = &ctx->tokens.list.tokens[i];
 
@@ -132,23 +137,22 @@ static Token quote_token_array(Cuik_CPP* restrict ctx, SourceLoc loc, int start,
         }
 
         // find any chars that need to be escaped
-        FOR_N(j, 0, atoms_len(t->atom)) {
-            if (t->atom[j] == '\\' || t->atom[j] == '\'' || t->atom[j] == '\"') {
+        FOR_N(j, 0, t->content.length) {
+            if (t->content.data[j] == '\\' || t->content.data[j] == '\'' || t->content.data[j] == '\"') {
                 stringized[str_len++] = '\\';
             }
 
-            stringized[str_len++] = t->atom[j];
+            stringized[str_len++] = t->content.data[j];
         }
-        last_pos = pos + atoms_len(t->atom);
+        last_pos = pos + t->content.length;
     }
+    stringized[str_len++] = '"';
     stringized[str_len] = 0;
-    stringized = atoms_commit(stringized);
-
     return (Token){
         .type = TOKEN_STRING_DOUBLE_QUOTE,
         .expanded = true,
         .location = loc,
-        .atom = stringized
+        .content = { str_len, stringized },
     };
 }
 
@@ -219,7 +223,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
     InvokeCursor cursor = { &invoke_elem, read_head };
 
     Token t = ctx->tokens.list.tokens[read_head];
-    Atom macro_name = def->key;
+    String macro_name = def->key;
     String def_str = def->value;
     SourceLoc def_site = def->loc;
 
@@ -228,14 +232,14 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
     // create macro invoke site
     uint32_t macro_id = dyn_array_length(ctx->tokens.invokes);
     dyn_array_put(ctx->tokens.invokes, (MacroInvoke){
-            .name      = t.atom,
+            .name      = t.content,
             .depth     = parent_macro ? ctx->tokens.invokes[parent_macro].depth+1 : 1,
             .parent    = parent_macro,
             .def_site  = { def_site, { def_site.raw + def_str.length } },
             .call_site = t.location,
         });
 
-    const unsigned char* param_str = def->params;
+    const unsigned char* param_str = def->key.data + def->key.length;
     Lexer def_lexer = {
         .start = (unsigned char*) def_str.data,
         .current = (unsigned char*) def_str.data,
@@ -248,7 +252,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
     int read_tail = read_head+1;
     ptrdiff_t dt = 0;
-    if (param_str) {
+    if (*param_str == '(') {
         cursor = advance(cursor);
 
         // ignore this expansion if we're missing the opening paren
@@ -292,10 +296,9 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
             }
 
             // arg name
-            MacroArg a = { .key = param_t.atom };
+            MacroArg a = { .key = param_t.content };
             if (param_t.type == TOKEN_TRIPLE_DOT) {
-                // TODO(NeGate): cache atom
-                a.key = atoms_putc("__VA_ARGS__");
+                a.key = (String){ sizeof("__VA_ARGS__")-1, (const unsigned char*) "__VA_ARGS__" };
                 has_varargs = true;
             }
             aarray_push(args, a);
@@ -371,8 +374,9 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                 arg_t = tokens[arg_head++];
             }
 
-            MacroArg a = { .key = arg_t.atom };
+            MacroArg a = { .key = arg_t.content };
             args[arg_c].token_start = arg_head - 1;
+            args[arg_c].val.data = arg_t.content.data;
 
             bool is_vararg = has_varargs ? arg_c == aarray_length(args)-1 : false;
             int parens = 0;
@@ -393,6 +397,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
             }
             assert(parens == 0);
 
+            args[arg_c].val.length = (arg_t.content.data - args[arg_c].val.data);
             args[arg_c].token_end = arg_head - 1;
             arg_c += 1;
         }
@@ -426,16 +431,15 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         }
 
         if (def_t.type == TOKEN_HASH) {
-            unsigned char* saved = def_lexer.current;
             Token next_t = lexer_read(&def_lexer);
             if (next_t.type == TOKEN_IDENTIFIER) {
                 def_t = next_t;
 
                 // Stringize
-                SourceLoc loc = encode_macro_loc(macro_id, file_loc_offset(def_t.location));
-                ptrdiff_t arg = find_arg(args, def_t.atom);
+                SourceLoc loc = encode_macro_loc(macro_id, def_t.content.data - def_lexer.start);
+                SourceRange r = { loc, { loc.raw + def_t.content.length } };
+                ptrdiff_t arg = find_arg(args, def_t.content);
                 if (arg < 0) {
-                    SourceRange r = { loc, { loc.raw + atoms_len(def_t.atom) } };
                     diag_err(&ctx->tokens, r, "cannot stringize unknown argument");
                     break;
                 }
@@ -445,10 +449,10 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
                 def_t.has_space = has_space;
             } else {
                 // rollback and paste both the # and ##
-                def_lexer.current = saved;
+                def_lexer.current = (unsigned char*) def_t.content.data + def_t.content.length;
             }
         } else if (def_t.type == TOKEN_IDENTIFIER) {
-            ptrdiff_t arg = find_arg(args, def_t.atom);
+            ptrdiff_t arg = find_arg(args, def_t.content);
             if (arg >= 0) {
                 if (args[arg].token_start != args[arg].token_end) {
                     // subst, just paste all the tokens into the final stream
@@ -468,7 +472,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
         // convert token location into macro relative
         if ((def_t.location.raw & SourceLoc_IsMacro) == 0) {
-            def_t.location = encode_macro_loc(macro_id, file_loc_offset(def_t.location));
+            def_t.location = encode_macro_loc(macro_id, def_t.content.data - def_lexer.start);
         }
 
         push_token(ctx, def_t);
@@ -481,14 +485,14 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         Token* t = &ctx->tokens.list.tokens[i];
         if (t->type == TOKEN_DOUBLE_HASH) {
             if (j > start && i+1 < end) {
-                Atom a = ctx->tokens.list.tokens[j-1].atom;
-                Atom b = ctx->tokens.list.tokens[i+1].atom;
+                String a = ctx->tokens.list.tokens[j-1].content;
+                String b = ctx->tokens.list.tokens[i+1].content;
 
                 // Literally join the data
-                unsigned char* out = tb_arena_alloc(&ctx->perm_arena, atoms_len(a) + atoms_len(b) + 16);
-                memcpy(out, a, atoms_len(a));
-                memcpy(out + atoms_len(a), b, atoms_len(b));
-                memset(&out[atoms_len(a) + atoms_len(b)], 0, 16);
+                unsigned char* out = tb_arena_alloc(&ctx->perm_arena, a.length + b.length + 16);
+                memcpy(out, a.data, a.length);
+                memcpy(out + a.length, b.data, b.length);
+                memset(&out[a.length + b.length], 0, 16);
 
                 // generate a new token and see what happens
                 Lexer scratch = { 0, 0, out, out };
@@ -535,7 +539,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
                 if (!t->expanded && t->type == TOKEN_IDENTIFIER) {
                     // if it failed to expand, it can't expand later during the rescan
-                    MacroDef* kid_def = find_define(ctx, t->atom);
+                    MacroDef* kid_def = find_define(ctx, t->content.data, t->content.length);
                     if (kid_def != NULL) {
                         int old_top = dyn_array_length(ctx->tokens.list.tokens);
 
@@ -558,7 +562,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
         }
     }
 
-    Atom hidden = hide_macro(ctx, def);
+    size_t hidden = hide_macro(ctx, def);
 
     // Rescanning
     for (int i = start; i < end;) {
@@ -566,7 +570,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
         size_t def_i;
         if (!t->expanded && t->type == TOKEN_IDENTIFIER) {
-            MacroDef* kid_def = find_define(ctx, t->atom);
+            MacroDef* kid_def = find_define(ctx, t->content.data, t->content.length);
             if (kid_def != NULL) {
                 int kid_read_tail;
                 ptrdiff_t kid_dt = expand_identifier(ctx, in, &invoke_elem, i, end, macro_id, kid_def, depth+1, &kid_read_tail);
@@ -575,7 +579,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, Lexer* in, InvokeElem* pare
 
                 i = kid_read_tail + kid_dt;
                 continue;
-            } else if (t->atom == macro_name) {
+            } else if (string_equals(&macro_name, &t->content)) {
                 t->expanded = true;
             }
         }

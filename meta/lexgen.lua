@@ -816,12 +816,12 @@ Token lexer_read(Lexer* restrict l) {
         }
     }
 
+    t.content = (String){ current - start, start };
+
     uint64_t tag = lexer_final_state[state];
     if (tag == L_IDENT) {
-        t.atom = atoms_put(current - start, start);
         t.type = TOKEN_IDENTIFIER;
     } else if (tag == L_NUMBER) {
-        t.atom = atoms_put(current - start, start);
         t.type = TOKEN_INTEGER;
     } else if (tag == L_QUOTE) {
         char quote_type = current[-1];
@@ -842,7 +842,7 @@ Token lexer_read(Lexer* restrict l) {
             start += 1;
         }
 
-        t.atom = atoms_put(current - (start + 1), start + 1);
+        t.content = (String){ current - (start + 1), start + 1 };
         current += 1;
     } else {
         // these tokens have their contents embedded into the
@@ -857,7 +857,6 @@ Token lexer_read(Lexer* restrict l) {
         memcpy(&chars, start, sizeof(uint32_t));
 
         // t.atom = (Atom) ((uintptr_t) (chars & mask) | (tag << 56ull));
-        t.atom = atoms_put(current - start, start);
         t.type = chars & mask;
     }
 

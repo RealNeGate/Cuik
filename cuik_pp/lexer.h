@@ -5,8 +5,6 @@
 #include <dyn_array.h>
 #include <cuik_lex.h>
 
-#include "atoms.h"
-
 #define TKN2(x, y)                  (((y) << 8) | (x))
 #define TKN3(x, y, z) (((z) << 16) | ((y) << 8) | (x))
 
@@ -89,7 +87,14 @@ typedef enum TknType {
     TOKEN_RIGHT_SHIFT_EQUAL = TKN3('>', '>', '='),
     TOKEN_INCREMENT         = TKN2('+', '+'),
     TOKEN_DECREMENT         = TKN2('-', '-'),
+
+    // Keywords (they start far higher up to avoid problems)
+    #include "keywords.h"
 } TknType;
+
+enum {
+    FIRST_GLSL_KEYWORD = TOKEN_KW_discard
+};
 
 #undef TKN2
 #undef TKN3
@@ -101,6 +106,8 @@ typedef struct {
     unsigned char* current;
 } Lexer;
 
+extern thread_local TB_Arena thread_arena;
+
 // this is used by the preprocessor to scan tokens in
 Token lexer_read(Lexer* restrict l);
 
@@ -110,10 +117,6 @@ TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_gl
 
 static SourceLoc offset_source_loc(SourceLoc loc, uint32_t offset) {
     return (SourceLoc){ loc.raw + offset };
-}
-
-static uint32_t file_loc_offset(SourceLoc loc) {
-    return loc.raw & ((1u << SourceLoc_FilePosBits) - 1);
 }
 
 static SourceLoc encode_file_loc(uint32_t file_id, uint32_t file_offset) {
@@ -138,16 +141,16 @@ static bool tokens_peek_double_token(TokenStream* restrict s, TknType tkn) {
 }
 
 static SourceRange get_token_range(Token* t) {
-    return (SourceRange){ t->location, { t->location.raw + atoms_len(t->atom) } };
+    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
 }
 
 static SourceLoc get_end_location(Token* t) {
-    return (SourceLoc){ t->location.raw + atoms_len(t->atom) };
+    return (SourceLoc){ t->location.raw + t->content.length };
 }
 
 static SourceLoc tokens_get_last_location(TokenStream* restrict s) {
     Token* t = &s->list.tokens[s->list.current - 1];
-    return (SourceLoc){ t->location.raw + atoms_len(t->atom) };
+    return (SourceLoc){ t->location.raw + t->content.length };
 }
 
 static SourceLoc tokens_get_location(TokenStream* restrict s) {
@@ -156,12 +159,12 @@ static SourceLoc tokens_get_location(TokenStream* restrict s) {
 
 static SourceRange tokens_get_last_range(TokenStream* restrict s) {
     Token* t = &s->list.tokens[s->list.current - 1];
-    return (SourceRange){ t->location, { t->location.raw + atoms_len(t->atom) } };
+    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
 }
 
 static SourceRange tokens_get_range(TokenStream* restrict s) {
     Token* t = &s->list.tokens[s->list.current];
-    return (SourceRange){ t->location, { t->location.raw + atoms_len(t->atom) } };
+    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
 }
 
 static bool tokens_hit_line(TokenStream* restrict s) {
@@ -169,16 +172,16 @@ static bool tokens_hit_line(TokenStream* restrict s) {
 }
 
 static bool tokens_eof(TokenStream* restrict s) {
-    // return s->list.current >= dyn_array_length(s->list.tokens) - 1;
-    return s->list.tokens[s->list.current].type == 0;
+    return s->list.current >= dyn_array_length(s->list.tokens) - 1;
+    // return s->list.tokens[s->list.current].type == 0;
 }
 
 static bool tokens_is(TokenStream* restrict s, TknType type) {
     return s->list.tokens[s->list.current].type == type;
 }
 
-static bool tokens_match(TokenStream* restrict s, Atom atom) {
-    return s->list.tokens[s->list.current].atom == atom;
+static bool tokens_match(TokenStream* restrict s, size_t len, const char* str) {
+    return string_equals(&s->list.tokens[s->list.current].content, &(String){ len, (const unsigned char*) str });
 }
 
 // this is used by the parser to get the next token

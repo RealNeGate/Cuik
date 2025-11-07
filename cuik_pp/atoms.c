@@ -93,5 +93,5 @@ Atom atoms_eat_token(TokenStream* restrict s) {
     }
 
     tokens_next(s);
-    return t->atom;
+    return atoms_put(t->content.length, t->content.data);
 }

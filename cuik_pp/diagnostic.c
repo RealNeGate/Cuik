@@ -183,7 +183,7 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, Source
 
     if (m != NULL) {
         Cuik_FileEntry* next_file = cuikpp_find_file(tokens, m->call_site);
-        print_line_with_backtrace(tokens, m->call_site, offset_source_loc(m->call_site, atoms_len(m->name)));
+        print_line_with_backtrace(tokens, m->call_site, offset_source_loc(m->call_site, m->name.length));
         sprintfcb(tokens->diag, "     |\n");
         if (next_file->filename != l.file->filename) {
             sprintfcb(tokens->diag, "  expanded from %s:\n", l.file->filename);

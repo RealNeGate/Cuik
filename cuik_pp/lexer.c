@@ -13,6 +13,56 @@
 
 #include "dfa.h"
 
+uint64_t splittable64(uint64_t x) {
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9U;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebU;
+    x ^= x >> 31;
+    return x;
+}
+
+static uint64_t hash_with_len(const void* data, size_t len) {
+    const uint8_t* p = data;
+    uint64_t h = 0;
+    for (size_t i = 0; i < len && i < 8; i++) {
+        h |= (uint64_t)p[i] << (uint64_t)(i*8);
+    }
+    return splittable64(h);
+}
+
+TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
+    /* size_t v = hash_with_len(str, len);
+    v = keywords_table[v];
+
+    if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x800000) {
+        return TOKEN_IDENTIFIER;
+    }
+
+    // VERIFY
+    #if USE_INTRIN && CUIK__IS_X64
+    __m128i kw128 = _mm_loadu_si128((__m128i*)&keywords[v]);
+    __m128i str128 = _mm_loadu_si128((__m128i*)str);
+
+    int kw_len = __builtin_ffs(_mm_movemask_epi8(_mm_cmpeq_epi8(kw128, _mm_set1_epi8('\0')))) - 1;
+
+    // NOTE(NeGate): Fancy x86 strcmp crap :)
+    int result = _mm_cmpestri(kw128, kw_len, str128, len,
+        _SIDD_UBYTE_OPS |
+        _SIDD_CMP_EQUAL_EACH |
+        _SIDD_NEGATIVE_POLARITY |
+        _SIDD_UNIT_MASK
+    );
+
+    return result == 16 ? (0x800000 + v) : TOKEN_IDENTIFIER;
+    #else
+    if (strlen(keywords[v]) != len) return TOKEN_IDENTIFIER;
+
+    return memcmp((const char*) str, keywords[v], len) == 0 ? (0x800000 + v) : TOKEN_IDENTIFIER;
+    #endif*/
+    return TOKEN_IDENTIFIER;
+}
+
 static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* current, unsigned char* start) {
     // you don't wanna be here... basically if we spot \U in the identifier
     // we reparse it but this time with the correct handling of those details.
