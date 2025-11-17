@@ -266,9 +266,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     }
 
     size_t curr = 0;
-    unsigned char* buffer = tb_arena_alloc(parser->arena, total_len + 3);
-
-    buffer[curr++] = '\"';
+    unsigned char* buffer = tb_arena_alloc(parser->arena, total_len*2 + 1);
 
     // Fill up the buffer
     s->list.current = saved_lexer_pos;
@@ -293,7 +291,26 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
         tokens_next(s);
     }
 
-    buffer[curr++] = '\"';
+    size_t out_i = 0, in_i = 0;
+    if (e->op == EXPR_WSTR) {
+
+    } else {
+        // Since the input stream will always be ahead of the output stream, we can use the
+        // same array and just mutate it
+        while (in_i < curr) {
+            int ch;
+            ptrdiff_t distance = parse_char(curr - in_i, (const char*) &buffer[in_i], &ch);
+            if (distance <= 0) {
+                abort(); // TODO: Error message
+            }
+
+            buffer[out_i++] = ch;
+            in_i += distance;
+        }
+
+        curr = out_i;
+    }
+
     e->str = atoms_put(curr, buffer);
 }
 

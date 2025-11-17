@@ -166,9 +166,11 @@ static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, ArenaArray
     bundle_emit(ctx, e, b);
     if (b->safepoint) {
         TB_Safepoint* sfpt = TB_NODE_GET_EXTRA_T(b->safepoint, TB_NodeSafepoint)->sfpt;
-        sfpt->ip = GET_CODE_POS(e);
-        sfpt->frame_size = ctx->stack_usage;
-        aarray_push(*safepoints, sfpt);
+        if (sfpt) {
+            sfpt->ip = GET_CODE_POS(e);
+            sfpt->frame_size = ctx->stack_usage;
+            aarray_push(*safepoints, sfpt);
+        }
     }
 
     b->count = 0;
@@ -519,6 +521,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     };
 
     init_ctx(&ctx, f->super.module->target_abi);
+    tb_opt_free_types(f);
+
     TB_Worklist* restrict ws = f->worklist;
 
     size_t og_size = tb_arena_current_size(&f->arena);

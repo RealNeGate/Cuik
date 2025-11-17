@@ -24,6 +24,12 @@ static InternalFile* find_internal_file(const char* name) {
 }
 
 bool cuikpp_locate_file(void* user_data, const Cuik_Path* restrict input, Cuik_Path* output, bool case_insensitive) {
+    /* InternalFile* f = cuik__ifiles_root;
+    for (; f != NULL; f = f->next) {
+        printf("FILE %s\n%s\n", f->name, f->data);
+    }
+    __debugbreak(); */
+
     if (cuik_path_is_in(input, "$cuik")) {
         InternalFile* f = find_internal_file(input->data + sizeof("$cuik"));
         if (f) {

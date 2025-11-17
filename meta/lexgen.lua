@@ -5,86 +5,92 @@ if type(jit) == "table" then
     ffi = require "ffi"
 end
 
-local keywords = {
-    "auto",
-    "break",
-    "case",
-    "char",
-    "const",
-    "continue",
-    "default",
-    "do",
-    "double",
-    "else",
-    "enum",
-    "extern",
-    "float",
-    "for",
-    "goto",
-    "if",
-    "inline",
-    "int",
-    "long",
-    "register",
-    "restrict",
-    "return",
-    "short",
-    "signed",
-    "sizeof",
-    "static",
-    "struct",
-    "switch",
-    "typedef",
-    "union",
-    "unsigned",
-    "void",
-    "volatile",
-    "while",
-    "_Alignas",
-    "_Alignof",
-    "_Atomic",
-    "_Bool",
-    "_Complex",
-    "_Embed",
-    "_Generic",
-    "_Imaginary",
-    "_Pragma",
-    "_Noreturn",
-    "_Static_assert",
-    "_Thread_local",
-    "_Typeof",
-    "_Vector",
-    "__asm__",
-    "__attribute__",
-    "__cdecl",
-    "__stdcall",
-    "__declspec",
+local all_keywords = {
+    ["auto"] = "KW_C",
+    ["break"] = "KW_C",
+    ["case"] = "KW_C",
+    ["char"] = "KW_C",
+    ["const"] = "KW_C",
+    ["continue"] = "KW_C",
+    ["default"] = "KW_C",
+    ["do"] = "KW_C",
+    ["double"] = "KW_C",
+    ["else"] = "KW_C",
+    ["enum"] = "KW_C",
+    ["extern"] = "KW_C",
+    ["float"] = "KW_C",
+    ["for"] = "KW_C",
+    ["goto"] = "KW_C",
+    ["if"] = "KW_C",
+    ["inline"] = "KW_C",
+    ["int"] = "KW_C",
+    ["long"] = "KW_C",
+    ["register"] = "KW_C",
+    ["restrict"] = "KW_C",
+    ["return"] = "KW_C",
+    ["short"] = "KW_C",
+    ["signed"] = "KW_C",
+    ["sizeof"] = "KW_C",
+    ["static"] = "KW_C",
+    ["struct"] = "KW_C",
+    ["switch"] = "KW_C",
+    ["typedef"] = "KW_C",
+    ["union"] = "KW_C",
+    ["unsigned"] = "KW_C",
+    ["void"] = "KW_C",
+    ["volatile"] = "KW_C",
+    ["while"] = "KW_C",
+    ["_Alignas"] = "KW_C",
+    ["_Alignof"] = "KW_C",
+    ["_Atomic"] = "KW_C",
+    ["_Bool"] = "KW_C",
+    ["_Complex"] = "KW_C",
+    ["_Embed"] = "KW_C",
+    ["_Generic"] = "KW_C",
+    ["_Imaginary"] = "KW_C",
+    ["_Pragma"] = "KW_C",
+    ["_Noreturn"] = "KW_C",
+    ["_Static_assert"] = "KW_C",
+    ["_Thread_local"] = "KW_C",
+    ["_Typeof"] = "KW_C",
+    ["_Vector"] = "KW_C",
+    ["__asm__"] = "KW_C",
+    ["__attribute__"] = "KW_C",
+    ["__cdecl"] = "KW_C",
+    ["__stdcall"] = "KW_C",
+    ["__declspec"] = "KW_C",
 
     -- GLSL keywords
-    "discard",
-    "layout",
-    "in",
-    "out",
-    "inout",
-    "uint",
-    "buffer",
-    "uniform",
-    "flat",
-    "smooth",
-    "noperspective",
-    "vec2",
-    "vec3",
-    "vec4",
-    "ivec2",
-    "ivec3",
-    "ivec4",
-    "uvec2",
-    "uvec3",
-    "uvec4",
-    "dvec2",
-    "dvec3",
-    "dvec4",
+    ["discard"] = "KW_GLSL",
+    ["layout"] = "KW_GLSL",
+    ["in"] = "KW_GLSL",
+    ["out"] = "KW_GLSL",
+    ["inout"] = "KW_GLSL",
+    ["uint"] = "KW_GLSL",
+    ["buffer"] = "KW_GLSL",
+    ["uniform"] = "KW_GLSL",
+    ["flat"] = "KW_GLSL",
+    ["smooth"] = "KW_GLSL",
+    ["noperspective"] = "KW_GLSL",
+    ["vec2"] = "KW_GLSL",
+    ["vec3"] = "KW_GLSL",
+    ["vec4"] = "KW_GLSL",
+    ["ivec2"] = "KW_GLSL",
+    ["ivec3"] = "KW_GLSL",
+    ["ivec4"] = "KW_GLSL",
+    ["uvec2"] = "KW_GLSL",
+    ["uvec3"] = "KW_GLSL",
+    ["uvec4"] = "KW_GLSL",
+    ["dvec2"] = "KW_GLSL",
+    ["dvec3"] = "KW_GLSL",
+    ["dvec4"] = "KW_GLSL",
 }
+
+local keywords = {}
+for k,v in pairs(all_keywords) do
+    table.insert(keywords, k)
+end
+table.sort(keywords)
 
 -- sparse set of rules, unified and optimized later
 local patterns = {
@@ -792,7 +798,7 @@ Token lexer_read(Lexer* restrict l) {
     unsigned char* start = current;
     unsigned char first  = *start;
     if (__builtin_expect(first == '\0', 0)) {
-        return (Token){ 0 };
+        return (Token){ .content = { 0, current } };
     }
     current++;
 
@@ -820,6 +826,24 @@ Token lexer_read(Lexer* restrict l) {
         t.type = TOKEN_IDENTIFIER;
     } else if (tag == L_NUMBER) {
         t.type = TOKEN_INTEGER;
+
+        // we've gotten through the simple integer stuff, time for floats
+        for (;;) {
+            char a = *current;
+            if (a == '.') {
+                current += 1;
+                t.type = TOKEN_FLOAT;
+            } else if ((a == 'e' || a == 'E' || a == 'p' || a == 'P') && (current[1] == '+' || current[1] == '-')) {
+                t.type = TOKEN_FLOAT;
+                current += 2;
+            } else if ((a >= '0' && a <= '9') || (a >= 'a' && a <= 'z') || (a >= 'A' && a <= 'Z')) {
+                current += 1;
+            } else {
+                break;
+            }
+        }
+
+        t.content = (String){ current - start, start };
     } else if (tag == L_QUOTE) {
         char quote_type = current[-1];
         for (; *current && *current != quote_type; current++) {
@@ -839,8 +863,8 @@ Token lexer_read(Lexer* restrict l) {
             start += 1;
         }
 
-        t.content = (String){ current - (start + 1), start + 1 };
         current += 1;
+        t.content = (String){ current - start, start };
     } else {
         // these tokens have their contents embedded into the
         // Atom pointer.
@@ -959,6 +983,15 @@ if type(jit) == "table" then
         local j = keyword_table[i]
         if j then
             lines[#lines + 1] = string.format("    [%d] = \"%s\",", i, keywords[j])
+        end
+    end
+    lines[#lines + 1] = "};"
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "static const uint8_t keyword_type["..prime.."] = {"
+    for i=0,prime-1 do
+        local j = keyword_table[i]
+        if j then
+            lines[#lines + 1] = string.format("    [%d] = %s,", i, all_keywords[keywords[j]]:upper())
         end
     end
     lines[#lines + 1] = "};"

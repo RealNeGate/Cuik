@@ -253,6 +253,9 @@ for k,v in all_nodes:iter() do
         for f,_ in pairs(curr.flags) do
             v.flags[f] = true
         end
+        if not v.extra then
+            v.extra = curr.extra
+        end
         curr = all_nodes:get(curr.parent)
     end
 

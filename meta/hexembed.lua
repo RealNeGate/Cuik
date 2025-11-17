@@ -36,8 +36,9 @@ for i=2,#arg do
             table.insert(tab, string.format("%d,", string.byte(buf, k)))
         end
         out:write("    "..table.concat(tab, "").."\n")
-        i = i + 16
+        i = i + 17
     end
+    out:write("    0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0\n")
     out:write("}};\n\n")
 end
 

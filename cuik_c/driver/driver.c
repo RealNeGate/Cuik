@@ -648,6 +648,8 @@ void cuikpp_dump_tokens(TokenStream* s) {
 
     Token* tokens = cuikpp_get_tokens(s);
     size_t count = cuikpp_get_token_count(s);
+
+    bool color_kw = true;
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
 
@@ -708,8 +710,13 @@ void cuikpp_dump_tokens(TokenStream* s) {
             printf("L");
         }
 
-        // Normal token printing
-        printf("%.*s", (int) t->content.length, t->content.data);
+        if (color_kw && t->type >= 0x800000) {
+            // Normal token printing
+            printf("\x1b[32m%.*s\x1b[0m", (int) t->content.length, t->content.data);
+        } else {
+            // Normal token printing
+            printf("%.*s", (int) t->content.length, t->content.data);
+        }
     }
     printf("\n");
 }

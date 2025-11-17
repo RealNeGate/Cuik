@@ -11,6 +11,10 @@
 #define ALWAYS_INLINE __attribute__((always_inline))
 #endif
 
+enum {
+    KW_C = 1, KW_GLSL = 2,
+};
+
 #include "dfa.h"
 
 static uint64_t hash_with_len(const void* data, size_t len) {
@@ -24,9 +28,12 @@ static uint64_t hash_with_len(const void* data, size_t len) {
 
 TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
     size_t v = hash_with_len(str, len);
-    /* if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x800000) {
+    uint8_t search = is_glsl ? (KW_GLSL | KW_C) : KW_C;
+
+    // keyword's not for our frontend
+    if ((keyword_type[v] & search) == 0) {
         return TOKEN_IDENTIFIER;
-    } */
+    }
 
     // VERIFY
     #if USE_INTRIN && CUIK__IS_X64

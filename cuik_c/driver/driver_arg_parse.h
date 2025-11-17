@@ -57,7 +57,7 @@ static Option options[] = {
     X(PATH_LIST,"I",          NULL, includes,          "add directory to the include searches"),
     X(BOOL,     "Pp",         NULL, test_preproc,      "test preprocessor"),
     X(BOOL,     "P",          NULL, preprocess,        "print preprocessor output to stdout"),
-    X(STR,      "MD",         NULL, write_deps,        "write header dependencies"),
+    X(BOOL,     "MD",         NULL, write_deps,        "write header dependencies"),
     X(STR,      "MF",         NULL, dep_file,          "write depout from -MD into a file"),
     Z("parser"),
     X(ENUM,     "lang",       NULL, version,           "choose the language"),
