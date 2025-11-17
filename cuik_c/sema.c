@@ -906,9 +906,8 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
         }
 
         case EXPR_WSTR: {
-            // Cuik_QualType wchar_type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_SHORT]);
-            // return cuik_uncanonical_type(cuik__new_array(&tu->types, wchar_type, out_i));
-            assert(0);
+            Cuik_QualType wchar_type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_SHORT]);
+            return cuik_uncanonical_type(cuik__new_array(&tu->types, wchar_type, atoms_len(e->str) + 1));
         }
         case EXPR_STR: {
             Cuik_QualType char_type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_CHAR]);
