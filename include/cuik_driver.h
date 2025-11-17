@@ -3,6 +3,7 @@
 ////////////////////////////////
 // This is the build system like interface for Cuik
 #pragma once
+#include "prelude.h"
 #include "cuik_prelude.h"
 
 typedef struct Cuik_Linker Cuik_Linker;

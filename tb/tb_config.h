@@ -13,7 +13,7 @@
 #define TB_OPTDEBUG_INTERP           0
 #define TB_OPTDEBUG_MEMORY           0
 #define TB_OPTDEBUG_ISEL             0
-#define TB_OPTDEBUG_EMIT             1
+#define TB_OPTDEBUG_EMIT             0
 #define TB_OPTDEBUG_DATAFLOW         0
 #define TB_OPTDEBUG_PLACEMENT        0
 #define TB_OPTDEBUG_INLINE           0

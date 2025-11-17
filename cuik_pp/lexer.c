@@ -13,31 +13,20 @@
 
 #include "dfa.h"
 
-uint64_t splittable64(uint64_t x) {
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9U;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebU;
-    x ^= x >> 31;
-    return x;
-}
-
 static uint64_t hash_with_len(const void* data, size_t len) {
     const uint8_t* p = data;
     uint64_t h = 0;
     for (size_t i = 0; i < len && i < 8; i++) {
         h |= (uint64_t)p[i] << (uint64_t)(i*8);
     }
-    return splittable64(h);
+    return LEXER_KEYWORD_HASH(h);
 }
 
 TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
-    /* size_t v = hash_with_len(str, len);
-    v = keywords_table[v];
-
-    if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x800000) {
+    size_t v = hash_with_len(str, len);
+    /* if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x800000) {
         return TOKEN_IDENTIFIER;
-    }
+    } */
 
     // VERIFY
     #if USE_INTRIN && CUIK__IS_X64
@@ -59,7 +48,7 @@ TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_gl
     if (strlen(keywords[v]) != len) return TOKEN_IDENTIFIER;
 
     return memcmp((const char*) str, keywords[v], len) == 0 ? (0x800000 + v) : TOKEN_IDENTIFIER;
-    #endif*/
+    #endif
     return TOKEN_IDENTIFIER;
 }
 

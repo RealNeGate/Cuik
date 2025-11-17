@@ -1,6 +1,10 @@
 local inspect = require "meta/inspect"
 require "meta/prelude"
 
+if type(jit) == "table" then
+    ffi = require "ffi"
+end
+
 local keywords = {
     "auto",
     "break",
@@ -680,13 +684,6 @@ end
 -- dump_dfa(eq_classes)
 
 local lines = {}
-lines[#lines + 1] = "static const char keywords[][16] = {"
-for j=1,#keywords do
-    lines[#lines + 1] = string.format("    \"%s\",", keywords[j])
-end
-lines[#lines + 1] = "};"
-lines[#lines + 1] = ""
-
 function add_lines(str)
     for s in str:gmatch("[^\r\n]+") do
         lines[#lines + 1] = s
@@ -873,31 +870,128 @@ Token lexer_read(Lexer* restrict l) {
 ]]
 lines[#lines + 1] = ""
 
+local keyword_table = {}
+local prime = 173
+if type(jit) == "table" then
+    print("A", #keywords)
+
+    local tries = 0
+    local time = os.clock()
+
+    local A = 0xbf58476d1ce4e5b9ull
+    local B = 0x94d049bb133111ebull
+
+    local hashes = {}
+    for i=1,#keywords do
+        local base = keywords[i]
+        local x = 0ull
+        for i=1,math.min(#base, 8) do
+            local y = ffi.new("uint64_t", string.byte(base, i))
+            x = bit.bor(x, bit.lshift(y, (i-1) * 8))
+        end
+
+        -- splittable64
+        local y = x
+        -- x = bit.bxor(x, bit.rshift(x, 30))
+        -- x = x * A
+        -- x = bit.bxor(x, bit.rshift(x, 27))
+        -- x = x * B
+        -- x = bit.bxor(x, bit.rshift(x, 31))
+        hashes[i] = x
+
+        x = bit.tohex(x)
+        if keyword_table[x] then
+            print("Woah!!!", keywords[keyword_table[x]], base, x)
+        end
+        keyword_table[x] = i
+        -- print(base, x, bit.tohex(y))
+    end
+
+    keyword_table = {}
+    local magic = 0xb8618d7571637e57ull
+    local best = #keywords
+    while true do
+        local collide = 0
+
+        for i=0,prime-1 do
+            keyword_table[i] = nil
+        end
+
+        for i=1,#keywords do
+            local base = keywords[i]
+            local x = hashes[i]
+            local h = bit.tobit((x * magic) % prime)
+            if keyword_table[h] then
+                collide = collide + 1
+            end
+            keyword_table[h] = i
+        end
+
+        if collide == 0 then
+            print("Yippee!!! ", bit.tohex(magic))
+            break
+        end
+
+        if collide < best then
+            print("Fail", bit.tohex(magic), collide, best)
+            best = collide
+        end
+
+        local x = magic
+        x = bit.bxor(x, bit.rshift(x, 30))
+        x = x * A
+        x = bit.bxor(x, bit.rshift(x, 27))
+        x = x * B
+        magic = bit.bxor(x, bit.rshift(x, 31))
+
+        tries = tries + 1
+        if tries == 100000 then
+            local elapsed = os.clock() - time
+            print("Report ", tries / elapsed)
+            time = os.clock()
+            tries = 0
+        end
+    end
+
+    lines[#lines + 1] = string.format("#define LEXER_KEYWORD_HASH(x) ((x * 0x%sull) %% %d)", bit.tohex(magic), prime)
+    lines[#lines + 1] = "static const char keywords["..prime.."][16] = {"
+    for i=0,prime-1 do
+        local j = keyword_table[i]
+        if j then
+            lines[#lines + 1] = string.format("    [%d] = \"%s\",", i, keywords[j])
+        end
+    end
+    lines[#lines + 1] = "};"
+    lines[#lines + 1] = ""
+else
+
+end
+
 local final_src = table.concat(lines, "\n")
 local f = io.open("cuik_pp/dfa.h", "w")
 f:write(final_src)
 f:close()
 
-if false then
+if true then
     lines = {}
-    other_lines = { "static void init_lang_atoms(void) {" }
-    for i=1,#keywords do
-        local base = keywords[i]
+    for i=0,prime-1 do
+        local k = keyword_table[i]
+        if k then
+            local base = keywords[k]
+            local j = 1
+            while j < #base and base:sub(j, j) == "_" do
+                j = j + 1
+            end
+            base = base:sub(j)
 
-        local j = 1
-        while j < #base and base:sub(j, j) == "_" do
-            j = j + 1
+            j = #base
+            while j > 1 and base:sub(j, j) == "_" do
+                j = j - 1
+            end
+            base = base:sub(1, j)
+
+            lines[#lines + 1] = string.format("TOKEN_KW_%s = 0x800000 + %d,", base, i)
         end
-        base = base:sub(j)
-
-        j = #base
-        while j > 1 and base:sub(j, j) == "_" do
-            j = j - 1
-        end
-        base = base:sub(1, j)
-
-        lines[#lines + 1] = string.format("extern _Atomic(Atom) KW_%s;", base)
-        other_lines[#other_lines + 1] = string.format("    KW_%s = atoms_put(%d, \"%s\");", base, #keywords[i], keywords[i])
     end
 
     final_src = table.concat(lines, "\n")
@@ -905,8 +999,6 @@ if false then
     f = io.open("cuik_pp/keywords.h", "w")
     f:write(final_src)
     f:close()
-
-    print(final_src)
 end
 
 -- print(state_count, eq_count)

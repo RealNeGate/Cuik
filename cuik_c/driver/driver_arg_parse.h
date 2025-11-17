@@ -70,7 +70,9 @@ static Option options[] = {
     X(BOOL,     "O",          NULL, optimize,          "enable the optimizer"),
     X(BOOL,     "emit-ir",    NULL, emit_ir,           "print IR into stdout"),
     X(STR,      "o",          NULL, output_name,       "set the output filepath"),
+    #ifdef CONFIG_HAS_TB
     X(BOOL,     "c",          NULL, flavor,            "output object file"),
+    #endif
     X(BOOL,     "S",          NULL, assembly,          "output assembly to stdout"),
     X(BOOL,     "g",          NULL, debug_info,        "compile with debug information"),
     X(BOOL,     "nochkstk",   NULL, nochkstk,          "disable buffer checks (think of MSVC's /GS-)"),
@@ -345,12 +347,16 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
         }
 
         if (opt->type == ARG_BOOL) {
+            #ifdef CONFIG_HAS_TB
             // HACK(NeGate): i'll add the missing CLI options soon
             if (opt->short_name[0] == 'c' && opt->short_name[1] == 0) {
                 *(int*) dst = TB_FLAVOR_OBJECT;
             } else {
                 *(bool*) dst = true;
             }
+            #else
+            *(bool*) dst = true;
+            #endif
         } else if (opt->type == ARG_ENUM) {
             for (Option* kid = opt+1; kid != &options[OPTION_COUNT] && kid->type == ARG_ENUM_VAL; kid++) {
                 if (strcmp(kid->short_name, oldstr) == 0) {

@@ -47,7 +47,7 @@
 
     // Regions are used to represent paths which have multiple entries.
     // each input is a predecessor.
-    (node REGION        PINNED CTRL)
+    (node REGION        PINNED CTRL extra=TB_NodeRegion)
     (node NATURAL_LOOP  parent=REGION)       // natural loop where the first edge dominates, and the other paths are backedges.
     (node AFFINE_LOOP   parent=NATURAL_LOOP) // loop header with affine bounds.
     // Phi nodes work the same as in SSA CFG, the value is based on which predecessor was taken.

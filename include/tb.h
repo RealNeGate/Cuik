@@ -424,9 +424,6 @@ typedef struct {
 
 typedef struct {
     const char* tag;
-
-    // used for IR building
-    TB_Node *mem_in;
 } TB_NodeRegion;
 
 typedef struct TB_MultiOutput {

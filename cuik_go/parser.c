@@ -56,7 +56,7 @@ static Token cuikgo_lex(Lexer* l) {
 
     // skip WS
     Token t = { 0 };
-    while (*current == ' ' || *current == '\n' || *current == '\t' || *current == '\t') {
+    while (*current == ' ' || *current == '\n' || *current == '\t' || *current == '\r') {
         if (*current == '\n') {
             // insert semicolon
             if (l->flags & LEXER_END_STMT) {
