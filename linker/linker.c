@@ -1023,7 +1023,7 @@ bool tb_linker_layout(TB_Linker* l) {
 }
 
 // just run whatever reloc function from the spec
-static int32_t resolve_reloc(TB_LinkerSymbol* sym, TB_ObjectRelocType type, uint32_t source_pos, uint32_t target_rva, int addend) {
+static int32_t resolve_reloc(TB_LinkerSymbol* sym, TB_ObjectRelocType type, uint64_t source_pos, uint64_t target_rva, int addend) {
     switch (type) {
         case TB_OBJECT_RELOC_ADDR32NB:
         return target_rva;
@@ -1073,7 +1073,7 @@ size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* ou
         // we only apply if it's not hanging off the right edge, if that's
         // the case we've fully loaded the memory we're overlaying.
         int dst_pos = rel.src_offset - head;
-        if (dst_pos + rel_size > tail) { break; }
+        if (rel.src_offset + rel_size > tail) { break; }
 
         // by this point, we've fully resolved the relocation
         TB_LinkerSymbol* sym = tb_linker_symbol_find(rel.target);
@@ -1084,6 +1084,7 @@ size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* ou
             }
         }
         TB_ASSERT(sym && sym->tag != TB_LINKER_SYMBOL_UNKNOWN && sym->tag != TB_LINKER_SYMBOL_LAZY);
+        uint64_t src_rva = section_rva + p->offset + rel.src_offset;
 
         // resolve source location
         uint64_t target_rva = 0;
@@ -1107,9 +1108,12 @@ size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* ou
             int64_t* dst = (int64_t*) &out[dst_pos];
             *dst += target_rva;
         } else {
-            uint32_t src_rva = section_rva + p->offset + rel.src_offset;
             int32_t* dst = (int32_t*) &out[dst_pos];
             *dst += resolve_reloc(sym, rel.type, src_rva, target_rva, rel.addend);
+
+            if (*dst == 0 && dst_pos > 0 && out[dst_pos - 1] == 0xE8) {
+                __debugbreak();
+            }
         }
         reloc_i += 1;
     }
