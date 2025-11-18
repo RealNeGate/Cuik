@@ -1266,7 +1266,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         }
     }
 
-    if (1) {
+    if (0) {
         tb_linker_print_map(l);
     }
 
