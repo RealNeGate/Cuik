@@ -1,5 +1,5 @@
 // This is the TB unity build
-void* tb_jit_stack_create(void);
+void* tb_jit_stack_create(size_t);
 
 #define TB_GEN_IMPL
 #include "tb.c"
@@ -104,9 +104,7 @@ bool tb_platform_vprotect(void* ptr, size_t size, TB_MemProtect prot) {
 }
 
 #if NTDDI_VERSION >= NTDDI_WIN10_RS4
-void* tb_jit_stack_create(void) {
-    size_t size = 2*1024*1024;
-
+void* tb_jit_stack_create(size_t size) {
     // natural alignment stack because it makes it easy to always find
     // the base.
     MEM_EXTENDED_PARAMETER param = {
@@ -119,8 +117,8 @@ void* tb_jit_stack_create(void) {
 #endif /* NTDDI_VERSION >= NTDDI_WIN10_RS4 */
 #elif defined(_POSIX_C_SOURCE)
 
-void* tb_jit_stack_create(void) {
-    return mmap(NULL, 2*1024*1024, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+void* tb_jit_stack_create(size_t size) {
+    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
 }
 
 void* tb_platform_valloc(size_t size) {

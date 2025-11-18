@@ -551,11 +551,11 @@ Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cuik_BuildS
     s->ld.cu->ir_mod = tb_module_create(
         args->target->arch, (TB_System) cuik_get_target_system(args->target), args->run
     );
-    #endif
 
     if (!args->nochkstk) {
         tb_module_enable_chkstk(s->ld.cu->ir_mod);
     }
+    #endif
 
     for (size_t i = 0; i < dep_count; i++) {
         deps[i]->anti_dep = s;
@@ -648,6 +648,8 @@ void cuikpp_dump_tokens(TokenStream* s) {
 
     Token* tokens = cuikpp_get_tokens(s);
     size_t count = cuikpp_get_token_count(s);
+
+    bool color_kw = true;
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
 
@@ -708,8 +710,13 @@ void cuikpp_dump_tokens(TokenStream* s) {
             printf("L");
         }
 
-        // Normal token printing
-        printf("%.*s", (int) t->content.length, t->content.data);
+        if (color_kw && t->type >= 0x800000) {
+            // Normal token printing
+            printf("\x1b[32m%.*s\x1b[0m", (int) t->content.length, t->content.data);
+        } else {
+            // Normal token printing
+            printf("%.*s", (int) t->content.length, t->content.data);
+        }
     }
     printf("\n");
 }
@@ -880,8 +887,8 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
 
     TB_FeatureSet features;
     if (1) {
-       int err = tb_features_parse(&features, mod, "x86_64-v1");
-       assert(!err);
+        int err = tb_features_parse(&features, mod, "x86_64-v1");
+        assert(!err);
     }
 
     if (tp != NULL) {

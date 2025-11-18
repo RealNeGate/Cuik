@@ -228,7 +228,10 @@ void pe_append_module(TPool* pool, void** args) {
     #define ON(mask, a, b) flags |= (sections[i].flags & mask ? (a) : (b))
     size_t reloc_count = 0;
     dyn_array_for(i, sections) {
-        uint32_t flags = 0;
+        uint32_t flags = TB_COFF_SECTION_READ;
+        ON(TB_MODULE_SECTION_WRITE, TB_COFF_SECTION_WRITE, 0);
+        ON(TB_MODULE_SECTION_EXEC,  TB_COFF_SECTION_EXECUTE | TB_COFF_SECTION_CODE, TB_COFF_SECTION_INIT);
+        if (sections[i].comdat.type != 0) flags |= TB_COFF_SECTION_COMDAT;
 
         // fill out the section data
         unsigned char* raw_data = tb_arena_alloc(&linker_perm_arena, sections[i].total_size);
@@ -253,12 +256,6 @@ void pe_append_module(TPool* pool, void** args) {
         p->reloc_count = sections[i].reloc_count;
         p->relocs = &relocs[reloc_count];
         reloc_count += sections[i].reloc_count;
-
-        /*uint32_t flags = TB_COFF_SECTION_READ;
-        ON(TB_MODULE_SECTION_WRITE, TB_COFF_SECTION_WRITE, 0);
-        ON(TB_MODULE_SECTION_EXEC,  TB_COFF_SECTION_EXECUTE | TB_COFF_SECTION_CODE, TB_COFF_SECTION_INIT);
-        if (sections[i].comdat.type != 0) flags |= TB_COFF_SECTION_COMDAT;
-        sections[i].export_flags = flags;*/
     }
     #undef ON
 
@@ -337,7 +334,8 @@ void pe_append_module(TPool* pool, void** args) {
                 relocs[reloc_count++] = (TB_LinkerReloc){
                     .src_offset = actual_pos,
                     .type = p->type,
-                    .target = target->address
+                    .target = target->address,
+                    .addend = -4,
                 };
             }
         }
@@ -406,6 +404,8 @@ void pe_append_object(TPool* pool, void** args) {
             TB_ObjectSection* restrict s = &sections[i];
             tb_coff_parse_section(&parser, i, s);
 
+            int dollar = find_char(s->name, '$');
+
             // trim the dollar sign (if applies)
             /* TB_Slice coff_order = { 0 };
             int dollar = find_char(s->name, '$');
@@ -418,7 +418,7 @@ void pe_append_object(TPool* pool, void** args) {
             // printf("L: %zu %.*s (dollar: %d)\n", s->name.length, (int) s->name.length, s->name.data, dollar);
 
             size_t drectve_len = sizeof(".drectve")-1;
-            if (s->name.length == drectve_len && memcmp(s->name.data, ".drectve", drectve_len) == 0) {
+            if (dollar >= drectve_len && memcmp(s->name.data, ".drectve", drectve_len) == 0) {
                 // printf("tb-link: Directives: %.*s\n", (int) s->raw_data.length, s->raw_data.data);
                 parse_directives(l, s->raw_data.data, s->raw_data.data + s->raw_data.length);
                 continue;
@@ -451,9 +451,9 @@ void pe_append_object(TPool* pool, void** args) {
                 p->flags |= TB_LINKER_PIECE_COMDAT;
             }
 
-            if (s->name.length == 5 && memcmp(s->name.data, ".text", 5) == 0) {
+            if (dollar == 5 && memcmp(s->name.data, ".text", 5) == 0) {
                 text_piece = p;
-            } else if (s->name.length == 6 && memcmp(s->name.data, ".pdata", 6) == 0) {
+            } else if (dollar == 6 && memcmp(s->name.data, ".pdata", 6) == 0) {
                 pdata_piece = p;
             }
         }
@@ -1143,26 +1143,7 @@ static DynArray(PE_BaseReloc) find_base_relocs(TB_Linker* l) {
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
 static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
-
-    if (l->jobs.pool != NULL) {
-        bool repeat;
-        do {
-            tb_linker_barrier(l);
-
-            // once we've completed whatever jobs we can do another round of defaultlibs
-            mtx_lock(&l->lock);
-            repeat = dyn_array_length(l->default_libs);
-            dyn_array_for(i, l->default_libs) {
-                tb_linker_append_library(l, l->default_libs[i]);
-            }
-            dyn_array_clear(l->default_libs);
-            mtx_unlock(&l->lock);
-        } while (repeat);
-    } else {
-        for (size_t i = 0; i < dyn_array_length(l->default_libs); i++) {
-            tb_linker_append_library(l, l->default_libs[i]);
-        }
-    }
+    tb_linker_complete_appends(l);
 
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
         dyn_array_for(i, info->merges) {

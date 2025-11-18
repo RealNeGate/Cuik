@@ -27,7 +27,7 @@
 #include <threads.h>
 #endif
 
-#ifdef ENABLE_TRACING
+#ifdef CUIK_USE_SPALL_AUTO
 #include "spall_native_auto.h"
 #endif
 
@@ -417,11 +417,9 @@ int _tpool_worker(void *ptr) {
     tpool_current_thread_idx = current_thread->idx;
     TPool *pool = current_thread->pool;
 
-    #ifdef CUIK_USE_CUIK
     cuikperf_thread_start();
-    #endif
 
-    #ifdef ENABLE_TRACING
+    #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_thread_init(tpool_current_thread_idx, SPALL_DEFAULT_BUFFER_SIZE);
     #endif
 
@@ -479,14 +477,11 @@ int _tpool_worker(void *ptr) {
         _tpool_wait(&pool->tasks_available, state);
     }
 
-    #ifdef ENABLE_TRACING
+    #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_thread_quit();
     #endif
 
-    #ifdef CUIK_USE_CUIK
     cuikperf_thread_stop();
-    #endif
-
     return 0;
 }
 

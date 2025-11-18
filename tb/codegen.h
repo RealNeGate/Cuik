@@ -135,7 +135,7 @@ typedef struct {
 // there's also the degenerate case where the bundle is always 1
 // node (most superscalars are in this camp)
 typedef struct {
-    bool has_safepoint;
+    TB_Node* safepoint;
     int count;
     TB_Node** arr;
 } Bundle;

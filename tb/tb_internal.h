@@ -608,6 +608,7 @@ struct TB_Module {
     // Concurrent collecting GC based on C4
     struct {
         TB_Symbol* phase_control;
+        TB_Symbol* lvb_trap;
     } ccgc;
 
     // interning lattice

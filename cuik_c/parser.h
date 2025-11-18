@@ -13,7 +13,7 @@
 #include <tb.h>
 #endif
 
-#include "atoms.h"
+#include "../cuik_pp/atoms.h"
 #include <common.h>
 
 #define MAX_LOCAL_SYMBOLS (1 << 20)

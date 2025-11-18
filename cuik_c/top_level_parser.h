@@ -496,8 +496,8 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     parser.tags = cuik_symtab_create(&(Cuik_Type*){ NULL });
 
     if (parser.version == CUIK_VERSION_GLSL) {
-        #define X(name) parser.glsl.name = atoms_putc(#name);
-        #include "glsl_keywords.h"
+        #define X(name) atom_ ## name = atoms_putc(#name);
+        #include "pseudo_keywords.h"
     }
 
     if (pending_exprs) {

@@ -35,7 +35,7 @@ typedef struct {
     TB_ObjectRelocType type;
     uint32_t symbol_index;
     size_t virtual_address;
-    size_t addend;
+    int32_t addend;
 } TB_ObjectReloc;
 
 typedef enum {

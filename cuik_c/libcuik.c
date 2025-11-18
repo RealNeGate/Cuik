@@ -20,7 +20,6 @@
 #include <cuik_symtab.h>
 
 #include "ast_dump.c"
-#include "atoms.c"
 #include "types.c"
 #include "parser.c"
 #include "sema.c"

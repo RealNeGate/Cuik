@@ -30,7 +30,7 @@ if #arg >= 1 then
 end
 
 configs = {
-    "", "-O", "-g", "-O -g"
+    "", "-O", "-g", "-O -g", "-based", "-based -O"
 }
 
 local passed = 0

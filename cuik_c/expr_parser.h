@@ -266,9 +266,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     }
 
     size_t curr = 0;
-    char* buffer = tb_arena_alloc(parser->arena, total_len + 3);
-
-    buffer[curr++] = '\"';
+    unsigned char* buffer = tb_arena_alloc(parser->arena, total_len + 1);
 
     // Fill up the buffer
     s->list.current = saved_lexer_pos;
@@ -293,10 +291,35 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
         tokens_next(s);
     }
 
-    buffer[curr++] = '\"';
+    size_t out_i = 0, in_i = 0;
+    if (e->op == EXPR_WSTR) {
+        wchar_t* out = tb_arena_alloc(parser->arena, total_len + 1);
+        while (in_i < curr) {
+            int ch;
+            ptrdiff_t distance = parse_char(curr - in_i, (const char*) &buffer[in_i], &ch);
+            if (distance <= 0) {
+                abort(); // TODO: Error message
+            }
 
-    e->str.start = (const unsigned char*)buffer;
-    e->str.end = (const unsigned char*)(buffer + curr);
+            out[out_i++] = ch;
+            in_i += distance;
+        }
+        e->str = atoms_put(out_i*sizeof(wchar_t), (const unsigned char*) out);
+    } else {
+        // Since the input stream will always be ahead of the output stream, we can use the
+        // same array and just mutate it
+        while (in_i < curr) {
+            int ch;
+            ptrdiff_t distance = parse_char(curr - in_i, (const char*) &buffer[in_i], &ch);
+            if (distance <= 0) {
+                abort(); // TODO: Error message
+            }
+
+            buffer[out_i++] = ch;
+            in_i += distance;
+        }
+        e->str = atoms_put(out_i, buffer);
+    }
 }
 
 // primary-expression:
@@ -354,9 +377,8 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
                 e = push_expr(parser);
                 *e = (Subexpr){
-                    .op = EXPR_STR,
-                    .str.start = (const unsigned char*) name,
-                    .str.end = (const unsigned char*) &name[strlen(name)],
+                    .op  = EXPR_STR,
+                    .str = atoms_putc(name),
                 };
                 break;
             }
@@ -472,14 +494,9 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             break;
         }
 
-        case TOKEN_KW_Embed: {
-            tokens_next(s);
-
+        case TOKEN_MAGIC_EMBED_STRING: {
             SourceLoc opening_loc = tokens_get_location(s);
-            expect_char(s, '(');
-
             String content = tokens_get(s)->content;
-            tokens_next(s);
 
             Cuik_QualType char_type = cuik_uncanonical_type(&parser->target->signed_ints[CUIK_BUILTIN_CHAR]);
 
@@ -487,7 +504,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             *e = (Subexpr){
                 .op = EXPR_STR,
                 .has_visited = true,
-                .str = { content.data, content.data + content.length }
+                .str = atoms_put(content.length, content.data),
             };
 
             expect_closing_paren(s, opening_loc);

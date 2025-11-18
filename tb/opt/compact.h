@@ -135,6 +135,7 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
         CUIK_TIMED_BLOCK("compact IDs") {
             f->node_count = dyn_array_length(ws->items);
             if (f->types) {
+                size_t old_type_cap = f->type_cap;
                 f->type_cap = tb_next_pow2(f->node_count + 16);
 
                 Lattice** new_types = cuik_malloc(f->type_cap * sizeof(Lattice*));
@@ -142,7 +143,11 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
 
                 FOR_N(i, 0, dyn_array_length(ws->items)) {
                     uint32_t old_gvn = ws->items[i]->gvn;
-                    new_types[i] = f->types[old_gvn];
+                    if (old_gvn >= old_type_cap) {
+                        new_types[i] = lattice_from_dt(f, ws->items[i]->dt);
+                    } else {
+                        new_types[i] = f->types[old_gvn];
+                    }
                     ws->items[i]->gvn = i;
                 }
 

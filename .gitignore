@@ -101,3 +101,4 @@ tests/suite/foo.txt
 meta/instructions.xml
 include/tb_gen_public.h
 tb/tb_gen_private.h
+cuik_pp/dfa.h

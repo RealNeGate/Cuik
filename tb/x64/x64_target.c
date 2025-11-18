@@ -872,7 +872,7 @@ static CallingConv CC_SYSCALL = {
 
 static CallingConv CC_TRAPCALL = {
     .reg_saves[REG_CLASS_GPR] = (char[16]){
-        [RAX ... R15] = 'c',
+        [0 ... 15] = 'c',
     },
 
     .reg_saves[REG_CLASS_XMM] = (char[16]){
@@ -1783,13 +1783,43 @@ static bool node_peephole(Ctx* restrict ctx, TB_Node* n, TB_BasicBlock* bb, int 
 
 typedef struct {
     TB_CodeStub header;
+    Val src, dst;
 } Stub_LVB;
 
 static void stub_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_CodeStub* stub) {
+    Stub_LVB* lvb = (Stub_LVB*) stub;
+
     // PATCH call site
-    int32_t disp = e->count - (stub->pos + 4);
+    int32_t rpc  = stub->pos + 4;
+    int32_t disp = e->count - rpc;
     PATCH4(e, stub->pos, disp);
-    EMIT1(e, 0xCC);
+
+    Val sym = val_global(ctx->module->ccgc.lvb_trap, 0);
+    // we need a scratch reg
+    EMIT1(e, 0x50); // PUSH RAX
+    EMIT1(e, 0x51); // PUSH RCX
+    if (lvb->src.type == VAL_GPR) {
+        __(MOV, TB_X86_QWORD, Vgpr(RCX), &lvb->src);
+    } else if (lvb->src.reg != RCX || lvb->src.index != GPR_NONE || lvb->src.imm != 0) {
+        __(LEA, TB_X86_QWORD, Vgpr(RCX), &lvb->src);
+    }
+    __(CALL, TB_X86_QWORD, &sym);
+    if (lvb->dst.reg == RCX) {
+        __(ADD,  TB_X86_QWORD, Vgpr(RSP), Vimm(8));
+        __(MOV,  TB_X86_QWORD, &lvb->dst, Vgpr(RAX));
+        EMIT1(e, 0x58); // POP RAX
+    } else if (lvb->dst.reg == RAX) {
+        EMIT1(e, 0x59); // POP RCX
+        __(ADD,  TB_X86_QWORD, Vgpr(RSP), Vimm(8));
+    } else {
+        EMIT1(e, 0x59); // POP RCX
+        __(MOV,  TB_X86_QWORD, &lvb->dst, Vgpr(RAX));
+        EMIT1(e, 0x58); // POP RAX
+    }
+
+    // jmp load
+    disp = rpc - (e->count + 5);
+    EMIT1(e, 0xE9); EMIT4(e, disp);
 }
 
 static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
@@ -1895,7 +1925,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             GPR dst = op_gpr_at(ctx, n);
             __(MOV, TB_X86_QWORD, Vgpr(dst), Vgpr(RSP));
             // __(AND, TB_X86_QWORD, Vgpr(dst), Vimm(-0x200000));
-            __(AND, TB_X86_QWORD, Vgpr(dst), Vimm(-0x1000));
+            __(AND, TB_X86_QWORD, Vgpr(dst), Vimm(-0x4000));
             break;
         }
 
@@ -1977,6 +2007,28 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 }
             } else {
                 TB_OPTDEBUG(REGALLOC2)(EMIT1(e, 0x90));
+            }
+
+            // PTR2 -> PTR1
+            if (
+                n->dt.type == TB_TAG_PTR && n->dt.elem_or_addrspace == 1 &&
+                n->inputs[1]->dt.type == TB_TAG_PTR && n->inputs[1]->dt.elem_or_addrspace == 2
+            ) {
+                COMMENT("LVB %s, %s", GPR_NAMES[dst.reg], GPR_NAMES[src.reg]);
+
+                Stub_LVB* stub = add_code_stub(ctx, 0, sizeof(Stub_LVB));
+                stub->src = src;
+                stub->dst = dst;
+
+                // LOADED VALUE BARRIER (LVB)
+                Val global_nmt = op_at(ctx, n->inputs[n->input_count - 1]);
+                // bt global_nmt, addr
+                __(BT,  TB_X86_QWORD, &global_nmt, &dst);
+                // jb gc_trap_stub
+                EMIT1(e, 0x0F); EMIT1(e, 0x82); EMIT4(e, 0);
+                stub->header.pos = e->count-4;
+                // shr addr, 4
+                __(SHR, TB_X86_QWORD, &dst, Vimm(4));
             }
             break;
         }
@@ -2267,27 +2319,31 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 Val dst = op_at(ctx, n);
                 Val rm  = parse_cisc_operand(ctx, n, NULL, op);
 
-                if (op->mode == MODE_LD && is_gcref_dt(n->dt)) {
+                bool has_lvb = op->mode == MODE_LD && n->dt.type == TB_TAG_PTR && n->dt.elem_or_addrspace == 1;
+                if (has_lvb) {
                     if (rm.index >= 0) {
                         COMMENT("LVB %s, [%s + %s*%d + %d]", GPR_NAMES[dst.reg], GPR_NAMES[rm.reg], GPR_NAMES[rm.index], rm.imm);
                     } else {
                         COMMENT("LVB %s, [%s+%d]", GPR_NAMES[dst.reg], GPR_NAMES[rm.reg], rm.imm);
                     }
                 }
+
                 __(MOV, dt, &dst, &rm);
 
-                if (n->type == TB_x86_mov && op->mode == MODE_LD && is_gcref_dt(n->dt)) {
+                if (has_lvb) {
                     Stub_LVB* stub = add_code_stub(ctx, 0, sizeof(Stub_LVB));
+                    stub->src = rm;
+                    stub->dst = dst;
 
                     // LOADED VALUE BARRIER (LVB)
                     Val global_nmt = op_at(ctx, n->inputs[n->input_count - 1]);
-                    //   bt global_nmt, addr
+                    // bt global_nmt, addr
                     __(BT,  TB_X86_QWORD, &global_nmt, &dst);
-                    //   jb gc_trap_stub
+                    // jb gc_trap_stub
                     EMIT1(e, 0x0F); EMIT1(e, 0x82); EMIT4(e, 0);
                     stub->header.pos = e->count-4;
-                    // and addr, -4
-                    __(AND, TB_X86_QWORD, &dst, Vimm(-4));
+                    // shr addr, 4
+                    __(SHR, TB_X86_QWORD, &dst, Vimm(4));
                 }
             }
             break;

@@ -658,10 +658,7 @@ struct Subexpr {
         } cast;
 
         // represent both quoted literals
-        struct {
-            const unsigned char* start;
-            const unsigned char* end;
-        } str;
+        Atom str;
 
         // either sizeof(T) or _Alignof(T)
         struct {

@@ -1171,7 +1171,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra) {
         if (n->gvn == leader) {
             VReg* vreg = &ctx->vregs[vreg_id];
             vreg->reg_width  = tb__reg_width_from_dt(mask->class, n->dt);
-            vreg->spill_bias = mask->may_spill ? -1.0f : 1e6;
+            vreg->spill_bias = mask->may_spill ? -100.0f : 1e6;
         }
         mask = tb__reg_mask_meet(ctx, mask, ctx->vregs[vreg_id].mask);
 

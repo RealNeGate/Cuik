@@ -398,7 +398,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
 
                     COFF_ImageReloc* r = relocs++;
                     switch (p->type) {
-                        case TB_OBJECT_RELOC_REL32: r->Type = IMAGE_REL_AMD64_REL32;   break;
+                        case TB_OBJECT_RELOC_REL32:  r->Type = IMAGE_REL_AMD64_REL32;  break;
                         case TB_OBJECT_RELOC_SECREL: r->Type = IMAGE_REL_AMD64_SECREL; break;
                         default: tb_todo();
                     }

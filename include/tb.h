@@ -399,8 +399,10 @@ typedef struct {
     TB_MemoryOrder order2;
 } TB_NodeAtomic;
 
+typedef struct TB_Safepoint TB_Safepoint;
 typedef struct {
     void* userdata;
+    TB_Safepoint* sfpt;
     int saved_val_count;
 } TB_NodeSafepoint;
 
@@ -422,9 +424,6 @@ typedef struct {
 
 typedef struct {
     const char* tag;
-
-    // used for IR building
-    TB_Node *mem_in;
 } TB_NodeRegion;
 
 typedef struct TB_MultiOutput {
@@ -451,16 +450,17 @@ typedef struct {
     void* metadata;
 } TB_StackMapEntry;
 
-typedef struct TB_Safepoint {
+struct TB_Safepoint {
     TB_Function* func;
     TB_Node* node; // type == TB_SAFEPOINT
     void* userdata;
 
     uint32_t ip; // relative to the function body.
+    uint32_t frame_size;
 
     size_t count;
-    uint64_t has_refs[];
-} TB_Safepoint;
+    uint32_t refs[];
+};
 
 typedef enum {
     TB_MODULE_SECTION_WRITE = 1,
@@ -560,7 +560,7 @@ TB_API TB_Module* tb_module_create_for_host(bool is_jit);
 // compiled code.
 TB_API void tb_module_destroy(TB_Module* m);
 
-TB_API void tb_module_use_cc_gc(TB_Module* m, TB_Symbol* phase_control_sym);
+TB_API void tb_module_use_cc_gc(TB_Module* m, TB_Symbol* phase_control_sym, TB_Symbol* lvb_trap_fn);
 
 // When targetting windows & thread local storage, you'll need to bind a tls index
 // which is usually just a global that the runtime support has initialized, if you
@@ -654,6 +654,7 @@ typedef struct {
 
 typedef void (*TB_JIT_ExceptionHandler)(TB_JIT* jit, TB_Stacklet* stack, void* sp, void* pc);
 
+TB_API TB_Safepoint* tb_jit_get_safepoint(TB_JIT* jit, void* pc);
 TB_API void* tb_jit_resolve_addr(TB_JIT* jit, void* ptr, uint32_t* offset);
 TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 
@@ -662,6 +663,7 @@ TB_API void tb_jit_tag_object(TB_JIT* jit, void* ptr, void* tag);
 
 // Debugger stuff
 TB_API TB_Stacklet* tb_jit_thread_create(TB_JIT* jit, size_t ud_size, size_t stack_limit);
+TB_API void tb_jit_thread_init(TB_JIT* jit, TB_Stacklet* stack, size_t ud_size, size_t stack_limit);
 
 // offsetof user_data in the TB_Stacklet
 TB_API size_t tb_jit_thread_userdata(void);

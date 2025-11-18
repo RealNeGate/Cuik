@@ -252,6 +252,8 @@ static const char MAGIC_EMPTY_STRING[] = "";
 // include this if you want to enable the preprocessor debugger
 // #include "cpp_dbg.h"
 
+#include "atoms.c"
+
 // Basically a mini-unity build that takes up just the CPP module
 #include "cpp_symtab.h"
 #include "cpp_expand.h"

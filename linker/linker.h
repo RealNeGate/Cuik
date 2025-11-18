@@ -21,6 +21,7 @@
 #include "../tb/tb_internal.h"
 #endif
 
+typedef void TB_LinkerAppendFn(TPool* pool, void** args);
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 
 // basically an object file
@@ -33,6 +34,7 @@ struct TB_LinkerObject {
     uint64_t time;
 
     TB_LinkerObject* parent;
+    TB_LinkerAppendFn* fn;
 
     #ifdef CONFIG_HAS_TB
     // if not-NULL, the sections for the are in a TB_Module.
@@ -299,8 +301,9 @@ typedef struct TB_Linker {
     DynArray(TB_LinkerSection*) sections_arr;
     DynArray(TB_LinkerSegment*) segments;
 
-    // we track which symbols have not been resolved yet
-    DynArray(TB_LinkerSectionPiece*) worklist;
+    // During symbol inflation, it'll represent which TB_LinkerObject* are waiting to be parsed.
+    // During Mark-Live, we track which TB_LinkerSectionPiece* have not been resolved yet.
+    DynArray(void*) worklist;
 
     size_t trampoline_pos;  // relative to the .text section
     TB_Emitter trampolines; // these are for calling imported functions
@@ -388,5 +391,5 @@ void tb_linker_export_pieces(TB_Linker* l);
 // do layouting (requires GC step to complete)
 bool tb_linker_layout(TB_Linker* l);
 void tb_linker_print_map(TB_Linker* l);
-
+void tb_linker_complete_appends(TB_Linker* l);
 

@@ -427,7 +427,8 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
                     // check if it fits properly
                     if (expr_type->array.count == type->array.count + 1) {
                         // we chop off the null terminator
-                        e->str.end -= (e->op == EXPR_STR ? 1 : 2);
+                        // e->str.end -= (e->op == EXPR_STR ? 1 : 2);
+                        __debugbreak();
                         expr_type->array.count = type->array.count;
                     } else if (expr_type->array.count > type->array.count) {
                         diag_err(&tu->tokens, e->loc, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array.count, type->array.count);
@@ -905,57 +906,12 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
         }
 
         case EXPR_WSTR: {
-            const char* in = (const char*)(e->str.start + 1);
-            size_t len = ((const char*)e->str.end - 1) - in;
-
-            // it can't be bigger than the original
-            wchar_t* out = tb_arena_alloc(&tu->arena, (len + 1) * 2);
-
-            size_t out_i = 0, in_i = 0;
-            while (in_i < len) {
-                int ch;
-                ptrdiff_t distance = parse_char(len - in_i, &in[in_i], &ch);
-                if (distance < 0) abort();
-
-                assert(ch < 0x80);
-                out[out_i++] = ch;
-                in_i += distance;
-            }
-
-            assert(out_i <= len);
-            out[out_i++] = '\0';
-
-            e->str.start = (unsigned char*)&out[0];
-            e->str.end = (unsigned char*)&out[out_i];
-
             Cuik_QualType wchar_type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_SHORT]);
-            return cuik_uncanonical_type(cuik__new_array(&tu->types, wchar_type, out_i));
+            return cuik_uncanonical_type(cuik__new_array(&tu->types, wchar_type, atoms_len(e->str) + 1));
         }
         case EXPR_STR: {
-            const char* in = (const char*)(e->str.start + 1);
-            size_t len = ((const char*)e->str.end - 1) - in;
-
-            // it can't be bigger than the original
-            char* out = tb_arena_alloc(&tu->arena, len + 1);
-
-            size_t out_i = 0, in_i = 0;
-            while (in_i < len) {
-                int ch;
-                ptrdiff_t distance = parse_char(len - in_i, &in[in_i], &ch);
-                if (distance < 0) abort();
-
-                out[out_i++] = ch;
-                in_i += distance;
-            }
-
-            assert(out_i <= len);
-            out[out_i++] = '\0';
-
-            e->str.start = (unsigned char*)out;
-            e->str.end = (unsigned char*)(out + out_i);
-
             Cuik_QualType char_type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_CHAR]);
-            return cuik_uncanonical_type(cuik__new_array(&tu->types, char_type, out_i));
+            return cuik_uncanonical_type(cuik__new_array(&tu->types, char_type, atoms_len(e->str) + 1));
         }
 
         case EXPR_INITIALIZER: {

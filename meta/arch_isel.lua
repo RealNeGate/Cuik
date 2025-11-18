@@ -1,4 +1,4 @@
-local subpat_map = OrderedSet()
+local subpat_map  = OrderedSet()
 local operand_map = OrderedSet()
 
 add_line(0, "#include \"../emitter.h\"")
@@ -217,7 +217,7 @@ if arch_features then
 
     pub_lines[#pub_lines + 1] = ""
 end
-print(inspect(pub_lines))
+-- print(inspect(pub_lines))
 
 for i=1,#reg_classes do
     local n = reg_classes[i][3]

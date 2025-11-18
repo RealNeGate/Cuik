@@ -11,30 +11,27 @@
 #define ALWAYS_INLINE __attribute__((always_inline))
 #endif
 
+enum {
+    KW_C = 1, KW_GLSL = 2,
+};
+
 #include "dfa.h"
 
-static uint32_t hash(uint32_t k) {
-    uint32_t lo = (k & 0xFFFF) * (PERFECT_HASH_SEED & 0xFFFF);
-    uint32_t hi = (k >> 16u) * (PERFECT_HASH_SEED >> 16u);
-    return ((hi<<16u) + lo) >> 8u;
-}
 static uint64_t hash_with_len(const void* data, size_t len) {
     const uint8_t* p = data;
     uint64_t h = 0;
     for (size_t i = 0; i < len && i < 8; i++) {
         h |= (uint64_t)p[i] << (uint64_t)(i*8);
     }
-
-    uint32_t x = hash(h & 0xFFFFFFFF);
-    uint32_t y = hash(h >> 32u);
-    return (x + y) % 179;
+    return LEXER_KEYWORD_HASH(h);
 }
 
 TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
     size_t v = hash_with_len(str, len);
-    v = keywords_table[v];
+    uint8_t search = is_glsl ? (KW_GLSL | KW_C) : KW_C;
 
-    if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x800000) {
+    // keyword's not for our frontend
+    if ((keyword_type[v] & search) == 0) {
         return TOKEN_IDENTIFIER;
     }
 
@@ -59,6 +56,7 @@ TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_gl
 
     return memcmp((const char*) str, keywords[v], len) == 0 ? (0x800000 + v) : TOKEN_IDENTIFIER;
     #endif
+    return TOKEN_IDENTIFIER;
 }
 
 static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* current, unsigned char* start) {
@@ -161,253 +159,6 @@ static unsigned char* backslash_join(Lexer* restrict l, unsigned char* start, un
     Lexer mini = { .start = start, .current = start };
     lexer_read(&mini);
     return mini.current;
-}
-
-// NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
-// for some optimizations overall, one of the important ones is being able to read
-// a whole 16byte SIMD register at once for any SIMD optimizations.
-Token lexer_read(Lexer* restrict l) {
-    unsigned char* current = l->current;
-    Token t = { 0 };
-    bool leading_space = *current == ' ';
-
-    // branchless space skip
-    current += (*current == ' ');
-
-    // NOTE(NeGate): We canonicalized spaces \t \v
-    // in the preprocessor so we don't need to handle them
-    static uint64_t early_out[4] = {
-        [0] = (1ull << ' ') | (1ull << '\r') | (1ull << '\n') | (1ull << '/'),
-        [1] = (1ull << ('\\' - 64)),
-    };
-
-    while ((early_out[*current / 64] >> (*current % 64)) & 1) {
-        #if USE_INTRIN && CUIK__IS_X64
-        // SIMD whitespace skip
-        __m128i chars = _mm_loadu_si128((__m128i*) current);
-        __m128i mask = _mm_cmpeq_epi8(chars, _mm_set1_epi8(' '));
-        mask = _mm_or_si128(mask, _mm_cmpeq_epi8(chars, _mm_set1_epi8('\r')));
-
-        __m128i line = _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'));
-        mask = _mm_or_si128(mask, line);
-
-        uint32_t line_mask = _mm_movemask_epi8(line);
-        int len = __builtin_ffs(~(_mm_movemask_epi8(mask) | line_mask));
-        current += len - 1;
-
-        // mark hit line
-        int line_len = __builtin_ffs(line_mask);
-        if (*current != '\\' && line_len > 0 && line_len < len) {
-            t.hit_line = true;
-        }
-        #else
-        // skip whitespace
-        unsigned char* start = current;
-        while (*current == ' ' || *current == '\t') { current++; }
-
-        if (*current == '\r' || *current == '\n') {
-            current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
-            t.hit_line = true;
-        }
-        int len = (current - start) + 1;
-        #endif
-
-        // check for comments
-        if (*current == '/') {
-            if (current[1] == '/') {
-                do {
-                    current++;
-                } while (*current && *current != '\n');
-
-                current += 1;
-                t.hit_line = true;
-            } else if (current[1] == '*') {
-                current += 2;
-
-                unsigned char* start = current;
-                do {
-                    if (*current == '\n') t.hit_line = true;
-
-                    current++;
-                } while (*current && !(current[0] == '/' && current[-1] == '*'));
-                current++;
-            } else {
-                break;
-            }
-        } else if (*current == '\\') {
-            // backslash-newline join but it doesn't really do shit here
-            current += 1;
-            current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
-        } else if (len <= 1) {
-            // we didn't make progress exit
-            break;
-        }
-    }
-
-    // quit, we're done
-    unsigned char* start = current;
-    unsigned char first = *start;
-    if (__builtin_expect(first == '\0', 0)) {
-        return (Token){ .content = { 0, current } };
-    }
-    current++;
-
-    // eval first char
-    uint8_t eq_class = eq_classes[first];
-    uint64_t state = dfa[eq_class] & 63;
-
-    // eval rest
-    if (state) {
-        for (;;) {
-            uint8_t ch = *current;
-            // read convert to class (compresses the DFA a lot)
-            uint8_t eq_class = eq_classes[ch];
-            if (ch == first) { eq_class = 1; }
-            // eval DFA
-            uint64_t row = dfa[eq_class];
-            uint64_t next = (row >> (state & 63)) & 63;
-            if (next == 0) break;
-            state = next, current += 1;
-        }
-    }
-
-    // __debugbreak();
-
-    // generate valid token types
-    switch (state) {
-        case 48: {
-            if (current[-1] == '\\') {
-                current -= 1;
-            } else if (current[-1] == 'L' && (current[0] == '\'' || current[0] == '"')) {
-                char quote_type = *current++;
-                for (; *current && *current != quote_type; current++) {
-                    // skip escape codes
-                    if (*current == '\\') {
-                        // this will skip twice because of the for loop's next
-                        //  \  "  . . .
-                        //  ^     ^
-                        //  old   new
-                        current += 1;
-                    }
-                }
-
-                current += 1;
-                t.type = quote_type;
-
-                if (start[0] == 'L') {
-                    t.type += 256;
-                    start += 1;
-                }
-                break;
-            }
-
-            #if USE_INTRIN && CUIK__IS_X64
-            // check for escapes
-            __m128i pattern = _mm_set1_epi8('\\');
-            size_t length = current - start;
-
-            for (size_t i = 0; i < length; i += 16) {
-                __m128i bytes = _mm_loadu_si128((__m128i*) &start[i]);
-                __m128i test = _mm_cmpeq_epi8(bytes, pattern);
-                unsigned int mask = _mm_movemask_epi8(test);
-
-                if (__builtin_expect(mask, 0)) {
-                    // slow identifier lexing since we might have a universal character
-                    int endpoint = length - i;
-                    int last_escape = __builtin_ctz(mask);
-
-                    if (last_escape < endpoint) {
-                        current = slow_identifier_lexing(l, current, start);
-                        break;
-                    }
-                }
-            }
-            #else
-            for (unsigned char* s = start; s != current; s++) {
-                if (*s == '\\') {
-                    current = slow_identifier_lexing(l, current, start);
-                    break;
-                }
-            }
-            #endif
-
-            t.type = TOKEN_IDENTIFIER;
-            break;
-        }
-
-        case 54: {
-            t.type = TOKEN_INTEGER;
-            current -= 1;
-
-            // we've gotten through the simple integer stuff, time for floats
-            for (;;) {
-                char a = *current;
-                if (a == '.') {
-                    current += 1;
-                    t.type = TOKEN_FLOAT;
-                } else if ((a == 'e' || a == 'E' || a == 'p' || a == 'P') && (current[1] == '+' || current[1] == '-')) {
-                    t.type = TOKEN_FLOAT;
-                    current += 2;
-                } else if ((a >= '0' && a <= '9') || (a >= 'a' && a <= 'z') || (a >= 'A' && a <= 'Z')) {
-                    current += 1;
-                } else {
-                    break;
-                }
-            }
-            break;
-        }
-
-        default: {
-            if (current[-1] == '\'' || current[-1] == '"') {
-                char quote_type = start[0];
-                for (; *current && *current != quote_type; current++) {
-                    // skip escape codes
-                    if (*current == '\\') {
-                        // this will skip twice because of the for loop's next
-                        //  \  "  . . .
-                        //  ^     ^
-                        //  old   new
-                        current += 1;
-                    }
-                }
-
-                current += 1;
-                t.type = quote_type;
-
-                if (start[0] == 'L') {
-                    t.type += 256;
-                    start += 1;
-                }
-            } else {
-                // add chars together (max of 3)
-                int length = current - start;
-                assert(length <= 3);
-                // if (length > 3) length = 3;
-
-                uint32_t mask = UINT32_MAX >> ((4 - length) * 8);
-
-                // potentially unaligned access :P
-                uint32_t chars;
-                memcpy(&chars, start, sizeof(uint32_t));
-
-                t.type = chars & mask;
-            }
-            break;
-        }
-    }
-
-    // NOTE(NeGate): the lexer will modify code to allow for certain patterns
-    // if we wanna get rid of this we should make virtual code regions
-    if (__builtin_expect(current[0] == '\\' && (current[1] == '\r' || current[1] == '\n'), 0)) {
-        current = backslash_join(l, start, current);
-    }
-    l->current = current;
-
-    // encode token
-    t.has_space = leading_space;
-    t.content = (String){ current - start, start };
-    t.location = encode_file_loc(l->file_id, start - l->start);
-    return t;
 }
 
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {

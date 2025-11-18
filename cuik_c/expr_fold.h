@@ -171,8 +171,7 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* t
         }
         case EXPR_STR:
         case EXPR_WSTR: {
-            Atom str = atoms_put(exprs[i].str.end - exprs[i].str.start, exprs[i].str.start);
-            *res = (Cuik_ConstVal){ CUIK_CONST_STR, .str = str };
+            *res = (Cuik_ConstVal){ CUIK_CONST_STR, .str = exprs[i].str };
             return i - 1;
         }
         default: break;

@@ -145,7 +145,7 @@ static void dump_pretty_sched(Ctx* restrict ctx) {
     #endif
 }*/
 
-static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b) {
+static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, ArenaArray(TB_Safepoint*)* safepoints, Bundle* b) {
     #if TB_OPTDEBUG_EMIT
     FOR_N(i, 0, b->count) {
         if (i) {
@@ -164,7 +164,17 @@ static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b)
     #endif
 
     bundle_emit(ctx, e, b);
+    if (b->safepoint) {
+        TB_Safepoint* sfpt = TB_NODE_GET_EXTRA_T(b->safepoint, TB_NodeSafepoint)->sfpt;
+        if (sfpt) {
+            sfpt->ip = GET_CODE_POS(e);
+            sfpt->frame_size = ctx->stack_usage;
+            aarray_push(*safepoints, sfpt);
+        }
+    }
+
     b->count = 0;
+    b->safepoint = NULL;
 }
 
 static TB_Node* node_add_tmp(Ctx* restrict ctx, TB_Node* n, RegMask* mask) {
@@ -445,8 +455,7 @@ static bool safe_to_dup(TB_Node* n) {
     } else if (n->type == TB_ROOT || (tb_node_get_flags(n) & (NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT))) {
         return false;
     } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
-        // don't dedup compares, it's basically always gonna fail
-        return false;
+        return true;
     } else if (n->type == TB_ICONST || n->type == TB_F32CONST || n->type == TB_F64CONST || n->type == TB_SYMBOL || n->type == TB_LOCAL) {
         // constants always dup
         return true;
@@ -512,6 +521,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     };
 
     init_ctx(&ctx, f->super.module->target_abi);
+    tb_opt_free_types(f);
+
     TB_Worklist* restrict ws = f->worklist;
 
     size_t og_size = tb_arena_current_size(&f->arena);
@@ -861,22 +872,22 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                 #if TB_OPTDEBUG_REGALLOC
                 if (vreg_id > 0) {
-                    printf("    OUT    = "), tb__print_regmask(def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
+                    printf("    OUT    = "), tb__print_regmask(&OUT_STREAM_DEFAULT, def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
                 }
 
                 FOR_N(k, 1, n->input_count) {
                     if (n->inputs[k]) {
                         if (n->inputs[k]->type == TB_MACH_TEMP) {
-                            printf("    TMP[%zu] = ", k), tb__print_regmask(ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
+                            printf("    TMP[%zu] = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
                         } else if (ctx.ins[k] != &TB_REG_EMPTY) {
-                            printf("    IN[%zu]  = ", k), tb__print_regmask(ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
+                            printf("    IN[%zu]  = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
                         }
                     }
                 }
 
                 int kill_count = node_constraint_kill(&ctx, n, ctx.ins);
                 FOR_N(k, 0, kill_count) {
-                    printf("    KILL[%zu] = ", k), tb__print_regmask(ctx.ins[k]), printf("\n");
+                    printf("    KILL[%zu] = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf("\n");
                 }
                 #endif
             }
@@ -1025,13 +1036,13 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         TB_CGEmitter* e = &ctx.emit;
         pre_emit(&ctx, e, f->root_node);
 
-        Bundle bundle;
+        Bundle bundle = { 0 };
         bundle.count = 0;
         bundle.arr = tb_arena_alloc(&f->tmp_arena, BUNDLE_INST_MAX * sizeof(Bundle));
 
         TB_OPTDEBUG(EMIT)(printf("====== EMIT %-20s ======\n", ctx.f->super.name));
 
-        ArenaArray(NodeIPPair) sfpt_nodes = aarray_create(&f->tmp_arena, NodeIPPair, 16);
+        ArenaArray(TB_Safepoint*) safepoints = aarray_create(code_arena, TB_Safepoint*, 16);
         FOR_N(i, 0, final_order_count) {
             int id = final_order[i];
             TB_BasicBlock* bb = &cfg.blocks[id];
@@ -1084,27 +1095,26 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     }
                 }
 
-                // can't have two safepoints in the same bundle
                 bool is_sfpt = tb_node_is_safepoint(n);
-                if (bundle.has_safepoint && is_sfpt) {
-                    legal = false;
+                if (is_sfpt) {
+                    if (bundle.safepoint) {
+                        // can't have two safepoints in the same bundle
+                        legal = false;
+                    } else {
+                        bundle.safepoint = n;
+                    }
                 }
 
                 // flush bundle
                 if (!legal && bundle.count > 0) {
-                    flush_bundle(&ctx, e, &bundle);
-                }
-
-                if (is_sfpt) {
-                    NodeIPPair pair = { n, GET_CODE_POS(e) };
-                    aarray_push(sfpt_nodes, pair);
+                    flush_bundle(&ctx, e, &safepoints, &bundle);
                 }
 
                 bundle.arr[bundle.count++] = n;
             }
 
             if (bundle.count > 0) {
-                flush_bundle(&ctx, e, &bundle);
+                flush_bundle(&ctx, e, &safepoints, &bundle);
             }
         }
         TB_OPTDEBUG(EMIT)(printf("=======================================\n"));
@@ -1124,34 +1134,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         tb_arena_free(code_arena, ctx.emit.data + ctx.emit.count, ctx.emit.capacity - ctx.emit.count);
         tb_arena_realign(code_arena);
 
-        if (aarray_length(sfpt_nodes) > 0) {
-            CUIK_TIMED_BLOCK("build safepoint table") {
-                ArenaArray(TB_Safepoint*) safepoints = aarray_create(code_arena, TB_Safepoint*, aarray_length(sfpt_nodes));
-
-                // it's built sorted by PC to make binsearching for it easy... why? i'll probably
-                // care about it for random stack sample crap
-                aarray_for(i, sfpt_nodes) {
-                    TB_Node* n  = sfpt_nodes[i].n;
-                    uint32_t ip = sfpt_nodes[i].ip;
-
-                    TB_NodeSafepoint* n_sfpt = TB_NODE_GET_EXTRA(n);
-                    TB_Safepoint* sfpt = tb_arena_alloc(code_arena, sizeof(TB_Safepoint) + n_sfpt->saved_val_count*sizeof(int32_t));
-                    sfpt->func = ctx.f;
-                    sfpt->node = n;
-                    sfpt->userdata = n_sfpt->userdata;
-                    sfpt->ip = ip;
-                    /* FOR_N(i, 0, n_sfpt->saved_val_count) {
-                        TB_Node* in = n->inputs[3 + i];
-                        VReg* vreg = &ctx.vregs[ctx.vreg_map[in->gvn]];
-                        TB_ASSERT(vreg->assigned >= 0);
-
-                        sfpt->values[i] = (vreg->class << 24u) | vreg->assigned;
-                    } */
-                    aarray_push(safepoints, sfpt);
-                }
-
-                func_out->safepoints = safepoints;
-            }
+        if (aarray_length(safepoints)) {
+            func_out->safepoints = safepoints;
         }
 
         // fill jump table entries
@@ -1181,6 +1165,13 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[32m"));
             EMITA(&ctx.emit, "// %s = [rsp + %d]\n", s->name, (ctx.stack_usage - ctx.stack_header) + s->storage.offset);
             TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[0m"));
+        }
+        if (func_out->safepoints) {
+            aarray_for(i, func_out->safepoints) {
+                TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[32m"));
+                EMITA(&ctx.emit, "// SFPT[%d] = ...\n", func_out->safepoints[i]->ip);
+                TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[0m"));
+            }
         }
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 

@@ -1,4 +1,7 @@
 
+#define X(name) static Atom atom_ ## name;
+#include "pseudo_keywords.h"
+
 static int parse_glsl_layout_attrib(TokenStream* restrict s, const SourceRange* r, Atom key, intmax_t value) {
     if (value < 0) {
         diag_err(s, *r, "layout '%s' cannot be negative or missing.", key);
@@ -62,7 +65,7 @@ static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, Token
                     bool success = false;
                     SourceRange r = { start, tokens_get_last_location(s) };
 
-                    #define X(name) if (key == parser->glsl.name) { glsl->name = parse_glsl_layout_attrib(s, &r, #name, value); success = (glsl->name >= 0); }
+                    #define X(name) if (key == atom_ ## name) { glsl->name = parse_glsl_layout_attrib(s, &r, #name, value); success = (glsl->name >= 0); }
                     X(binding);
                     X(location);
                     X(offset);

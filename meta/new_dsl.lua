@@ -11,9 +11,12 @@ node_count = 1
 all_nodes:put("NULL", { idx=0, flags={} })
 
 lines = {}
+
 function add_line(depth, line)
     lines[#lines + 1] = string.rep(" ", depth*4) .. line
 end
+add_line(0, "#pragma once")
+add_line(0, "")
 
 function decl_type(storage_class, n, name)
     local name = n[2]
@@ -250,6 +253,9 @@ for k,v in all_nodes:iter() do
         for f,_ in pairs(curr.flags) do
             v.flags[f] = true
         end
+        if not v.extra then
+            v.extra = curr.extra
+        end
         curr = all_nodes:get(curr.parent)
     end
 
@@ -258,12 +264,11 @@ for k,v in all_nodes:iter() do
         attributes:put(f, k)
     end
 end
-print(inspect(attributes.entries))
+-- print(inspect(attributes.entries))
 
 --------------------------
 -- Generate public file
 --------------------------
-add_line(0, "#pragma once")
 add_line(0, "typedef uint16_t TB_NodeType;")
 add_line(0, "typedef enum TB_NodeTypeEnum {")
 for k,v in all_nodes:iter() do
@@ -422,7 +427,7 @@ if true then
 end
 
 local arch_isel, err = loadfile("meta/arch_isel.lua")
-print(arch_isel, err)
+-- print(arch_isel, err)
 
 for k,v in pairs(targets) do
     if k ~= "___" then

@@ -828,6 +828,8 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         ra.hrp[i].end[0]   = -1;
     }
 
+    TB_OPTDEBUG(REGALLOC3)(rogers_dump_sched(ctx, f->node_count));
+
     int rounds = 0;
     size_t last_spills = 0;
     cuikperf_region_start("main loop", NULL);
@@ -916,18 +918,21 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                             }
 
                             if (tb_node_is_safepoint(n)) {
-                                printf("# ");
-                                tb_print_dumb_node(NULL, n);
-                                printf("\n  Live:\n");
+                                TB_Safepoint* sfpt = tb_arena_alloc(ctx->emit.arena, sizeof(TB_Safepoint) + aarray_length(stack)*sizeof(int32_t));
+                                sfpt->func = ctx->f;
+                                sfpt->node = n;
+                                sfpt->count = aarray_length(stack);
 
                                 aarray_for(k, stack) {
                                     TB_ASSERT(ctx->vreg_map[stack[k]] > 0);
                                     VReg* v = &ctx->vregs[ctx->vreg_map[stack[k]]];
-
-                                    printf("  ");
-                                    tb_print_dumb_node(NULL, ra.gvn2node[stack[k]]);
-                                    printf("\n");
+                                    int ref_type = ra.gvn2node[stack[k]]->dt.elem_or_addrspace;
+                                    sfpt->refs[k] = (v->class << 24u) | (v->assigned << 8u) | ref_type;
                                 }
+
+                                TB_NodeSafepoint* n_sfpt = TB_NODE_GET_EXTRA(n);
+                                sfpt->userdata = n_sfpt->userdata;
+                                n_sfpt->sfpt = sfpt;
                             }
 
                             // start intervals
@@ -1709,7 +1714,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             RegMask** kills = ctx->ins;
             int kill_count = ctx->constraint_kill(ctx, n, kills);
             FOR_N(k, 0, kill_count) {
-                TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mCLOBBERING "), tb__print_regmask(kills[k]), printf("\x1b[0m\n"));
+                TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mCLOBBERING "), tb__print_regmask(&OUT_STREAM_DEFAULT, kills[k]), printf("\x1b[0m\n"));
 
                 bool hrp_point = false;
                 int kill_class = kills[k]->class;

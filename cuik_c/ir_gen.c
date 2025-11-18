@@ -168,22 +168,21 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
     // string literals
     Subexpr* s = get_root_subexpr(e);
     if (s->op == EXPR_STR || s->op == EXPR_WSTR) {
-        size_t len = s->str.end - s->str.start;
-
+        size_t len = atoms_len(s->str) + 1;
         if (type->kind == KIND_PTR) {
-            uint32_t hash = tb__murmur3_32(s->str.start, len);
+            uint32_t hash = tb__murmur3_32(s->str, len);
 
             TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
             ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
             tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
 
             char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
-            memcpy(dst, s->str.start, len);
+            memcpy(dst, s->str, len);
 
             tb_global_add_symbol_reloc(tu->ir_mod, g, offset, (TB_Symbol*) dummy);
         } else {
             char* dst = tb_global_add_region(tu->ir_mod, g, offset, type->size);
-            memcpy(dst, s->str.start, len);
+            memcpy(dst, s->str, len);
         }
         return;
     }

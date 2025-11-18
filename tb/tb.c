@@ -127,8 +127,9 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     return info;
 }
 
-void tb_module_use_cc_gc(TB_Module* m, TB_Symbol* phase_control_sym) {
+void tb_module_use_cc_gc(TB_Module* m, TB_Symbol* phase_control_sym, TB_Symbol* lvb_trap_fn) {
     m->ccgc.phase_control = phase_control_sym;
+    m->ccgc.lvb_trap      = lvb_trap_fn;
 }
 
 TB_DataType tb_data_type_ptr_int(TB_Module* m) {
@@ -488,7 +489,7 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
             set_input(f, ret, phi, i + 3);
         }
 
-        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .mem_in = mem_phi, .tag = "ret");
+        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .tag = "ret");
     }
 
     f->prototype = p;

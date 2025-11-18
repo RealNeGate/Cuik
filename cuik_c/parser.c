@@ -176,13 +176,6 @@ struct Cuik_Parser {
     // used when expression building
     Cuik_Expr* expr;
 
-    struct {
-        // these are unique entries in the string interner so
-        // we can cache it here
-        #define X(name) Atom name;
-        #include "glsl_keywords.h"
-    } glsl;
-
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
     // Once top-level parsing is complete we'll compute the TU (which stores
