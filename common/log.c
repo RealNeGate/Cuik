@@ -22,8 +22,11 @@
  * Modified by NeGate for lovely reasons
  */
 #include "log.h"
-#include <threads.h>
 #include <inttypes.h>
+
+#if CUIK_ALLOW_THREADS
+#include <threads.h>
+#endif
 
 #ifdef _WIN32
 #ifdef _POSIX_C_SOURCE

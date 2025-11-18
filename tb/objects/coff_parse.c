@@ -96,7 +96,7 @@ TB_ObjectReloc tb_coff_parse_reloc(const COFF_ImageReloc* relocs, size_t i) {
     }
 
     if (relocs[i].Type >= IMAGE_REL_AMD64_REL32 && relocs[i].Type <= IMAGE_REL_AMD64_REL32_5) {
-        r.addend = -4 + (relocs[i].Type - IMAGE_REL_AMD64_REL32);
+        r.addend = -relocs[i].Type;
     }
 
     r.symbol_index    = relocs[i].SymbolTableIndex;

@@ -14,6 +14,20 @@ inspect = require "meta/inspect"
 
 -- silly little OS detection
 local is_windows = package.config:sub(1,1) == "\\"
+-- silly little architecture detection
+local arch = ""
+local arches = { -- todo: cover more possible values
+    ["AMD64"] = "x64",
+    ["x86_64"] = "x64",
+    ["aarch64"] = "a64",
+}
+if is_windows then
+    arch = os.getenv("PROCESSOR_ARCHITECTURE")
+else
+    arch = io.popen("uname -m"):read("*all")
+end
+arch = arch:match("%s*(%S*)%s*") -- info(walter): i'm assuming the arch text shouldn't contain whitespace
+arch = arches[arch]
 
 local options = {
     debug         = false,
@@ -21,7 +35,6 @@ local options = {
     tb            = false,
     driver        = false,
     shared        = false,
-    lld           = false,
     gcc           = false,
     asan          = false,
     spall_auto    = false,
@@ -141,9 +154,40 @@ function filename(file)
     return file:match("^.+/(.+)%..+")
 end
 
+local supported_archs = {
+    x64 = "-DTB_HAS_X64",
+    a64 = "-DTB_HAS_AARCH64",
+}
+
+local archs = ""
+for i=1,#arg do
+    if arg[i]:sub(1, 1) == "-" then
+        local a = arg[i]:sub(2)
+        if supported_archs[a] then
+            archs = archs.." "..supported_archs[a]
+            has_arch = true
+        else
+            options[a] = true
+        end
+    end
+end
+
+if not has_arch then
+    print("Listen brosef, you gotta pass me an arch (or archs) to compile:")
+    for k,v in pairs(supported_archs) do
+        print(k)
+    end
+    os.exit(0)
+end
+
 local cc = "clang"
+if options.gcc then
+    cc = "gcc"
+end
+
 rules({
     { name = "cc",   command = cc.." $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
+    { name = "cc2",  command = "cuik $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
     { name = "ld",   command = cc.." $in $flags -o $out",                  description = "LINK $out" },
     { name = "nasm", command = "nasm $in -f elf64 -o $out",                description = "NASM $out" },
     { name = "run",  command = "$cmd",                                     description = "$cmd"      },
@@ -153,24 +197,61 @@ rules({
 local visited = {}
 local srcs    = {}
 local is_exe  = false
-local archs = "-DTB_HAS_X64"
 
 local cflags = "-c -g -I include -I common"
 -- Warnings
 cflags = cflags.." -Wall -Werror -Wno-unused -Wno-microsoft-enum-forward-reference -Wno-deprecated"
+
 -- Options
-if use_mimalloc then cflags = cflags.." -DMI_SKIP_COLLECT_ON_EXIT -I mimalloc/include" end
-cflags = cflags.." -DCUIK_ALLOW_THREADS"
-cflags = cflags.." "..archs
+if not options.debug then
+    cflags = cflags.." -O2 -DNDEBUG"
+end
+
+if true then
+    cflags = cflags.." -DMI_SKIP_COLLECT_ON_EXIT -I mimalloc/include"
+end
+
+if not options.no_threads then
+    cflags = cflags.." -DCUIK_ALLOW_THREADS"
+end
+
+if options.asan then
+    cflags = cflags.." -fsanitize=address"
+end
+
+if options.spall_auto then
+    cflags = cflags.." -DCUIK_USE_SPALL_AUTO -finstrument-functions-after-inlining"
+end
+cflags = cflags..archs
+
 -- Target-specific
-cflags = cflags.." -march=haswell"
+if arch then
+    cflags = cflags.." -march=haswell"
+end
 
 local ldflags = ""
 if is_windows then
     cflags  = cflags.." -D_CRT_SECURE_NO_WARNINGS"
-    ldflags = "-fuse-ld=lld-link -g"
-else
+    ldflags = "-g"
+    if options.shared then
+        cflags = cflags.." -DCUIK_DLL -DTB_DLL"
+        ldflags = ldflags.." -shared"
+    end
 
+    if not options.gcc then
+        ldflags = ldflags.." -fuse-ld=lld-link"
+    end
+else
+    cflags  = cflags.." -D_GNU_SOURCE"
+    ldflags = " -lc -lm -g"
+    if not options.gcc then
+        ldflags = ldflags.." -fuse-ld=lld"
+    end
+
+    if options.shared then
+        cflags = cflags.." -fPIC"
+        ldflags = ldflags.." -shared"
+    end
 end
 
 local function walk(name)
@@ -197,9 +278,16 @@ local function walk(name)
     end
 end
 
-walk("tb")
-walk("cuik_c")
-walk("driver")
+walk("mimalloc")
+
+if options.cuik then
+    walk("cuik_c")
+end
+
+-- whatever the options says to compile, do that
+for k,v in pairs(options) do
+    if v and modules[k] then walk(k) end
+end
 
 -- Metaprogram: DSL's node stuff generator
 if visited["cuik_pp"] then
@@ -239,7 +327,13 @@ table.insert(lines, "")
 
 local out = "bin/cuik"
 if is_exe then
-    out = out..".exe"
+    if options.shared then
+        out = out..".dll"
+    else
+        out = out..".exe"
+    end
+elseif options.shared then
+    out = out..".so"
 end
 
 table.insert(lines, string.format("build %s: ld %s", out, table.concat(objs, " ")))
