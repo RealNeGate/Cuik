@@ -75,6 +75,7 @@ end
 lines[#lines + 1] = "#include \"../emitter.h\""
 lines[#lines + 1] = "#include \"../tb_internal.h\""
 lines[#lines + 1] = "#include <string.h>"
+lines[#lines + 1] = "#include <ctype.h>"
 lines[#lines + 1] = ""
 
 while true do
