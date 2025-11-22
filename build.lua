@@ -181,14 +181,23 @@ if not has_arch then
 end
 
 local cc = "clang"
+local ld = ""
 if options.gcc then
     cc = "gcc"
+    ld = "ld"
+else
+    if is_windows then
+        ld = "lld-link"
+    else
+        ld = "lld"
+    end
 end
 
 rules({
     { name = "cc",   command = cc.." $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
     { name = "cc2",  command = "cuik $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
-    { name = "ld",   command = cc.." $in $flags -o $out",                  description = "LINK $out" },
+    { name = "ld",   command = ld.." $in $flags$out",                  description = "LINK $out" },
+    { name = "ld2",  command = "cuik -link $in $flags -out:$out",          description = "LINK $out" },
     { name = "nasm", command = "nasm $in -f elf64 -o $out",                description = "NASM $out" },
     { name = "run",  command = "$cmd",                                     description = "$cmd"      },
     { name = "meta", command = arg[-1].." $script $out $in",               description = "META $out" }
@@ -232,14 +241,16 @@ end
 local ldflags = ""
 if is_windows then
     cflags  = cflags.." -D_CRT_SECURE_NO_WARNINGS"
-    ldflags = "-g"
+    ldflags = ""
     if options.shared then
         cflags = cflags.." -DCUIK_DLL -DTB_DLL"
         ldflags = ldflags.." -shared"
     end
 
-    if not options.gcc then
-        ldflags = ldflags.." -fuse-ld=lld-link"
+    if is_windows then
+        ldflags = ldflags.." --time-trace /debug /defaultlib:libcmt /out:"
+    else
+        ldflags = ldflags.." -g -o "
     end
 else
     cflags  = cflags.." -D_GNU_SOURCE"

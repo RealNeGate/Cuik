@@ -93,24 +93,6 @@ TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
     return l;
 }
 
-void tb_linker_barrier(TB_Linker* l) {
-    // finish up parsing all the object file tasks
-    cuikperf_region_start("barrier", NULL);
-    if (l->jobs.pool != NULL) {
-        int64_t old;
-        while (old = l->jobs.done, old != l->jobs.count) {
-            futex_wait(&l->jobs.done, old);
-        }
-    } else {
-        // process all items on the worklist
-        while (dyn_array_length(l->worklist)) {
-            TB_LinkerObject* obj = dyn_array_pop(l->worklist);
-            obj->fn(NULL, (void**) &obj);
-        }
-    }
-    cuikperf_region_end();
-}
-
 void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem) {
     l->subsystem = subsystem;
 }
@@ -166,6 +148,9 @@ void tb_linker_print_map(TB_Linker* l) {
     printf("\n  Address         Publics by Value              Rva+Base               Lib:Object\n\n");
     dyn_array_for(i, symbols) {
         TB_LinkerSymbol* sym = symbols[i];
+        if (sym->comdat == TB_LINKER_COMDAT_NONE) {
+            continue;
+        }
 
         uint32_t secidx = 0;
         uint32_t secrel = 0;
@@ -178,7 +163,7 @@ void tb_linker_print_map(TB_Linker* l) {
         // add padding
         printf("%*s", len < 80 ? 80 - len : 1, "");
         print_name(sym->normal.piece->obj->name);
-        printf("\n");
+        printf(" (%#llx)\n", sym->normal.piece->order);
     }
 }
 
@@ -200,7 +185,7 @@ bool tb__linker_is_library_new(TB_Linker* l, const char* file_name) {
 }
 
 static void append(TB_Linker* l, TB_LinkerObject* obj, TB_LinkerAppendFn* fn) {
-    if (l->jobs.pool != NULL) {
+    if (l->jobs.pool != NULL && !l->defer_jobs) {
         #if CUIK_ALLOW_THREADS
         l->jobs.count += 1;
         tpool_add_task(l->jobs.pool, fn, obj);
@@ -315,34 +300,73 @@ bool tb_linker_export(TB_Linker* l, const char* file_name) {
     return l->vtbl.export(l, file_name);
 }
 
-void tb_linker_complete_appends(TB_Linker* l) {
+static int compare_str(const void* a, const void* b) {
+    const char* aa = *(const char**) a;
+    const char* bb = *(const char**) b;
+    return strcmp(aa, bb);
+}
+
+void tb_linker_barrier(TB_Linker* l) {
+    // finish up parsing all the object file tasks
+    cuikperf_region_start("barrier", NULL);
     if (l->jobs.pool != NULL) {
-        bool repeat;
-        do {
-            tb_linker_barrier(l);
+        #if CUIK_ALLOW_THREADS
+        // process all items on the worklist
+        while (dyn_array_length(l->worklist)) {
+            TB_LinkerObject* obj = dyn_array_pop(l->worklist);
 
-            // once we've completed whatever jobs we can do another round of defaultlibs
-            mtx_lock(&l->lock);
-            repeat = dyn_array_length(l->default_libs);
-            dyn_array_for(i, l->default_libs) {
-                tb_linker_append_library(l, l->default_libs[i]);
-            }
-            dyn_array_clear(l->default_libs);
-            mtx_unlock(&l->lock);
-        } while (repeat);
+            l->jobs.count += 1;
+            tpool_add_task(l->jobs.pool, obj->fn, obj);
+        }
+
+        int64_t old;
+        while (old = l->jobs.done, old != l->jobs.count) {
+            futex_wait(&l->jobs.done, old);
+        }
+        #else
+        abort(); // Unreachable
+        #endif
     } else {
-        bool repeat;
-        do {
-            tb_linker_barrier(l);
-
-            // once we've completed whatever jobs we can do another round of defaultlibs
-            repeat = dyn_array_length(l->default_libs);
-            dyn_array_for(i, l->default_libs) {
-                tb_linker_append_library(l, l->default_libs[i]);
-            }
-            dyn_array_clear(l->default_libs);
-        } while (repeat);
+        // process all items on the worklist
+        while (dyn_array_length(l->worklist)) {
+            TB_LinkerObject* obj = dyn_array_pop(l->worklist);
+            obj->fn(NULL, (void**) &obj);
+        }
     }
+    cuikperf_region_end();
+}
+
+void tb_linker_complete_appends(TB_Linker* l) {
+    cuikperf_region_start("complete", NULL);
+    bool repeat;
+    do {
+        tb_linker_barrier(l);
+        l->defer_jobs = true;
+
+        log_info("LINKER BARRIER!");
+        qsort(l->default_libs, dyn_array_length(l->default_libs), sizeof(const char*), compare_str);
+
+        dyn_array_for(i, l->alternate_names) {
+            // if "from" was never defined, we should
+            TB_LinkerSymbol* from = tb_linker_find_symbol(l, l->alternate_names[i].from);
+            if (from != NULL && from->tag == TB_LINKER_SYMBOL_UNKNOWN) {
+                TB_LinkerSymbol* to = tb_linker_import_symbol(l, l->alternate_names[i].to);
+                tb_linker_symbol_weak(l, from, to);
+            }
+        }
+
+        // once we've completed whatever jobs we can do another round of defaultlibs
+        dyn_array_for(i, l->default_libs) {
+            tb_linker_append_library(l, l->default_libs[i]);
+        }
+
+        dyn_array_clear(l->alternate_names);
+        dyn_array_clear(l->default_libs);
+
+        repeat = dyn_array_length(l->worklist);
+        l->defer_jobs = false;
+    } while (repeat);
+    cuikperf_region_end();
 }
 
 void tb_linker_destroy(TB_Linker* l) {
@@ -406,9 +430,11 @@ size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align) {
     return write_pos;
 }
 
+// TODO(NeGate): I'm 99% sure this doesn't need locks, because both section pieces are being exclusively
+// owned by the same object file (and thus the one thread constructing them).
 void tb_linker_associate(TB_Linker* l, TB_LinkerSectionPiece* a, TB_LinkerSectionPiece* b) {
-    assert(a->assoc == NULL);
-    a->assoc = b;
+    b->comdat_parent = a;
+    dyn_array_put(a->assoc, b);
 }
 
 TB_LinkerSegment* tb_linker_find_segment(TB_Linker* linker, const char* name) {
@@ -566,6 +592,11 @@ TB_LinkerSymbol* tb_linker_symbol_find(TB_LinkerSymbol* sym) {
     return sym;
 }
 
+static bool strsuffix(const uint8_t* str, const char* suf, size_t len) {
+    size_t suflen = strlen(suf);
+    return len >= suflen && memcmp(&str[len - suflen], suf, suflen) == 0;
+}
+
 void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject* obj) {
     bool expected = false;
     if (atomic_compare_exchange_strong(&obj->loaded, &expected, true)) {
@@ -577,30 +608,82 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject*
             }
         }
 
+        if (strsuffix(obj->name.data, "cfg_fo.obj", obj->name.length)) {
+            __debugbreak();
+        }
+
+        /* static const char sss[] = "_guard_dispatch_icall";
+        if (sym->name.length == sizeof(sss)-1 && memcmp((const char*) sym->name.data, sss, sizeof(sss)-1) == 0) {
+            __debugbreak();
+        } */
+
         log_debug("Loaded %.*s for %.*s", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
         append(l, obj, l->vtbl.append_object);
+    }
+}
+
+static const char* tag_name(int tag) {
+    switch (tag) {
+        case TB_LINKER_SYMBOL_UNKNOWN: return "unknown";
+        case TB_LINKER_SYMBOL_NORMAL: return "normal";
+        case TB_LINKER_SYMBOL_LAZY: return "lazy";
+        case TB_LINKER_SYMBOL_TB: return "tb";
+        default: return "???";
     }
 }
 
 TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
     // printf("%.*s    %"PRIx32"\n", (int) sym->name.length, sym->name.data, tb__murmur3_32(sym->name.data, sym->name.length) & 65535);
 
+    static const char sss[] = "_guard_check_icall"; // "_guard_check_icall_$fo_default$";
+    if (sym->name.length == sizeof(sss)-1 && memcmp((const char*) sym->name.data, sss, sizeof(sss)-1) == 0) {
+        mtx_lock(&l->lock);
+        printf("INSERT %.*s %d (%s)", (int) sym->name.length, sym->name.data, sym->comdat, tag_name(sym->tag));
+
+        TB_LinkerObject* obj = NULL;
+        if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
+            obj = sym->normal.piece->obj;
+        } else if (sym->tag == TB_LINKER_SYMBOL_LAZY) {
+            obj = sym->lazy.obj;
+        }
+
+        if (obj) {
+            printf(" (");
+            print_name(obj->name);
+            if (obj->parent) {
+                printf(" : ");
+                print_name(obj->parent->name);
+            }
+            printf(")");
+        }
+        printf("\n");
+        mtx_unlock(&l->lock);
+    }
+
     // insert into global symbol table
     TB_LinkerSymbol* old2 = namehs_intern(&l->symbols, sym);
     TB_LinkerSymbol* old = tb_linker_symbol_find(old2);
     if (sym != old) {
         if (old->tag == TB_LINKER_SYMBOL_LAZY && sym->tag == TB_LINKER_SYMBOL_LAZY) {
-            // this doesn't force a resolution
-            sym = old;
+            // we assume the earlier lazy symbol is the one we use
+            if (old->lazy.obj->time > sym->lazy.obj->time) {
+                tb_linker_symbol_union(l, sym, old);
+            } else {
+                sym = old;
+            }
         } else if (old->tag == TB_LINKER_SYMBOL_LAZY || sym->tag == TB_LINKER_SYMBOL_LAZY) {
-            if (old->tag == TB_LINKER_SYMBOL_UNKNOWN) {
+            // Whichever symbol is lazy gets resolved
+            bool is_new_lazy = sym->tag == TB_LINKER_SYMBOL_LAZY;
+            bool is_new_leader;
+            if (is_new_lazy) {
                 tb_linker_lazy_resolve(l, sym, sym->lazy.obj);
-            } else if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN) {
+                is_new_leader = old->tag == TB_LINKER_SYMBOL_UNKNOWN;
+            } else {
                 tb_linker_lazy_resolve(l, old, old->lazy.obj);
+                is_new_leader = sym->tag != TB_LINKER_SYMBOL_UNKNOWN;
             }
 
-            // if we're requesting this symbol and it's lazy, load it :p
-            if (sym->tag != TB_LINKER_SYMBOL_LAZY) {
+            if (is_new_leader) {
                 tb_linker_symbol_union(l, sym, old);
             } else {
                 sym = old;
@@ -614,16 +697,39 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
             tb_linker_symbol_union(l, sym, old);
         } else if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN) {
             sym = old;
-        } else if (old->comdat != TB_LINKER_COMDAT_NONE) {
-            // COMDAT, we need to decide which of these lives but for now we don't care.
-            sym = old;
+        } else if (old->comdat != TB_LINKER_COMDAT_NONE || sym->comdat != TB_LINKER_COMDAT_NONE) {
+            // if only one is COMDAT, we always pick the COMDAT one
+            if (old->comdat == TB_LINKER_COMDAT_NONE) {
+                tb_linker_symbol_union(l, sym, old);
+            } else if (sym->comdat == TB_LINKER_COMDAT_NONE) {
+                sym = old;
+            } else {
+                // COMDAT, we need to decide which of these lives but for now we don't care.
+                uint64_t old_order = old->tag == TB_LINKER_SYMBOL_NORMAL ? old->normal.piece->order : 0;
+                uint64_t sym_order = sym->tag == TB_LINKER_SYMBOL_NORMAL ? sym->normal.piece->order : 0;
+                if (old_order > sym_order) {
+                    tb_linker_symbol_union(l, sym, old);
+                } else {
+                    sym = old;
+                }
+            }
         } else {
             // symbol collision if we're overriding something that's
             // not a forward ref.
             if (old->tag == TB_LINKER_SYMBOL_NORMAL && sym->tag == TB_LINKER_SYMBOL_NORMAL) {
+                mtx_lock(&l->lock);
                 printf("\x1b[31merror\x1b[0m: symbol collision: %.*s\n", (int) sym->name.length, sym->name.data);
-                printf("  old: "); print_name(old->normal.piece->obj->name); printf("\n");
-                printf("  new: "); print_name(sym->normal.piece->obj->name); printf("\n");
+                printf("  old: "); print_name(old->normal.piece->obj->name); if (old->normal.piece->obj->parent) {
+                    printf("(");
+                    print_name(old->normal.piece->obj->parent->name);
+                    printf(")");
+                } printf("\n");
+                printf("  new: "); print_name(sym->normal.piece->obj->name); if (sym->normal.piece->obj->parent) {
+                    printf("(");
+                    print_name(sym->normal.piece->obj->parent->name);
+                    printf(")");
+                } printf("\n");
+                mtx_unlock(&l->lock);
             }
             sym = old;
         }
@@ -1129,6 +1235,10 @@ void tb_linker_push_named(TB_Linker* l, const char* name) {
 }
 
 bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p) {
+    if (p->parent->name.length >= 6 && memcmp((const char*) p->parent->name.data, ".idata", 6) == 0) {
+        // __debugbreak();
+    }
+
     if (p->size == 0 || (p->flags & TB_LINKER_PIECE_LIVE) || (p->parent->generic_flags & TB_LINKER_SECTION_DISCARD)) {
         return false;
     }
@@ -1172,13 +1282,16 @@ void tb_linker_mark_live(TB_Linker* l) {
     cuikperf_region_end();
 
     cuikperf_region_start("mark", NULL);
+    size_t cnt = 0;
     while (dyn_array_length(l->worklist)) {
         TB_LinkerSectionPiece* p = dyn_array_pop(l->worklist);
-        // printf("Walk: %p\n", p);
+        cnt++;
+
+        // printf("Walk: %#llx (%zu, %.*s)\n", p->order, p->reloc_count, (int) p->obj->name.length, p->obj->name.data);
 
         // associated section
-        if (p->assoc) {
-            tb_linker_push_piece(l, p->assoc);
+        dyn_array_for(i, p->assoc) {
+            tb_linker_push_piece(l, p->assoc[i]);
         }
 
         // mark module content
@@ -1240,5 +1353,7 @@ void tb_linker_mark_live(TB_Linker* l) {
         }
     }
     cuikperf_region_end();
+
+    printf("Pieces: %zu\n", cnt);
 }
 

@@ -102,7 +102,7 @@ for i=1,#x do
     local pass = true
     for j=1,#configs do
         print("  Cuik:", configs[j])
-        code = os.execute(string.format("cuik %s %s && %s %s > cuik.txt", x[i], configs[j], exe_name, args))
+        code = os.execute(string.format("cuik2 %s %s && %s %s > cuik.txt", x[i], configs[j], exe_name, args))
         if code == 0 then
             local diff = os.execute("diff clang.txt cuik.txt")
             if diff ~= 0 then

@@ -81,7 +81,7 @@ static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* e
         const uint8_t* end = curr;
         while (end != end_directive && *end != ' ') end++;
 
-        // printf("directive: %.*s\n", (int) (end - curr), curr);
+        printf("directive: %.*s\n", (int) (end - curr), curr);
 
         if (*curr == 0 || curr == end_directive) {
             break;
@@ -109,6 +109,23 @@ static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* e
 
             // forcibly include symbol
             tb_linker_import_symbol(l, (TB_Slice){ curr, end - curr });
+        } else if (strprefix((const char*) curr, "/disallowlib:", end - curr)) {
+            curr += sizeof("/disallowlib:")-1;
+
+            int len = end - curr;
+            if (curr[0] == '"') {
+                curr += 1;
+                len -= 2;
+            }
+
+            // force the lib list to think this library is already opened
+            char* str = tb_arena_alloc(&linker_perm_arena, len + 1);
+            memcpy(str, curr, len + 1);
+            str[len] = 0;
+
+            if (strhs_intern(&l->libs, str) != str) {
+                tb_arena_free(&linker_perm_arena, str, len + 1);
+            }
         } else if (strprefix((const char*) curr, "/defaultlib:", end - curr)) {
             curr += sizeof("/defaultlib:")-1;
 
@@ -123,22 +140,26 @@ static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* e
 
             // low contention, don't care
             mtx_lock(&l->lock);
-            if (tb__linker_is_library_new(l, path)) {
-                dyn_array_put(l->default_libs, path);
-            }
+            dyn_array_put(l->default_libs, path);
             mtx_unlock(&l->lock);
         } else if (strprefix((const char*) curr, "/alternatename:", end - curr)) {
             curr += sizeof("/alternatename:")-1;
 
+            // If the symbol isn't defined yet
             const uint8_t* equals = curr;
             while (*equals && *equals != '=') equals++;
 
             // printf("alternate: %.*s\n", (int) (end - curr), curr);
             if (*equals == '=') {
-                // we convert the symbol into a weak one
-                TB_LinkerSymbol* from = tb_linker_import_symbol(l, (TB_Slice){ curr, equals - curr });
-                TB_LinkerSymbol* to   = tb_linker_import_symbol(l, (TB_Slice){ equals + 1, (end - equals) - 1 });
-                tb_linker_symbol_weak(l, from, to);
+                TB_LinkerCmd cmd = {
+                    .from = { curr, equals - curr },
+                    .to   = { equals + 1, (end - equals) - 1 },
+                };
+
+                // low contention, don't care
+                mtx_lock(&l->lock);
+                dyn_array_put(l->alternate_names, cmd);
+                mtx_unlock(&l->lock);
             }
         } else {
             // log_warn("unknown linker directive: %.*s", (int) (end - curr), curr);
@@ -377,7 +398,7 @@ void pe_append_object(TPool* pool, void** args) {
     }
 
     cuikperf_region_start2("object", obj->name.length - slash, (const char*) obj->name.data + slash);
-    // printf("tb-link: Reading (%.*s):\n", (int) (obj->name.length - slash), (const char*) obj->name.data + slash);
+    // printf("tb-link: Reading (%.*s), %#llx:\n", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->time);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -395,7 +416,7 @@ void pe_append_object(TPool* pool, void** args) {
     TB_ArenaSavepoint sp = tb_arena_save(&linker_tmp_arena);
 
     // Apply all sections (generate lookup for sections based on ordinals)
-    TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
+    TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL, *debug_piece = NULL;
     TB_ObjectSection* sections = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_ObjectSection));
 
     uint64_t order = obj->time;
@@ -405,18 +426,6 @@ void pe_append_object(TPool* pool, void** args) {
             tb_coff_parse_section(&parser, i, s);
 
             int dollar = find_char(s->name, '$');
-
-            // trim the dollar sign (if applies)
-            /* TB_Slice coff_order = { 0 };
-            int dollar = find_char(s->name, '$');
-            if (dollar < s->name.length) {
-                coff_order.length = s->name.length - (dollar + 1);
-                coff_order.data = &s->name.data[dollar + 1];
-
-                s->name.length = dollar;
-            } */
-            // printf("L: %zu %.*s (dollar: %d)\n", s->name.length, (int) s->name.length, s->name.data, dollar);
-
             size_t drectve_len = sizeof(".drectve")-1;
             if (dollar >= drectve_len && memcmp(s->name.data, ".drectve", drectve_len) == 0) {
                 // printf("tb-link: Directives: %.*s\n", (int) s->raw_data.length, s->raw_data.data);
@@ -449,18 +458,20 @@ void pe_append_object(TPool* pool, void** args) {
             p->relocs = &parser.file.data[s->relocation_offset];
             if (s->flags & IMAGE_SCN_LNK_COMDAT) {
                 p->flags |= TB_LINKER_PIECE_COMDAT;
-            }
-
-            if (dollar == 5 && memcmp(s->name.data, ".text", 5) == 0) {
-                text_piece = p;
-            } else if (dollar == 6 && memcmp(s->name.data, ".pdata", 6) == 0) {
-                pdata_piece = p;
+            } else {
+                if (dollar == 5 && memcmp(s->name.data, ".text", 5) == 0) {
+                    // assert(text_piece == NULL);
+                    text_piece = p;
+                } else if (dollar == 6 && memcmp(s->name.data, ".pdata", 6) == 0) {
+                    // assert(pdata_piece == NULL);
+                    pdata_piece = p;
+                }
             }
         }
     }
 
-    // associate the pdata with the text
-    if (text_piece) {
+    // associate the debug and pdata with the text
+    if (text_piece && pdata_piece) {
         tb_linker_associate(l, text_piece, pdata_piece);
     }
 
@@ -482,8 +493,11 @@ void pe_append_object(TPool* pool, void** args) {
             if (sym->section_num > 0) {
                 TB_ObjectSection* sec = &sections[sym->section_num - 1];
 
+                bool is_section = false;
                 if (sym->type == TB_OBJECT_SYMBOL_STATIC && sym->value == 0) {
                     if (sec->name.length == sym->name.length && memcmp(sec->name.data, sym->name.data, sym->name.length) == 0) {
+                        is_section = true;
+
                         // printf("L: %d %zu %.*s\n", dollar, sym->name.length, (int) sym->name.length, sym->name.data);
 
                         // COMDAT is how linkers handle merging of inline functions in C++
@@ -513,11 +527,20 @@ void pe_append_object(TPool* pool, void** args) {
                 COFF_AuxSectionSymbol* comdat_aux = search >= 0 ? comdat_sections[search].v : NULL;
 
                 TB_ASSERT(sym->type != TB_OBJECT_SYMBOL_WEAK_EXTERN);
-                if (sym->type == TB_OBJECT_SYMBOL_EXTERN) {
-                    if (comdat_aux) {
+                if (sym->type == TB_OBJECT_SYMBOL_EXTERN && (!is_section && comdat_aux)) {
+                    if (comdat_aux->selection == 1) {
+                        s->comdat = TB_LINKER_COMDAT_NODUP;
+                    } else if (comdat_aux->selection == 5) {
+                        s->comdat = TB_LINKER_COMDAT_ASSOCATIVE;
+
+                        TB_ObjectSection* assoc = &sections[comdat_aux->number - 1];
+                        TB_LinkerSectionPiece* assoc_piece = (TB_LinkerSectionPiece*) assoc->user_data;
+                        tb_linker_associate(l, assoc_piece, sec->user_data);
+                    } else {
                         s->comdat = TB_LINKER_COMDAT_ANY;
-                        nl_map_remove(comdat_sections, sym->section_num);
                     }
+
+                    // nl_map_remove(comdat_sections, sym->section_num);
                 }
             } else if (sym->type == TB_OBJECT_SYMBOL_EXTERN || sym->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
                 // symbols without a section number are proper externals (ones defined somewhere
@@ -661,7 +684,7 @@ void pe_append_library(TPool* pool, void** args) {
     }
 
     cuikperf_region_start2("library", lib->name.length - slash, (const char*) lib->name.data + slash);
-    log_debug("linking against %.*s", (int) lib->name.length, lib->name.data);
+    log_debug("linking against %.*s %#llx", (int) lib->name.length, lib->name.data, lib->time);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -1052,7 +1075,6 @@ static void pe_init(TB_Linker* l) {
     //   https://github.com/llvm/llvm-project/blob/3d0a5bf7dea509f130c51868361a38daeee7816a/lld/COFF/Driver.cpp#L2192
     symbol("__AbsoluteZero");
     symbol("__volatile_metadata");
-    symbol("__volatile_metadata");
     symbol("__guard_memcpy_fptr");
     symbol("__guard_fids_count");
     symbol("__guard_fids_table");
@@ -1174,12 +1196,12 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         tb_linker_mark_live(l);
     }
 
-    CUIK_TIMED_BLOCK("Merge ops") {
+    /* CUIK_TIMED_BLOCK("Merge ops") {
         tb_linker_merge_sections(l, tb_linker_find_section(l, ".00cfg"), rdata);
         tb_linker_merge_sections(l, tb_linker_find_section(l, ".idata"), rdata);
         tb_linker_merge_sections(l, tb_linker_find_section(l, ".xdata"), rdata);
         tb_linker_merge_sections(l, tb_linker_find_section(l, ".CRT"), rdata);
-    }
+    } */
 
     if (!tb_linker_layout(l)) {
         cuikperf_region_end();
@@ -1227,7 +1249,17 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         s->address = virt_addr;
         virt_addr += align_up(s->size, 4096);
 
-        log_debug("Segment %.*s: %#x - %#x", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
+        printf("Segment %.*s: %#zx - %#zx\n", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
+
+        /* if (s->name.length == 6 && memcmp(s->name.data, ".idata", 6) == 0) {
+            dyn_array_for(j, s->sections) {
+                dyn_array_for(k, s->sections[j]->pieces) {
+                    TB_LinkerSectionPiece* p = s->sections[j]->pieces[k];
+                    printf("PIECE %zu %.*s\n", p->size, (int) p->obj->name.length, p->obj->name.data);
+                }
+            }
+            printf("AAA %zu\n", s->size);
+        } */
     }
 
     if (l->main_reloc != NULL) {
@@ -1249,7 +1281,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
                         *((uint32_t*) &relocs.data[count_offset]) += 2;
                     }
 
-                    last_page = actual_page;
+                    last_page    = actual_page;
                     count_offset = relocs.count + 4;
 
                     tb_out4b(&relocs, actual_page);

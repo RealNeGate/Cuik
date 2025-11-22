@@ -190,6 +190,10 @@ int log_add_callback(log_LogFn fn, void *udata, int level) {
 }
 
 void log_log(int level, const char *file, int line, const char *fmt, ...) {
+    if (level < L.level) {
+        return;
+    }
+
     #if _WIN32
     int tid = GetCurrentThreadId();
     #else

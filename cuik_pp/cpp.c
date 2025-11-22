@@ -561,7 +561,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
     Cuik_FileResult main_file;
     CUIK_TIMED_BLOCK("load main file") {
         if (!ctx->fs(ctx->user_data, slot->filepath, &main_file, ctx->case_insensitive)) {
-            fprintf(stderr, "\x1b[31merror\x1b[0m: file \"%s\" doesn't exist.\n", slot->filepath->data);
+            fprintf(stderr, "\x1b[31merror\x1b[0m: main file \"%s\" doesn't exist.\n", slot->filepath->data);
             return CUIKPP_ERROR;
         }
     }

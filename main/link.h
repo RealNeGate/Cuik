@@ -81,7 +81,9 @@ static bool msvc_cli(TB_Linker* l, int argc, const char** argv) {
         if (arg[0] == '-' || arg[0] == '/') {
             arg += 1;
 
-            if (str_case_prefix(arg, "out:", 4)) {
+            if (str_case_prefix(arg, "j", 1)) {
+                // ignore it, handled earlier
+            } else if (str_case_prefix(arg, "out:", 4)) {
                 link_output_name = arg + 4;
             } else if (str_case_prefix(arg, "libpath:", 8)) {
                 tb_linker_add_libpath(l, arg + 8);
@@ -113,7 +115,7 @@ int run_link(int argc, const char** argv) {
     // find toolchain details from Cuik
     Cuik_Linker cl = { .toolchain = cuik_toolchain_host() };
     cl.toolchain.ctx = cl.toolchain.init();
-    cuiklink_apply_toolchain_libs(&cl, false);
+    cuiklink_apply_toolchain_libs(&cl, true);
 
     int status = EXIT_SUCCESS;
     CUIK_TIMED_BLOCK("driver") {
@@ -125,10 +127,19 @@ int run_link(int argc, const char** argv) {
         #error "Wtf is this machine?"
         #endif
 
+        bool use_threads = false;
+        for (int i = 0; i < argc; i++) {
+            const char* arg = argv[i];
+            if (str_case_prefix(arg, "-j", 2)) {
+                use_threads = true;
+                break;
+            }
+        }
+
         #if CUIK_ALLOW_THREADS
         TPool pool;
         tpool_init(&pool, 6);
-        TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, &pool);
+        TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, use_threads ? &pool : NULL);
         #else
         TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, NULL);
         #endif
@@ -175,7 +186,9 @@ int run_link(int argc, const char** argv) {
         }
 
         #if CUIK_ALLOW_THREADS
-        tpool_destroy(&pool);
+        if (use_threads) {
+            tpool_destroy(&pool);
+        }
         #endif
     }
 

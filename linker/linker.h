@@ -89,8 +89,9 @@ struct TB_LinkerSectionPiece {
     uint64_t order;
     TB_LinkerPieceFlags flags;
 
-    // mostly for .pdata crap
-    TB_LinkerSectionPiece* assoc;
+    // mostly for COMDAT associative sections
+    TB_LinkerSectionPiece* comdat_parent;
+    DynArray(TB_LinkerSectionPiece*) assoc;
 
     // mostly compact table from per-file symbol index -> symbol (some
     // indices are NULL because they map to COFF aux data)
@@ -189,9 +190,13 @@ typedef enum TB_LinkerSymbolFlags {
 typedef enum {
     TB_LINKER_COMDAT_NONE,
 
+    TB_LINKER_COMDAT_NODUP,
+
     // pick whichever (for threading reasons we'll use
     // the piece's order info for consistency).
     TB_LINKER_COMDAT_ANY,
+
+    TB_LINKER_COMDAT_ASSOCATIVE,
 } TB_LinkerComdatRule;
 
 typedef struct {
@@ -219,6 +224,7 @@ struct TB_LinkerSymbol {
     TB_LinkerSymbolFlags flags;
     TB_LinkerComdatRule  comdat;
 
+    _Atomic(TB_LinkerSymbol*) comdat_assoc;
     _Atomic(TB_LinkerSymbol*) weak_alt;
 
     union {
@@ -304,6 +310,7 @@ typedef struct TB_Linker {
     // During symbol inflation, it'll represent which TB_LinkerObject* are waiting to be parsed.
     // During Mark-Live, we track which TB_LinkerSectionPiece* have not been resolved yet.
     DynArray(void*) worklist;
+    bool defer_jobs;
 
     size_t trampoline_pos;  // relative to the .text section
     TB_Emitter trampolines; // these are for calling imported functions
@@ -324,6 +331,7 @@ typedef struct TB_Linker {
     mtx_t lock;
     DynArray(const char*) default_libs;
     DynArray(const char*) libpaths;
+    DynArray(TB_LinkerCmd) alternate_names;
     DynArray(TB_LinkerCmd) merges;
 
     _Alignas(64) struct {
