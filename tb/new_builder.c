@@ -329,6 +329,26 @@ TB_Node* tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_Node* a, TB_Node*
     TB_ASSERT_MSG(TB_IS_INTEGER_TYPE(a->dt), "datatype wasn't an integer");
     TB_ASSERT_MSG(type >= TB_AND && type <= TB_SMOD, "'type' wasn't an integer binop type (see TB_NodeTypeEnum)");
 
+    if (a->type == TB_ICONST && b->type == TB_ICONST) {
+        uint64_t x = TB_NODE_GET_EXTRA_T(a, TB_NodeInt)->value;
+        uint64_t y = TB_NODE_GET_EXTRA_T(b, TB_NodeInt)->value;
+        if (type == TB_ADD) {
+            return tb_builder_uint(g, a->dt, x + y);
+        } else if (type == TB_SUB) {
+            return tb_builder_uint(g, a->dt, x - y);
+        } else if (type == TB_MUL) {
+            return tb_builder_uint(g, a->dt, x * y);
+        } else if (type == TB_AND) {
+            return tb_builder_uint(g, a->dt, x & y);
+        } else if (type == TB_OR) {
+            return tb_builder_uint(g, a->dt, x | y);
+        } else if (type == TB_XOR) {
+            return tb_builder_uint(g, a->dt, x ^ y);
+        } else {
+            // printf("%s: Fold!!! %s\n", g->f->super.name, tb_node_get_name(type));
+        }
+    }
+
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, type, a->dt, 3, sizeof(TB_NodeBinopInt));
     set_input(f, n, a, 1);
@@ -403,8 +423,17 @@ TB_Node* tb_builder_ptr_array(TB_GraphBuilder* g, TB_Node* base, TB_Node* index,
 
     TB_Function* f = g->f;
     TB_Node* con = tb_builder_sint(g, TB_TYPE_I64, stride);
+
     TB_Node* scl = index;
-    if (stride != 1) {
+    if (index->type == TB_ICONST) {
+        uint64_t offset = TB_NODE_GET_EXTRA_T(index, TB_NodeInt)->value * stride;
+        if (base->type == TB_PTR_OFFSET && base->inputs[2]->type == TB_ICONST) {
+            offset += TB_NODE_GET_EXTRA_T(base->inputs[2], TB_NodeInt)->value;
+            base = base->inputs[1];
+        }
+
+        scl = tb_builder_uint(g, index->dt, offset);
+    } else if (stride != 1) {
         scl = tb_builder_binop_int(g, TB_MUL, index, con, 0);
     }
 
@@ -429,6 +458,9 @@ TB_Node* tb_builder_jit_thread_ptr(TB_GraphBuilder* g) {
 TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t offset) {
     if (offset == 0) {
         return base;
+    } else if (base->type == TB_PTR_OFFSET && base->inputs[2]->type == TB_ICONST) {
+        offset += TB_NODE_GET_EXTRA_T(base->inputs[2], TB_NodeInt)->value;
+        base = base->inputs[1];
     }
 
     TB_Function* f = g->f;

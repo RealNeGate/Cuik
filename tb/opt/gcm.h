@@ -25,9 +25,9 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
         }
     }
 
-    /* if (tb_node_is_always_sink(n)) {
+    if (get_lat(f, n, 0) <= 3) {
         return late;
-    } */
+    }
 
     TB_BasicBlock* best = late;
     for (;;) {
@@ -358,10 +358,10 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     TB_ASSERT(n->type != TB_NULL);
                     TB_ASSERT(!tb_node_is_pinned(n));
 
-                    TB_OPTDEBUG(GCM)(printf("%s: TRY LATE %%%u\n", f->super.name, n->gvn));
-
                     TB_BasicBlock* lca = NULL;
                     TB_BasicBlock* curr = f->scheduled[n->gvn];
+
+                    TB_OPTDEBUG(GCM)(printf("%s: TRY LATE %%%u (BB%zu)\n", f->super.name, n->gvn, curr - cfg.blocks));
 
                     // insert anti-deps
                     if (!tb_node_is_memory_out(n)) {

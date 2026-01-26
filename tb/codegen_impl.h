@@ -382,6 +382,24 @@ static bool is_vreg_match(Ctx* ctx, TB_Node* a, TB_Node* b) {
     return aa->class == bb->class && aa->assigned == bb->assigned;
 }
 
+static bool safe_to_dup(Ctx* ctx, TB_Node* n) {
+    // certain nodes can be duplicated safely
+    if (n->type == TB_PHI) {
+        return false;
+    } else if (n->type == TB_ROOT || (tb_node_get_flags(n) & (NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT))) {
+        return false;
+    } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
+        return true;
+    } else if (can_remat(ctx, n)) {
+        return true;
+    } else if (n->user_count > 3) {
+        // share if there's a lot of users
+        return false;
+    } else {
+        return true;
+    }
+}
+
 static bool postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node* n, size_t old_node_count) {
     // walk into old nodes so long as they're not
     if (n == NULL || set_get(shared, n->gvn) || worklist_test_n_set(ws, n)) {
@@ -393,7 +411,7 @@ static bool postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node*
         TB_OPTDEBUG(ISEL)(printf("  PUSH "), tb_print_dumb_node(NULL, n), printf("\n"));
         dyn_array_put(ws->items, n);
 
-        if (n->user_count > 1) {
+        if (!safe_to_dup(ctx, n)) {
             set_put(shared, n->gvn);
         }
     } else {
@@ -430,7 +448,7 @@ static void print_tree(Set* shared, TB_Node* n) {
     } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
         printf(" %.10f", f->value);
-    } else if (n->type >= 0x100) {
+    } else if (n->type >= TB_MACH_TEMP) {
         printf(" ");
         print_extra(&OUT_STREAM_DEFAULT, n);
     }
@@ -446,25 +464,6 @@ static void print_tree(Set* shared, TB_Node* n) {
         }
     }
     printf(")");
-}
-
-static bool safe_to_dup(TB_Node* n) {
-    // certain nodes can be duplicated safely
-    if (n->type == TB_PHI) {
-        return false;
-    } else if (n->type == TB_ROOT || (tb_node_get_flags(n) & (NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT))) {
-        return false;
-    } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
-        return true;
-    } else if (n->type == TB_ICONST || n->type == TB_F32CONST || n->type == TB_F64CONST || n->type == TB_SYMBOL || n->type == TB_LOCAL) {
-        // constants always dup
-        return true;
-    } else if (n->user_count > 3) {
-        // share if there's a lot of users
-        return false;
-    } else {
-        return true;
-    }
 }
 
 static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
@@ -568,7 +567,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         set_put(&shared, n->inputs[j]->gvn);
                     }
                 }
-            } else if (!safe_to_dup(n)) {
+            } else if (!safe_to_dup(&ctx, n)) {
                 set_put(&shared, n->gvn);
             }
 
@@ -648,6 +647,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             do {
                 progress = false;
                 ctx.dsl.top = 0;
+
                 MatchRuleID r = node_isel_raw(&ctx, f, &shared, n, 0);
                 TB_OPTDEBUG(ISEL)(printf("\n"));
 
@@ -666,29 +666,30 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         worklist_push(ws, sub_k);
                         set_put(&shared, sub_k->gvn);
 
-                        #if TB_OPTDEBUG_ISEL
-                        printf("  %%%u", sub_n->gvn);
-                        print_tree(&shared, sub_n);
-                        printf(" => %%%u", sub_k->gvn);
-                        print_tree(&shared, sub_k);
-                        printf("\n");
-                        #endif
+                        IF_OPT(ISEL) {
+                            printf("  %%%u", sub_n->gvn);
+                            print_tree(&shared, sub_n);
+                            printf(" => %%%u", sub_k->gvn);
+                            print_tree(&shared, sub_k);
+                            printf("\n");
+                        }
                     }
 
                     TB_Node* k = match_rules[r](&ctx, f, n);
-
-                    #if TB_OPTDEBUG_ISEL
-                    printf("  %%%u", n->gvn);
-                    print_tree(&shared, n);
-                    printf(" => %%%u", k->gvn);
-                    print_tree(&shared, k);
-                    printf("\n\n");
-                    #endif
+                    IF_OPT(ISEL) {
+                        printf("  %%%u", n->gvn);
+                        print_tree(&shared, n);
+                        printf(" => %%%u", k->gvn);
+                        print_tree(&shared, k);
+                        printf("\n\n");
+                    }
 
                     if (n != k) {
                         subsume_node(f, n, k);
                     }
-                    set_put(&shared, k->gvn);
+                    if (!safe_to_dup(&ctx, n)) {
+                        set_put(&shared, k->gvn);
+                    }
                     n = k;
                     progress = true;
                 }
@@ -747,7 +748,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
         #if !TB_OPTDEBUG_ISEL
-        tb_renumber_nodes(f, ws);
+        // tb_renumber_nodes(f, ws);
         #endif
 
         TB_OPTDEBUG(ISEL)(tb_print_dumb(f));
@@ -803,12 +804,12 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 TB_Node* n = ws->items[j];
 
                 // projections cannot emit code
-                #if TB_OPTDEBUG_SCHED2
-                if (!NODE_ISA(n, REGION)) {
-                    print_pretty(&ctx, n);
-                    printf("\n");
+                IF_OPT(SCHED2) {
+                    if (!NODE_ISA(n, REGION)) {
+                        print_pretty(&ctx, n);
+                        printf("\n");
+                    }
                 }
-                #endif
 
                 // temps are added as extras so they don't
                 // increase the "input_count"

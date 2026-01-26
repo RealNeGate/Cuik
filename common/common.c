@@ -175,6 +175,8 @@ void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
         top->avail += size;
         return p;
     } else {
+        cuikperf_region_start("arena_miss", NULL);
+
         // slow path, we need to allocate more chunks
         size_t chunk_size = TB_ARENA_NORMAL_CHUNK_SIZE;
         while (size > chunk_size - (sizeof(TB_ArenaChunk) + TB_ARENA_ALLOC_HEAD_SLACK)) {
@@ -182,6 +184,7 @@ void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
         }
 
         // log_debug("arena: alloc %.2f KiB", chunk_size / 1024.0f);
+        // printf("arena: alloc %.2f KiB\n", chunk_size / 1024.0f);
 
         TB_ArenaChunk* c = top->prev;
         c = cuik_malloc(sizeof(TB_ArenaChunk) + chunk_size - TB_ARENA_ALLOC_HEAD_SLACK);
@@ -190,6 +193,7 @@ void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
         c->limit = &c->data[chunk_size - sizeof(TB_ArenaChunk)];
 
         arena->top = c;
+        cuikperf_region_end();
         return c->data;
     }
 }

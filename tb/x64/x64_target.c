@@ -695,6 +695,8 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         const char* name = tb_node_get_name(n->type);
         name += 4;
 
+        printf("  %%%u ", n->gvn);
+
         TB_DataType dt = n->dt;
         X86MemOp* op = TB_NODE_GET_EXTRA(n);
         if (TB_IS_INT_OR_PTR(dt)) {
@@ -2696,7 +2698,7 @@ static int node_latency(TB_Function* f, TB_Node* n, int i) {
         }
 
         // complex addressing required, there's a displacement
-        if (n->type == TB_x86_lea && op->disp != 0) {
+        if (n->type == TB_x86_lea && (op->flags & OP_INDEXED) && op->disp != 0) {
             lat += 2;
         }
     }

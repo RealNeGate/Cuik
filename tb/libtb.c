@@ -7,6 +7,7 @@
 #include "debug_builder.c"
 #include "exporter.c"
 #include "disasm.c"
+#include "sparse_set.c"
 
 // JIT
 #include "jit.c"

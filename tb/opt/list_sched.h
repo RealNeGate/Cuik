@@ -66,7 +66,9 @@ static void ready_up(ListSched* sched, TB_Node* n) {
 
         // projections are readied but not in the ready list
         FOR_USERS(u, n) {
-            if (IS_PROJ(USERN(u))) { set_put(&sched->ready_set, USERN(u)->gvn); }
+            if (IS_PROJ(USERN(u))) {
+                set_put(&sched->ready_set, USERN(u)->gvn);
+            }
         }
 
         ReadyNode r = { n };

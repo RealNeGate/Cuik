@@ -134,6 +134,10 @@
 
     pat (LOCAL $root stack_pos=$disp) => (x86_MEMORY "ctx->frame_ptr" disp=$disp)
 
+    pat (PTR_OFFSET ___ (LOCAL $root stack_pos=$disp) ($imm: ICONST ...))
+    where "fits_into_int32(TB_TYPE_I64, $imm)"
+    => (x86_MEMORY "ctx->frame_ptr" disp="$disp + as_int32($imm)")
+
     // [symbol]
     pat (SYMBOL $root sym=$sym) => (x86_MEMORY (MACH_SYMBOL $root sym=$sym))
 
