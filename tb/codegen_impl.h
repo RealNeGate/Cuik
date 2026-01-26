@@ -748,7 +748,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
         #if !TB_OPTDEBUG_ISEL
-        // tb_renumber_nodes(f, ws);
+        tb_renumber_nodes(f, ws);
         #endif
 
         TB_OPTDEBUG(ISEL)(tb_print_dumb(f));
