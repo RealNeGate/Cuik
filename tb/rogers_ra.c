@@ -68,6 +68,9 @@ typedef struct {
 
     HRPRegion* hrp;
 
+    // bitset of which nodes are vregs
+    uint64_t* is_vreg;
+
     // coalesce disjoint set
     int* uf;
     int* uf_size;
@@ -1547,7 +1550,8 @@ static void compute_ordinals(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* a
 
 // Probably slow...
 static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena) {
-    size_t new_cap = tb_next_pow2(ctx->f->node_count + 16);
+    size_t node_count = ctx->f->node_count;
+    size_t new_cap = tb_next_pow2(node_count + 16);
     ra->order = tb_arena_alloc(arena, new_cap * sizeof(int));
     ra->gvn2node = tb_arena_alloc(arena, new_cap * sizeof(TB_Node*));
     ra->order_cap = new_cap;
@@ -1555,19 +1559,31 @@ static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
     // just give the root node a fake ordinal
     TB_ASSERT(ctx->f->root_node->gvn == 0);
     ra->order[0] = 1;
+    ra->is_vreg = tb_arena_alloc(arena, ((node_count + 63) / 64) * sizeof(uint64_t));
 
     CUIK_TIMED_BLOCK("areas") {
         // Sparse set repr
         TB_ArenaSavepoint sp = tb_arena_save(arena);
-        int* array = tb_arena_alloc(arena, ctx->f->node_count * sizeof(int));
+        int* array = tb_arena_alloc(arena, node_count * sizeof(int));
         ArenaArray(int) stack = aarray_create(arena, int, 30);
 
         aarray_for(i, ctx->vregs) {
             ctx->vregs[i].area = 0;
         }
 
-        FOR_N(i, 0, ctx->f->node_count) {
-            array[i] = -1;
+        FOR_N(i, 0, (node_count + 63) / 64) {
+            uint64_t mask = 0;
+            size_t end = i*64 + 64;
+            if (end > node_count) { end = node_count; }
+
+            FOR_N(j, 0, end - i*64) {
+                size_t k = i*64 + j;
+                if (ctx->vreg_map[k] > 0) {
+                    mask |= 1ull << j;
+                }
+                array[k] = -1;
+            }
+            ra->is_vreg[i] = mask;
         }
 
         FOR_REV_N(i, 0, ctx->bb_count) {
@@ -1575,18 +1591,11 @@ static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             uint64_t freq = bb->freq >= 0.1 ? (bb->freq * 10) : 1;
             TB_ASSERT(freq > 0);
 
-            #if 1
             // clear live
             aarray_for(j, stack) {
                 array[stack[j]] = -1;
             }
             aarray_clear(stack);
-            #else
-            aarray_clear(stack);
-            FOR_N(i, 0, ctx->f->node_count) {
-                array[i] = -1;
-            }
-            #endif
 
             int last_phi = 0;
             do {
@@ -1597,17 +1606,21 @@ static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             uint64_t inst_count = aarray_length(bb->items) - last_phi;
 
             // start intervals
-            BITS64_FOR(j, bb->live_out.data, bb->live_out.capacity) {
+            int ccc = 0;
+            BITS64_FOR_AND(j, bb->live_out.data, ra->is_vreg, bb->live_out.capacity) {
                 int vreg_id = ctx->vreg_map[j];
-                if (vreg_id > 0) {
-                    TB_ASSERT(array[j] < 0);
-                    array[j] = aarray_length(stack);
-                    aarray_push(stack, j);
+                TB_ASSERT(vreg_id > 0);
 
-                    VReg* v = &ctx->vregs[vreg_id];
-                    v->area += inst_count*freq;
-                }
+                TB_ASSERT(array[j] < 0);
+                array[j] = aarray_length(stack);
+                aarray_push(stack, j);
+
+                VReg* v = &ctx->vregs[vreg_id];
+                v->area += inst_count*freq;
+
+                ccc++;
             }
+            // printf("A %d %d\n", ccc);
 
             FOR_REV_N(j, last_phi, aarray_length(bb->items)) {
                 TB_Node* n = bb->items[j];
