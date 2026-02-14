@@ -1746,20 +1746,21 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
         cuikperf_region_start("head", NULL);
         // expire intervals for block:
         //   FOR EACH LIVE & ~LIVE_OUT
-        BITS64_FOR_ANDN(j, ra->live.data, live_out->data, live_out->capacity) {
+        BITS64_FOR_ANDN(j, ra->live.data, live_out->data, ra->is_vreg, live_out->capacity) {
             int vreg_id = ctx->vreg_map[j];
-            if (vreg_id > 0) {
-                TB_ASSERT(set_get(&ra->live, j) && !set_get(live_out, j));
-                expire_interval(ctx, ra, ra->gvn2node[j], bb_id, vreg_id);
-                set_remove(&ra->live, j);
-            }
+            TB_ASSERT(vreg_id > 0);
+            TB_ASSERT(set_get(&ra->live, j) && !set_get(live_out, j));
+            expire_interval(ctx, ra, ra->gvn2node[j], bb_id, vreg_id);
+            set_remove(&ra->live, j);
         }
 
         // start intervals:
         //   FOR EACH ~LIVE & LIVE_OUT
-        BITS64_FOR_ANDN(j, live_out->data, ra->live.data, live_out->capacity) {
+        BITS64_FOR_ANDN(j, live_out->data, ra->live.data, ra->is_vreg, live_out->capacity) {
             int vreg_id = ctx->vreg_map[j];
-            if (vreg_id > 0 && allocate_reg(ctx, ra, ra->gvn2node[j])) {
+            TB_ASSERT(vreg_id > 0);
+
+            if (allocate_reg(ctx, ra, ra->gvn2node[j])) {
                 set_put(&ra->live, j);
             }
         }
