@@ -102,7 +102,7 @@ int main(int argc, const char** argv) {
     #endif
 
     cuik_init(true);
-    log_set_level(LOG_INFO);
+    log_set_level(LOG_DEBUG);
 
     int status = EXIT_SUCCESS;
     if (argc >= 2) {

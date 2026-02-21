@@ -1067,7 +1067,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     }
 }
 
-enum { INACTIVE_CACHE_LOG2 = 16 };
+enum { INACTIVE_CACHE_LOG2 = 9 };
 
 #if TB_OPTDEBUG_STATS
 static int stats_c = 0;
@@ -1667,6 +1667,8 @@ static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
 static void expire_interval(Ctx* ctx, Rogers* restrict ra, TB_Node* n, size_t bb_i, int vreg_id);
 static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena) {
+    size_t arena_size_start = tb_arena_current_size(arena);
+
     cuikperf_region_start("init", NULL);
     ra->inactive_cache = tb_arena_alloc(arena, (1ull << INACTIVE_CACHE_LOG2) * sizeof(InactiveCacheEntry));
     memset(ra->inactive_cache, 0, (1ull << INACTIVE_CACHE_LOG2) * sizeof(InactiveCacheEntry));
@@ -1702,7 +1704,6 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
     // Compute areas (probably slow...)
     compute_areas(ctx, ra, arena);
-
     TB_OPTDEBUG(REGALLOC5)(printf("=== PRE-COLOR ===\n"));
 
     // Pre-allocate ranges
@@ -1881,42 +1882,18 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                     }
                 }
             }
-
-            #if 0 // TB_OPTDEBUG_REGALLOC5
-            tb_print_dumb_node(NULL, n);
-            printf("\n  [Active: ");
-            FOR_N(class, 1, ctx->num_classes) {
-                FOR_N(reg_num, 0, ctx->num_regs[class]) {
-                    if (ra->active[class][reg_num]) {
-                        bool new_alloc = false;
-                        FOR_N(k, 1, n->input_count) {
-                            TB_Node* in = n->inputs[k];
-                            if (in && in->gvn == ra->active[class][reg_num]) {
-                                new_alloc = true;
-                                break;
-                            }
-                        }
-
-                        if (new_alloc) {
-                            printf("\x1b[32m");
-                        }
-                        printf("%%%u:", ra->active[class][reg_num]);
-                        print_reg_name(class, reg_num);
-                        if (new_alloc) {
-                            printf("\x1b[0m");
-                        }
-                        printf(" ");
-                    }
-                }
-                printf("    ");
-            }
-            printf("]\n");
-            #endif
-
             // cuikperf_region_end();
         }
         cuikperf_region_end();
     }
+
+    size_t inactive_cache_size = (1ull << INACTIVE_CACHE_LOG2) * sizeof(InactiveCacheEntry);
+    size_t total_size = tb_arena_current_size(arena) - arena_size_start;
+    log_debug("RA round memory: %.1f KiB inactive cache / %.1f KiB total (%.2f %%)",
+        inactive_cache_size / 1024.0,
+        total_size / 1024.0,
+        (inactive_cache_size / (double) total_size) * 100.0
+    );
 
     end:
     return dyn_array_length(ra->splits) == 0;

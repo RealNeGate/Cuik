@@ -144,7 +144,10 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
         // arraychads stay up
         f->scheduled_n = node_count + 32;
         f->scheduled = tb_arena_alloc(&f->tmp_arena, f->scheduled_n * sizeof(TB_BasicBlock*));
-        FOR_N(i, 0, f->scheduled_n) { f->scheduled[i] = NULL; }
+        f->latency = tb_arena_alloc(&f->tmp_arena, f->scheduled_n * sizeof(int));
+
+        memset(f->scheduled, 0, f->scheduled_n * sizeof(TB_Node*));
+        memset(f->latency, 0, f->scheduled_n * sizeof(int));
 
         TB_BasicBlock* bb0 = &cfg.blocks[0];
         ArenaArray(TB_Node*) pins = aarray_create(&f->tmp_arena, TB_Node*, (f->node_count / 32) + 16);
@@ -278,9 +281,12 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         TB_BasicBlock* best = &cfg.blocks[0];
 
                         // choose deepest block
-                        FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
-                            TB_ASSERT(n->inputs[i]->gvn < f->scheduled_n);
-                            TB_BasicBlock* bb = f->scheduled[n->inputs[i]->gvn];
+                        int use_latency = f->latency[n->gvn];
+                        FOR_N(i, 0, n->input_cap) if (n->inputs[i]) {
+                            TB_Node* in = n->inputs[i];
+                            TB_ASSERT(in->gvn < f->scheduled_n);
+
+                            TB_BasicBlock* bb = f->scheduled[in->gvn];
                             if (bb == NULL) {
                                 // input has no scheduling... weird?
                                 TB_OPTDEBUG(GCM)(printf("  IN %%%u @ dead\n", n->inputs[i]->gvn));
@@ -291,6 +297,12 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                             if (best_depth < bb->dom_depth) {
                                 best_depth = bb->dom_depth;
                                 best = bb;
+                            }
+
+                            int edge_latency = get_lat(f, n, i);
+                            int curr_latency = edge_latency + use_latency;
+                            if (curr_latency > f->latency[in->gvn]) {
+                                f->latency[in->gvn] = curr_latency;
                             }
                         }
 
@@ -310,13 +322,6 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     Elem* parent = top->parent;
                     tb_arena_free(&f->tmp_arena, top, sizeof(Elem));
                     top = parent;
-
-                    /*#if TB_OPTDEBUG_GCM
-                    for (Elem* e = top; e; e = e->parent) {
-                        printf("  ");
-                    }
-                    printf("POP %%%u\n", n->gvn);
-                    #endif*/
                 }
             }
         }

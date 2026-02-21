@@ -369,7 +369,7 @@ static void disassemble(TB_Arch arch, TB_CGEmitter* e, Disasm* restrict d, int b
 #undef E
 
 static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
-    log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena) - og_size) / 1024.0f, label);
+    log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, tb_arena_current_size(&f->arena) / 1024.0f, label);
 }
 
 static bool is_vreg_match(Ctx* ctx, TB_Node* a, TB_Node* b) {
@@ -523,7 +523,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     tb_opt_free_types(f);
 
     TB_Worklist* restrict ws = f->worklist;
-
     size_t og_size = tb_arena_current_size(&f->arena);
 
     ctx.mask_intern = nl_hashset_alloc(200);
@@ -538,7 +537,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
     CUIK_TIMED_BLOCK("isel") {
         STATS_ENTER(MACH_ISEL);
-        log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f);
+        log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (pre isel)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena)) / 1024.0f);
 
         // rewrite the root node
         construct_prologue_epilogue(&ctx, f);
@@ -698,10 +697,13 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             // ISel can introduce fresh nodes, we should add these to the worklist
             // in postorder, I don't mind this using the stack because it's mostly
             // bounded by the target's code.
+            cuikperf_region_start("W", NULL);
             FOR_N(i, 0, n->input_count) {
                 postorder_isel_walk(&ctx, ws, &shared, n->inputs[i], old_node_count);
             }
+            cuikperf_region_end();
 
+            cuikperf_region_start("I", NULL);
             // kill any nodes on the right side of the node, preserve the rest and reprocess them
             size_t read_head  = start;
             size_t write_head = start-1;
@@ -710,7 +712,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 if (k->user_count == 0 && !IS_PROJ(k)) {
                     // technically the visited bit stays on in this path but i don't care, it's dead
                     TB_OPTDEBUG(ISEL)(printf("  KILL "), tb_print_dumb_node(NULL, k), printf("\n"));
-                    tb__gvn_remove(f, k);
+                    // printf("  KILL "), tb_print_dumb_node(NULL, k), printf("\n");
                     tb_kill_node(f, k);
                 } else {
                     if (read_head != write_head) {
@@ -721,6 +723,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 read_head++;
             }
             dyn_array_set_length(ws->items, write_head);
+            cuikperf_region_end();
 
             if (IS_PROJ(n)) {
                 n = n->inputs[0];

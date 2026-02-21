@@ -474,6 +474,7 @@ struct TB_Function {
         //   [value number] -> TB_BasicBlock*
         size_t scheduled_n;
         TB_BasicBlock** scheduled;
+        int* latency;
 
         // used during loop opts mostly, it's just SoN doms
         size_t doms_n;
