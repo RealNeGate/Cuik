@@ -423,7 +423,7 @@ static bool postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node*
     return true;
 }
 
-static void print_tree(Set* shared, TB_Node* n) {
+static void print_tree(Set* shared, TB_Node* n, int depth) {
     if (IS_PROJ(n) && set_get(shared, n->inputs[0]->gvn)) {
         int idx = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
         printf(" %%%u.%d", n->inputs[0]->gvn, idx);
@@ -459,8 +459,10 @@ static void print_tree(Set* shared, TB_Node* n) {
             printf(" ___");
         } else if (set_get(shared, in->gvn)) {
             printf(" %%%u", in->gvn);
+        } else if (depth > 3) {
+            printf(" ...");
         } else {
-            print_tree(shared, in);
+            print_tree(shared, in, depth+1);
         }
     }
     printf(")");
@@ -588,7 +590,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         aarray_for(i, pins) {
             TB_Node* pin_n = pins[i];
 
-            // TB_OPTDEBUG(ISEL)(printf("PIN  t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
+            TB_OPTDEBUG(ISEL)(printf("PIN  t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
             aarray_push(walker, (NodeCursor){ pin_n, pin_n->input_count });
 
             while (aarray_length(walker)) {
@@ -608,11 +610,11 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                 if (ready) {
                     if (set_get(&shared, c.n->gvn)) {
-                        #if TB_OPTDEBUG_ISEL
-                        printf("%%%u", c.n->gvn);
-                        print_tree(&shared, c.n);
-                        printf("\n");
-                        #endif
+                        IF_OPT(ISEL) {
+                            printf("%%%u", c.n->gvn);
+                            print_tree(&shared, c.n, 0);
+                            printf("\n");
+                        }
 
                         // push to ordered list
                         worklist_push(ws, c.n);
@@ -624,6 +626,13 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
         set_clear(&visited);
         aarray_clear(walker);
+
+        /* SWAP(TB_Arena, f->arena, f->tmp_arena);
+        f->node_count = 0;
+        f->dead_node_bytes = 0;
+
+        TB_Node** fwd = tb_arena_alloc(&f->arena, f->node_count * sizeof(TB_Node*));
+        FOR_N(i, 0, f->node_count) { fwd[i] = NULL; }*/
 
         // as we do instruction selection, the graph will have small trees introduced, there's
         // no need to check patterns for anything by the root of the tree.
@@ -667,9 +676,9 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                         IF_OPT(ISEL) {
                             printf("  %%%u", sub_n->gvn);
-                            print_tree(&shared, sub_n);
+                            print_tree(&shared, sub_n, 0);
                             printf(" => %%%u", sub_k->gvn);
-                            print_tree(&shared, sub_k);
+                            print_tree(&shared, sub_k, 0);
                             printf("\n");
                         }
                     }
@@ -677,9 +686,9 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     TB_Node* k = match_rules[r](&ctx, f, n);
                     IF_OPT(ISEL) {
                         printf("  %%%u", n->gvn);
-                        print_tree(&shared, n);
+                        print_tree(&shared, n, 0);
                         printf(" => %%%u", k->gvn);
-                        print_tree(&shared, k);
+                        print_tree(&shared, k, 0);
                         printf("\n\n");
                     }
 
