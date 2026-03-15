@@ -546,7 +546,7 @@ function gen_c_inner(depth, stack, can_bail)
                         add_line(depth, string.format("} else { DFA_LOG(depth+%d, %s, \"Reject\"); } } while (0);", stack[4]+1, new_name))
                         add_line(depth, string.format("ctx->dsl.top = %s_mark;", new_name))
                     else
-                        add_line(depth, string.format("do { if (%s) {", expr))
+                        add_line(depth, string.format("do { if (%s && !set_get(shared, %s->gvn)) {", expr, new_name))
                         gen_c_inner(depth+1, next_stack, true)
                         add_line(depth, "} } while (0);")
                     end
@@ -1183,7 +1183,7 @@ add_line(1, "while (depth--) { printf(\"  \"); }")
 add_line(0, "}")
 add_line(0, "")
 
-add_line(0, "#if TB_OPTDEBUG_ISEL")
+add_line(0, "#if 0")
 add_line(0, "#define DFA_LOG(depth, n, fmt, ...) (mach_indent(depth), printf(fmt, __VA_ARGS__), printf(\": \"), tb_print_dumb_node(NULL, n), printf(\"\\n\"))")
 add_line(0, "#define DFA_LOG2(depth, fmt, ...) (mach_indent(depth), printf(fmt, __VA_ARGS__), printf(\"\\n\"))")
 add_line(0, "#else")

@@ -146,22 +146,22 @@ static void dump_pretty_sched(Ctx* restrict ctx) {
 }*/
 
 static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, ArenaArray(TB_Safepoint*)* safepoints, Bundle* b) {
-    #if TB_OPTDEBUG_EMIT
-    FOR_N(i, 0, b->count) {
-        if (i) {
-            printf("\n");
+    IF_OPT(EMIT) {
+        FOR_N(i, 0, b->count) {
+            if (i) {
+                printf("\n");
+            }
+
+            TB_Node* n = b->arr[i];
+            print_pretty(ctx, n);
         }
 
-        TB_Node* n = b->arr[i];
-        print_pretty(ctx, n);
+        #if BUNDLE_INST_MAX > 1
+        printf(" ;;\n");
+        #else
+        printf("\n");
+        #endif
     }
-
-    #if BUNDLE_INST_MAX > 1
-    printf(" ;;\n");
-    #else
-    printf("\n");
-    #endif
-    #endif
 
     bundle_emit(ctx, e, b);
     if (b->safepoint) {
@@ -448,6 +448,8 @@ static void print_tree(Set* shared, TB_Node* n, int depth) {
     } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
         printf(" %.10f", f->value);
+    } else if (n->type == TB_MACH_SYMBOL) {
+        printf(" %%%u ", n->gvn);
     } else if (n->type >= TB_MACH_TEMP) {
         printf(" ");
         print_extra(&OUT_STREAM_DEFAULT, n);

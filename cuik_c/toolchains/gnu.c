@@ -62,7 +62,7 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
         cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "%s ", linker->inputs[i]);
     }
 
-    printf("Command: %s\n", cmd_line);
+    // printf("Command: %s\n", cmd_line);
     int exit_code = system(cmd_line);
     if (exit_code != 0) {
         fprintf(stderr, "Linker exited with code %d\n", exit_code);

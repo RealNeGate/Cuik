@@ -2650,22 +2650,9 @@ static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) {
     return false;
 }
 
-static int node_latency(TB_Function* f, TB_Node* n, int i) {
-    if (IS_PROJ(n)) {
-        return 0;
-    }
-
-    // fixed latency, regardless of who's asking it's gonna
-    // take a while.
-    if (n->type == TB_x86_call) {
-        return 100;
-    } else if (!tb_node_is_x86(n)) {
-        return 1;
-    }
-
-    int lat = 0;
-
-    // base latencies
+// Latency regardless of the operand
+static int base_latency(TB_Function* f, TB_Node* n) {
+    int lat = 1;
     switch (n->type) {
         case TB_x86_mov: lat = 1; break;
         case TB_x86_and: lat = 1; break;
@@ -2689,8 +2676,23 @@ static int node_latency(TB_Function* f, TB_Node* n, int i) {
 
         case TB_FSQRT: lat = 13; break;
     }
+    return lat;
+}
+
+// Latency across edge n[i]
+static int node_latency(TB_Function* f, TB_Node* n, int i) {
+    if (IS_PROJ(n)) {
+        return 0;
+    }
+
+    if (!tb_node_is_x86(n)) {
+        return 1;
+    } else if (n->type == TB_x86_call) {
+        return 100;
+    }
 
     // if the input is used to compute a memory load, the latency is bumped by 5
+    int lat = base_latency(f, n);
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
     if ((op->mode == MODE_LD || op->mode == MODE_ST) && n->type != TB_x86_vmov && n->type != TB_x86_mov) {
         if (i == 2 || (i == 3 && op->flags & OP_INDEXED)) {

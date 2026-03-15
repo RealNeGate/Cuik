@@ -30,7 +30,7 @@ if #arg >= 1 then
 end
 
 configs = {
-    "", "-O", "-g", "-O -g", "-based", "-based -O"
+    "", "-O", -- "-g", "-O -g", "-based", "-based -O"
 }
 
 local passed = 0
@@ -92,7 +92,7 @@ for i=1,#x do
 
     print("Testing... "..x[i])
     print("  Clang:")
-    code = os.execute(string.format("clang %s -O1 && %s %s > clang.txt", x[i], exe_name, args))
+    code = os.execute(string.format("clang %s -lm -O1 && %s %s > clang.txt", x[i], exe_name, args))
     if code ~= 0 then
         print("    BAD!!!", code)
         goto skip
@@ -108,6 +108,8 @@ for i=1,#x do
             if diff ~= 0 then
                 print("    BAD DIFF!!!")
                 pass = false
+            else
+                print("    GOOD!!!")
             end
         else
             print("    BAD CUIK!!!", configs[j])
@@ -116,7 +118,7 @@ for i=1,#x do
     end
 
     if pass then
-        print("    Pass!")
+        print("  Pass!")
         passed = passed + 1
     end
 

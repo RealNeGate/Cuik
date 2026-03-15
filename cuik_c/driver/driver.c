@@ -185,7 +185,7 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
-    if (strcmp(name, "func_5") != 0) {
+    if (0 && strcmp(name, "main") != 0) {
         return;
     }
 
@@ -639,8 +639,7 @@ void cuik_step_free(Cuik_BuildStep* s) {
 }
 
 bool cuik_driver_does_codegen(const Cuik_DriverArgs* args) {
-    return false;
-    // return !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
+    return !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
 }
 
 void cuikpp_dump_tokens(TokenStream* s) {

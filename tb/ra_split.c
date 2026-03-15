@@ -527,7 +527,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
     }
 
     IF_OPT(REGSPLIT) {
-        printf("== TO BE SPILLED ==\n");
+        printf("== TO BE SPILLED (%zu) ==\n", num_spills);
         FOR_N(i, 0, num_spills) {
             uint32_t vreg_id = splits[i].target;
             double cost = rogers_get_spill_cost(ctx, ra, &ctx->vregs[vreg_id]);
@@ -790,6 +790,10 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
                         continue;
                     }
 
+                    if (j == ra->hrp[bb_id].start[class]) {
+                        TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: %%%u: entered HRP region\n", bb_id, n->gvn));
+                    }
+
                     if (j >= ra->hrp[bb_id].start[class] && j <= ra->hrp[bb_id].end[class]) {
                         is_hrp_rn |= class2vreg[class];
                     } else {
@@ -892,10 +896,16 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
                                     dst->use = TB_NODE_GET_EXTRA_T(def, TB_NodeMachCopy)->use;
                                     set_input(f, n, def->inputs[1], k);
                                     continue;
-                                } else if (!reg_mask_is_stack(dst->def) && ctx->constraint(ctx, n, NULL)->may_spill) {
-                                    __debugbreak();
+                                } else if (!reg_mask_is_stack(dst->def)) {
                                     dst->use = splitter.spill_mask[spill];
                                     set_input(f, n, def, k);
+
+                                    // reset this copies assignment if possible
+                                    if (fixed_reg_mask(dst->def) < 0) {
+                                        int vreg_id = ctx->vreg_map[n->gvn];
+                                        ctx->vregs[vreg_id].class = 0;
+                                        ctx->vregs[vreg_id].assigned = -1;
+                                    }
                                     continue;
                                 }
                             }
@@ -982,12 +992,16 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
 
                     // if the value is coalesced with the node right below, we'd rather
                     // spill after such a chain.
-                    if (j+1 < aarray_length(bb->items)) {
-                        if (spill_map_get2(&splitter.spill_map, bb->items[j+1]) == spill) {
-                            // printf("SKIPP!! %d\n", spill);
+                    size_t t = j+1, cnt = aarray_length(bb->items);
+                    while (t < cnt && should_skip_over(bb->items[t])) {
+                        t++;
+                    }
+
+                    if (t < cnt) {
+                        if (spill_map_get2(&splitter.spill_map, bb->items[t]) == spill) {
                             should_spill_immediately = false;
                             delay_spill |= 1ull << spill;
-                        } else if (has_immediate_use(bb->items[j+1], n)) {
+                        } else if (has_immediate_use(bb->items[t], n)) {
                             should_spill_immediately = false;
                             delay_spill |= 1ull << spill;
                         }
@@ -996,7 +1010,6 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
                     // spill immediately
                     if (should_spill_immediately) {
                         if (!can_remat(ctx, n)) {
-                            size_t t = j+1;
                             bb_defs[spill] = insert_spill(ctx, ra, &splitter, bb, n, spill, &t);
                             j += t <= j;
                         } else if (n->type == TB_MACH_COPY && !reg_mask_is_stack(TB_NODE_GET_EXTRA_T(n, TB_NodeMachCopy)->use)) {
