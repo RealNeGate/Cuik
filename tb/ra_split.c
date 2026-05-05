@@ -102,6 +102,22 @@ static void insert_op_at_end(Ctx* ctx, Rogers* ra, TB_BasicBlock* bb, TB_Node* n
     }
 }
 
+static TB_Node* find_existing_copy(Ctx* ctx, Rogers* ra, TB_BasicBlock* bb, TB_Node* src, RegMask* rm) {
+    int i = aarray_length(bb->items) - 1;
+    if (bb->items[i] == bb->end) {
+        i--;
+    }
+
+    while (i > 0 && bb->items[i]->type == TB_MACH_COPY) {
+        RegMask* cpy_rm = TB_NODE_GET_EXTRA_T(bb->items[i], TB_NodeMachCopy)->def;
+        if (tb__reg_mask_meet(ctx, cpy_rm, rm) == rm) {
+            return bb->items[i];
+        }
+        i--;
+    }
+    return NULL;
+}
+
 static void assign_spill_vreg(Ctx* ctx, Rogers* ra, RegSplitter* splitter, TB_Node* n, int spill) {
     RegMask* spill_mask = splitter->spill_mask[spill];
     int vreg_id = splitter->spill_vreg_id[spill];
@@ -185,26 +201,37 @@ static TB_Node* insert_reload(Ctx* ctx, Rogers* ra, RegSplitter* splitter, TB_Ba
         // if the inputs to the cloned node refer to spilled nodes, we update the edges
         FOR_N(k, 1, cpy->input_count) {
             TB_Node* in = cpy->inputs[k];
-            if (in != NULL) {
-                int in_spill = spill_map_get2(&splitter->spill_map, in);
-                if (in_spill >= 0) {
-                    // TODO(NeGate): do we need copies here sometimes?
-                    TB_Node* new_in = bb_defs[in_spill];
+            if (in == NULL) { continue; }
+            // If we're a known single-def, just don't bother cloning
+            if (in->gvn < splitter->old_node_count) {
+                size_t cnt;
+                coalesce_set_array(ctx, ra, &in, &cnt);
+                if (cnt <= 1) { continue; }
+            }
+            // We can stretch the initial un-copied form for better results
+            if (is_spill_store(in)) {
+                in = in->inputs[1];
+            }
 
-                    // we need to stretch the lifetime of the original form, rather than any "recent"
-                    // variant.
-                    if (new_in == NULL) {
-                        // size_t og_bb = f->scheduled[n->gvn] - ctx->cfg.blocks;
-                        // new_in = defs[og_bb*splitter->num_spills + in_spill];
-                        // TB_ASSERT(new_in);
-                        continue;
-                    }
+            if (f->scheduled[in->gvn] != bb) {
+                RegMask* rm = ctx->constraint(ctx, in, NULL);
+                TB_Node* reuse = find_existing_copy(ctx, ra, f->scheduled[in->gvn], in, rm);
 
-                    if (is_spill_store(new_in)) { // || (new_in->type == TB_MACH_COPY && !((W >> in_spill) & 1))) {
-                        new_in = new_in->inputs[1];
-                    }
+                // printf("ASKING %%%u %p %p\n", in->gvn, rm, reuse);
+                if (reuse != NULL) {
+                    set_input(f, cpy, reuse, k);
+                } else {
+                    // Copy "in" value
+                    TB_Node* in_cpy = tb_alloc_node(f, TB_MACH_COPY, in->dt, 2, sizeof(TB_NodeMachCopy));
+                    set_input(f, in_cpy, in, 1);
+                    TB_NODE_SET_EXTRA(in_cpy, TB_NodeMachCopy, .def = rm, .use = rm);
 
-                    set_input(f, cpy, new_in, k);
+                    // Place within the in's block
+                    insert_op_at_end(ctx, ra, f->scheduled[in->gvn], in_cpy);
+                    aarray_push(splitter->all_defs, in_cpy);
+
+                    // TODO(NeGate): we wanna avoid making too many copies so maybe collapse some?
+                    set_input(f, cpy, in_cpy, k);
                 }
             }
         }

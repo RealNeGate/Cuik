@@ -296,6 +296,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
     int32_t limit;
     TB_ASSERT(try_for_imm32_2(TB_TYPE_I64, (max - min) + 1, &limit));
 
+    TB_ModuleSectionHandle data_sec = tb_module_get_data(f->super.module);
     double density = ((double)br->succ_count) / ((double) (max - min));
     if (density > 0.25f) {
         if (src->dt.type == TB_TAG_I32) {
@@ -341,7 +342,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
         TB_NODE_SET_EXTRA(tmp, TB_NodeMachTemp, .def = ctx->normie_mask[REG_CLASS_GPR]);
 
         TB_Global* table = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-        tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), table, limit * sizeof(uint64_t), sizeof(uint64_t), 1 + limit);
+        tb_global_set_storage(f->super.module, data_sec, table, limit * sizeof(uint64_t), sizeof(uint64_t), 1 + limit);
 
         TB_Node* sym = tb_alloc_node(f, TB_SYMBOL, TB_TYPE_PTR, 1, sizeof(TB_NodeSymbol));
         set_input(f, sym, f->root_node, 0);
@@ -417,7 +418,7 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
             h = binop_imm(f, TB_x86_shr,  h, 32 - shift);
 
             TB_Global* table = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-            tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), table, cap * sizeof(uint64_t[2]), sizeof(uint64_t), 2 + cap);
+            tb_global_set_storage(f->super.module, data_sec, table, cap * sizeof(uint64_t[2]), sizeof(uint64_t), 2 + cap);
 
             TB_Node* sym = tb_alloc_node(f, TB_SYMBOL, TB_TYPE_PTR, 1, sizeof(TB_NodeSymbol));
             set_input(f, sym, f->root_node, 0);
@@ -2498,13 +2499,17 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             bool tail = next->type == TB_UNREACHABLE && next->inputs[1] == mem_out;
 
             if (op->mode == MODE_REG) {
-                TB_ASSERT(n->inputs[2]->type == TB_MACH_SYMBOL);
-                TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeMachSymbol)->sym;
+                if (n->inputs[2]->type == TB_MACH_SYMBOL) {
+                    TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeMachSymbol)->sym;
 
-                // CALL rel32
-                EMIT1(e, tail ? 0xE9 : 0xE8);
-                EMIT4(e, 0);
-                tb_emit_symbol_patch(e->output, sym, e->count - 4, TB_OBJECT_RELOC_REL32);
+                    // CALL rel32
+                    EMIT1(e, tail ? 0xE9 : 0xE8);
+                    EMIT4(e, 0);
+                    tb_emit_symbol_patch(e->output, sym, e->count - 4, TB_OBJECT_RELOC_REL32);
+                } else {
+                    Val target = op_at(ctx, n->inputs[2]);
+                    __(tail ? JMP : CALL, TB_X86_QWORD, &target);
+                }
             } else {
                 Val target = parse_cisc_operand(ctx, n, NULL, op);
                 __(tail ? JMP : CALL, TB_X86_QWORD, &target);
