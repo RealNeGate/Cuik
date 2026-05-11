@@ -372,7 +372,6 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 };
                 break;
             } else if (!parser->is_in_global_scope && string_equals_cstr(&t->content, "__func__")) {
-                tokens_next(s);
                 Atom name = cuik__sema_function_stmt->decl.name;
 
                 e = push_expr(parser);
