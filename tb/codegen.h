@@ -418,6 +418,10 @@ static int popcnt_reg_mask(RegMask* mask) {
 }
 
 static bool within_reg_mask(RegMask* mask, uint64_t i) {
+    if (mask->class == REG_CLASS_STK && mask->may_spill) {
+        return true;
+    }
+
     return i/64 < mask->count ? mask->mask[i/64] & (1ull << (i%64)) : false;
 }
 

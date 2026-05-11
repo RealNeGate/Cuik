@@ -46,11 +46,19 @@ static int sparse_set_pop(SparseSet* set) {
 static void sparse_set_remove(SparseSet* set, int v) {
     int index = set->array[v]; // stack's index
     if (index >= 0) {
+        // printf("A %d %d %d %d\n", v, index, set->stack[index], aarray_length(set->stack));
+        TB_ASSERT(set->stack[index] == v);
+        TB_ASSERT(aarray_length(set->stack) > 0);
+
         // move last entry to the removed space
         int last = aarray_pop(set->stack);
-        set->array[last]  = -1;
-        set->array[v]     = -1;
-        set->stack[index] = last;
+        set->array[v] = -1;
+        if (v != last) {
+            set->array[last]  = index;
+            set->stack[index] = last;
+        } else {
+            set->array[last] = -1;
+        }
     }
 }
 

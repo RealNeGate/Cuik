@@ -2728,6 +2728,8 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         // Align stack usage to 16bytes + header to accommodate for the RIP being pushed
         // by CALL (and frameptr if applies)
         stack_usage = align_up(stack_usage, 16) + (16 - ctx->stack_header);
+    } else if ((ctx->f->features.gen & TB_FEATURE_FRAME_PTR) == 0) {
+        stack_usage = 0;
     }
     ctx->stack_usage = stack_usage;
 
@@ -2753,7 +2755,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         __(MOV,  TB_X86_DWORD, &rax, Vimm(stack_usage));
         __(CALL, TB_X86_QWORD, &sym);
         __(SUB,  TB_X86_QWORD, &rsp, &rax);
-    } else if (stack_usage > 8) {
+    } else if (stack_usage > 0) {
         if (stack_usage == (int8_t)stack_usage) {
             // sub rsp, stack_usage
             EMIT1(e, rex(true, 0x00, RSP, 0));
@@ -2829,7 +2831,7 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
     tb_outs(e, sizeof(UnwindInfo), &unwind);
 
     size_t code_count = 0;
-    if (stack_usage > 8) {
+    if (stack_usage > 0) {
         UnwindCode codes[] = {
             // sub rsp, stack_usage
             { .code_offset = 4, .unwind_op = UNWIND_OP_ALLOC_SMALL, .op_info = (stack_usage / 8) - 1 },
@@ -2854,7 +2856,7 @@ static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e) {
         E("//  [SP + %3td] CALLER PARAM\n", stk_offset(ctx, 1+i, 1));
     }
 
-    if (stack_usage > 8) {
+    if (stack_usage > 0) {
         E("// ==============\n");
         E("//  [SP + %3zu] RPC\n", stk_offset(ctx, 0, 1));
         if (ctx->f->features.gen & TB_FEATURE_FRAME_PTR) {

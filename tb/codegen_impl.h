@@ -390,7 +390,7 @@ static bool safe_to_dup(Ctx* ctx, TB_Node* n) {
         return false;
     } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
         return true;
-    } else if (can_remat(ctx, n)) {
+    } else if (can_remat(ctx, n) || n->type == TB_LOCAL) {
         return true;
     } else if (n->user_count > 3) {
         // share if there's a lot of users
