@@ -541,9 +541,9 @@ struct Stmt {
         } label;
         struct StmtCase {
             Stmt* next;
+            Stmt* body;
             int64_t key;
             int64_t key_max;
-            Stmt* body;
         } case_;
         struct StmtDefault {
             Stmt* next;

@@ -71,12 +71,35 @@ bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b) {
         // TOPs are always congruent
         if (aa == &TOP_IN_THE_SKY || bb == &TOP_IN_THE_SKY) {
             return true;
+        } else if (lattice_spec_eq(f, aa, bb)) {
+            return true;
         }
 
         // they must directly cross each other, if not then they couldn't be
         // congruent
-        Lattice* glb = lattice_meet(f, aa, bb);
-        return lattice_spec_eq(f, aa, glb) || lattice_spec_eq(f, bb, glb);
+        // Lattice* glb = lattice_meet(f, aa, bb);
+        // return lattice_spec_eq(f, aa, glb) || lattice_spec_eq(f, bb, glb);
+    }
+
+    return false;
+}
+
+bool gcf_is_congruent2(TB_Function* f, uint32_t a, uint32_t b) {
+    // pessimistic? just use value number equivalence
+    if (f->gcf_nodes == NULL) {
+        return a == b;
+    }
+
+    if (f->gcf_nodes[a]->partition == f->gcf_nodes[b]->partition) {
+        Lattice* aa = f->types[a];
+        Lattice* bb = f->types[b];
+
+        // TOPs are always congruent
+        if (aa == &TOP_IN_THE_SKY || bb == &TOP_IN_THE_SKY) {
+            return true;
+        } else if (lattice_spec_eq(f, aa, bb)) {
+            return true;
+        }
     }
 
     return false;
@@ -140,7 +163,7 @@ static void push_cprop_users(TB_Function* f, CProp* cprop, TB_Node* n) {
     // push affected users
     FOR_USERS(u, n) {
         TB_Node* un = USERN(u);
-        if (un->type == TB_CALLGRAPH) {
+        if (un->type == TB_CALLGRAPH || IS_PROJ(un)) {
             continue;
         }
 
@@ -150,6 +173,13 @@ static void push_cprop_users(TB_Function* f, CProp* cprop, TB_Node* n) {
             }
         }
         push_cprop(f, cprop, un);
+    }
+
+    FOR_USERS(u, n) {
+        TB_Node* un = USERN(u);
+        if (IS_PROJ(un)) {
+            push_cprop(f, cprop, un);
+        }
     }
 }
 
@@ -305,6 +335,30 @@ static bool cprop_opcode_compare(void* a, void* b) {
     return extra == 0 || memcmp(x->extra, y->extra, extra) == 0;
 }
 
+static bool cprop_is_basically_top(TB_Function* f, TB_Node* n, Lattice* new_type) {
+    if (new_type->tag == LATTICE_TUPLE) {
+        if (tb_node_is_fork_ctrl(n)) {
+            FOR_USERS(u, n) {
+                if (IS_PROJ(USERN(u)) && USERN(u)->dt.type == TB_TAG_CONTROL) {
+                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                    Lattice* elem = new_type->elems[index];
+                    if (elem != &TOP_IN_THE_SKY && elem != &DEAD_IN_THE_SKY) {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        } else if (n->dt.type == TB_TAG_TUPLE && tb_node_is_ctrl(n)) {
+            // if it's a tuple with a dead control then it's basically top
+            TB_ASSERT(new_type->_elem_count >= 1);
+            return new_type->elems[0] == &TOP_IN_THE_SKY || new_type->elems[0] == &DEAD_IN_THE_SKY;
+        }
+    }
+
+    return new_type == &DEAD_IN_THE_SKY;
+}
+
 typedef void* SplitByWhat(TB_Function* f, CProp* cprop, CProp_Node* node);
 static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* root, SplitByWhat* what, int depth) {
     nl_table_clear(&cprop->da_map[depth]);
@@ -451,9 +505,20 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             Lattice* new_type = value_of(f, n);
             // TB_OPTDEBUG(STATS)(n->type < TB_NODE_TYPE_MAX ? (f->stats.cprop_t[n->type] += (cuik_time_in_nanos() - start), 0) : 0);
 
+            if (f->enable_log && n->gvn == 340) {
+                printf("P%d: ", p_idx);
+                print_lattice(f->types[340]);
+                printf("    ");
+                print_lattice(f->types[471]);
+                printf("    ");
+                print_lattice(f->types[470]);
+                printf("    %d\n", gcf_is_congruent2(f, 471, 470));
+                __debugbreak();
+            }
+
             TB_OPTLOG(SCCP, printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m\n"));
 
-            if (old_type != new_type) {
+            if (old_type != new_type && !cprop_is_basically_top(f, n, new_type)) {
                 #ifndef NDEBUG
                 // validate int
                 if (new_type->tag == LATTICE_INT) {
@@ -473,7 +538,9 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 #endif
 
                 latuni_set(f, n, new_type);
-                sparse_set_put(&cprop->fallen, n->gvn);
+                if (node->leader == NULL) {
+                    sparse_set_put(&cprop->fallen, n->gvn);
+                }
                 progress = true;
 
                 /*if (n->dt.type == TB_TAG_TUPLE) {
@@ -498,7 +565,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
         // for splitting, we first split that group then handle the more precise splitting.
         CProp_Partition* y = p;
         size_t fallen_cnt = aarray_length(cprop->fallen.stack);
-        if (fallen_cnt > 0 && fallen_cnt < p->member_count) {
+        if (fallen_cnt > 0 && fallen_cnt < p->member_count - p->follower_count) {
             y = cprop_split(f, cprop, p, cprop_what_fallen);
             // TB_ASSERT(y->member_count - y->follower_count == fallen_cnt);
 

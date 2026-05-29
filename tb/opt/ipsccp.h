@@ -321,6 +321,11 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
         abort(); // Unreachable
         #endif
     } else {
+        if (ipo_worklist == NULL) {
+            // we just leak these btw, i don't care yet
+            ipo_worklist = tb_worklist_alloc();
+        }
+
         // any entry-point functions will be pushed
         nbhs_for(entry, &m->symbols) {
             TB_Symbol* s = *entry;

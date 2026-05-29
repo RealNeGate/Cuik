@@ -336,11 +336,6 @@ static Lattice* value_int(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_root(TB_Function* f, TB_Node* n) {
-    // if we reach this point, it means we're somehow processing a function which has no
-    /* if (f->super.module->during_ipsccp && f->ipsccp_args == NULL) {
-        return &TOP_IN_THE_SKY;
-    } */
-
     return f->ipsccp_args;
 }
 
@@ -449,6 +444,10 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     }
 
     Lattice* old = latuni_get(f, n);
+    if (old->tag == LATTICE_INT && old->_int.widen >= INT_WIDEN_LIMIT) {
+        return old;
+    }
+
     if (r->type == TB_AFFINE_LOOP) {
         TB_Node* latch = affine_loop_latch(r);
         if (latch && (TB_IS_INTEGER_TYPE(n->dt) || TB_IS_FLOAT_TYPE(n->dt))) {
@@ -510,21 +509,6 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                         } else {
                             min = TB_MAX(min, old->_int.min);
                             max = TB_MIN(max, old->_int.max);
-
-                            #if 0
-                            if (init->_int.known_zeros) {
-                                tb_print(f);
-                                __debugbreak();
-                            }
-
-                            // if the bottom bits are all zeros in the init & step, we
-                            // want to make sure the phi knows that.
-                            uint64_t step_zeros = *step_ptr;
-                            uint64_t diff = ~(init->_int.known_zeros ^ step_zeros);
-                            int lsb_diff = __builtin_ffsll(diff) - 1;
-                            uint64_t zeros = lsb_diff ? UINT64_MAX >> (64 - lsb_diff) : 0;
-                            #endif
-
                             return lattice_int_widen(f, lattice_gimme_int2(f, min, max, 0, 0, bits), old);
                         }
                     }
@@ -1177,7 +1161,7 @@ static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
     if (k->dt.raw == n->dt.raw) {
         Lattice* new_t = latuni_get(f, k);
         Lattice* old_t = latuni_get(f, n);
-        Lattice* merged = lattice_join(f, old_t, new_t);
+        Lattice* merged = lattice_join_spec(f, old_t, new_t);
         latuni_set(f, k, merged);
     }
 }
@@ -1432,14 +1416,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         return false;
     }
 
-    #if 0
-    __debugbreak();
-    Lattice* a = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, 240, .known_zeros = 0xffffffffffffff0f } });
-    Lattice* b = lattice_gimme_int(f, 0, lattice_uint_max(32), 32);
-    Lattice* c = lattice_join(f, a, b);
-    __debugbreak();
-    #endif
-
     TB_ASSERT_MSG(f->root_node, "missing root node");
     f->worklist = ws;
 
@@ -1448,11 +1424,9 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
-    #if TB_OPT_LOG_ENABLED
-    if (1 || strcmp(f->super.name, "pack_table") == 0) {
+    if (strcmp(f->super.name, "stbi__compute_huffman_codes") == 0) {
         f->enable_log = true;
     }
-    #endif
 
     #if TB_OPTDEBUG_STATS
     f->stats.peeps = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
@@ -1548,7 +1522,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
         // avoids bloating up my arenas with freed nodes
         float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
-        if (dead_factor > 0.2f) {
+        if (0 && dead_factor > 0.2f) {
             TB_OPTLOG(PEEP, printf("=== COMPACT ===\n"));
             STATS_ENTER(COMPACT);
             size_t old = tb_arena_current_size(&f->arena);

@@ -36,6 +36,9 @@
 #define TB_OPTDEBUG(cond) if (CONCAT(tb_opt__, cond)) CURRY
 #define IF_OPT(cond) if (CONCAT(tb_opt__, cond))
 
+// Can't run stats atm because the IPSCCP calls will try to access
+// the fields but they're freed after the tb_opt, so we wanna make
+// a copy during IPSCCP and im lazy.
 #define TB_OPTDEBUG_STATS 0
 
 #ifndef _WIN32

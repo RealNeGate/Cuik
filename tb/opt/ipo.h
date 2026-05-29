@@ -74,6 +74,9 @@ static int op_weights[256] = {
     [TB_CMP_EQ ... TB_CMP_NE] = 2,
     // function calls? idk what this should count as
     [TB_CALL]                 = 10,
+    // multi-way branches? probably a bad sign
+    [TB_BRANCH]               = 15,
+    [TB_BRANCH_PROJ]          = 3,
 };
 
 static int bin_count;
@@ -216,6 +219,7 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
     scc->index += 1;
     nl_table_put(&scc->nodes, f, n);
 
+    ipo->size_metric[f->uid] = compute_size(f, ws);
     scc->stk[scc->stk_cnt++] = f;
 
     // consider the successors
@@ -289,6 +293,8 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
 }
 
 static _Thread_local TB_Worklist* ipo_worklist;
+static atomic_int counter_counter;
+static int total_counter;
 static void func_opt_task(TPool* tp, void** arg) {
     TB_Function* f = arg[0];
     Futex* tracker = arg[1];
@@ -299,10 +305,12 @@ static void func_opt_task(TPool* tp, void** arg) {
         ipo_worklist = tb_worklist_alloc();
     }
 
-    // if (strcmp(f->super.name, "collectgarbage") == 0) {
-    log_debug("OPT: %s: function local optimizer", f->super.name);
-    tb_opt(f, ipo_worklist, false);
-    // }
+    if (1 || strcmp(f->super.name, "stbi__bmp_set_mask_defaults") == 0) {
+        log_debug("OPT: %s: function local optimizer", f->super.name);
+        // printf("A %d of %d\n", ++counter_counter, total_counter);
+        tb_opt(f, ipo_worklist, false);
+        // tb_print_dumb(f);
+    }
 
     if (tracker) {
         tracker[0] += 1;
@@ -363,6 +371,13 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
 
     // Run function-local opts and
     CUIK_TIMED_BLOCK("initial optimize round") {
+        nbhs_for(entry, &m->symbols) {
+            TB_Symbol* s = *entry;
+            if (s->tag == TB_SYMBOL_FUNCTION) {
+                total_counter++;
+            }
+        }
+
         if (pool) {
             #if CUIK_ALLOW_THREADS
             Futex tracker[2] = { 0 };
@@ -438,16 +453,16 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
             TB_Function* f = ipo.ws[i];
             TB_ASSERT(f->super.tag == TB_SYMBOL_FUNCTION);
 
-            #if TB_OPTDEBUG_INLINE4
-            const char* color = "white";
-            switch (classify_size(ipo.size_metric[f->uid])) {
-                case SIZE_SMALL: color = "green"; break;
-                case SIZE_SMALL_MED: color = "yellow"; break;
-                case SIZE_MEDIUM: color = "orange"; break;
-                case SIZE_LARGE: color = "red"; break;
+            IF_OPT(INLINE4) {
+                const char* color = "white";
+                switch (classify_size(ipo.size_metric[f->uid])) {
+                    case SIZE_SMALL: color = "green"; break;
+                    case SIZE_SMALL_MED: color = "yellow"; break;
+                    case SIZE_MEDIUM: color = "orange"; break;
+                    case SIZE_LARGE: color = "red"; break;
+                }
+                printf("%s [shape=box style=filled fillcolor=\"%s\"]\n", f->super.name, color);
             }
-            printf("%s [shape=box style=filled fillcolor=\"%s\"]\n", f->super.name, color);
-            #endif
 
             // construct call graph
             TB_Node* callgraph = f->root_node->inputs[0];
@@ -475,9 +490,9 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
                         edge->refs   = 1;
                         ipo.call_graph[target->uid] = edge;
 
-                        #if TB_OPTDEBUG_INLINE4
-                        printf("%s -> %s\n", f->super.name, target->super.name);
-                        #endif
+                        IF_OPT(INLINE4) {
+                            printf("%s -> %s\n", f->super.name, target->super.name);
+                        }
                     }
                 }
             }

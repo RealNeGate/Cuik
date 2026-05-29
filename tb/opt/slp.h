@@ -338,17 +338,17 @@ bool generate_pack(TB_Function* f, PairSet* pairs, TB_Worklist* ws, LoopOpt* ctx
                         }
                     }
 
-                    #if TB_OPTDEBUG_SLP
-                    printf("=== PAIRS ===\n");
-                    for (Pair* p = pairs->first; p; p = p->next) {
-                        printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
-                        tb_print_dumb_node(NULL, p->lhs);
-                        printf("\n  ");
-                        tb_print_dumb_node(NULL, p->rhs);
-                        printf("\n\n");
+                    IF_OPT(SLP) {
+                        printf("=== PAIRS ===\n");
+                        for (Pair* p = pairs->first; p; p = p->next) {
+                            printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
+                            tb_print_dumb_node(NULL, p->lhs);
+                            printf("\n  ");
+                            tb_print_dumb_node(NULL, p->rhs);
+                            printf("\n\n");
+                        }
+                        printf("\n\n\n");
                     }
-                    printf("\n\n\n");
-                    #endif
                 }
             }
 
@@ -562,11 +562,11 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
             op->ops[op->width++] = n;
             nl_table_put(&ops, n, op);
 
-            #if TB_OPTDEBUG_SLP
-            printf("  ");
-            tb_print_dumb_node(NULL, n);
-            printf("\n");
-            #endif
+            IF_OPT(SLP) {
+                printf("  ");
+                tb_print_dumb_node(NULL, n);
+                printf("\n");
+            }
         }
         TB_OPTDEBUG(SLP)(printf("\n"));
     }
@@ -770,6 +770,11 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
 
             op->v_op = tb_opt_gvn_node(f, n);
         } else if (first->type == TB_STORE) {
+            // find the earliest memory op
+            while (nl_table_get(&ops, first->inputs[1]) == op) {
+                first = first->inputs[1];
+            }
+
             int align = TB_NODE_GET_EXTRA_T(first, TB_NodeMemAccess)->align;
             TB_Node* src = gimme_vector(f, &ops, op, 3);
 
@@ -783,6 +788,17 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
             op->v_op = n;
 
             TB_Node* last = op->ops[op->width - 1];
+            for (;;) {
+                // if it's in the SLP chain there's only one "next memory", if
+                // not then it's either NULL or there's multiple. If there's multiple then
+                // any one of them won't match the ops_table
+                TB_Node* match = next_mem_user(last);
+                if (match == NULL || nl_table_get(&ops, match) != op) {
+                    break;
+                }
+                last = match;
+            }
+
             subsume_node2(f, last, n);
         } else if (first->type == TB_FADD || first->type == TB_FMUL) {
             TB_Node* lhs = gimme_vector(f, &ops, op, 1);

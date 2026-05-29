@@ -56,7 +56,7 @@
     (node PHI           PINNED)
 
     // CProj0 is the default key, every CProjN is all key-match
-    (node BRANCH extra=TB_NodeBranch)
+    (node BRANCH        CTRL TERMINATOR FORK_CTRL extra=TB_NodeBranch)
     // if the condition is non-zero, it'll take the CProj0 else CProj1
     (node IF            PINNED CTRL TERMINATOR FORK_CTRL extra=TB_NodeIf)
     (node AFFINE_LATCH  parent=IF)
@@ -95,10 +95,10 @@
     // MEMORY
     ////////////////////////////////
     //   produces a set of non-aliasing memory effects
-    (node SPLITMEM)    // (Memory) -> (Memory...)
+    (node SPLITMEM      MEMORY_IN MEMORY_OUT)    // (Memory) -> (Memory...)
     //   MERGEMEM will join multiple non-aliasing memory effects, because
     //   they don't alias there's no ordering guarentee.
-    (node MERGEMEM)    // (Split, Memory...) -> Memory
+    (node MERGEMEM      MEMORY_IN MEMORY_OUT)    // (Split, Memory...) -> Memory
     //   LOAD and STORE are standard memory accesses, they can be folded away.
     (node LOAD          MEMORY_IN extra=TB_NodeMemAccess)                   // (Control?, Memory, Ptr)      -> Data
     (node STORE         MEMORY_IN MEMORY_OUT extra=TB_NodeMemAccess)        // (Control, Memory, Ptr, Data) -> Memory

@@ -28,7 +28,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_F32CONST]       = { NULL,              NULL,               value_f32        },
     [TB_F64CONST]       = { NULL,              NULL,               value_f64        },
     // memory
-    [TB_LOAD]           = { ideal_load,        identity_load,      NULL             },
+    [TB_LOAD]           = { ideal_load,        identity_load,      value_ld         },
     [TB_STORE]          = { ideal_store,       NULL,               value_mem        },
     [TB_MEMSET]         = { NULL,              NULL,               value_mem        },
     [TB_MEMCPY]         = { ideal_memcpy,      NULL,               value_mem        },

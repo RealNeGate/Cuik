@@ -204,9 +204,9 @@ void tb_builder_exit(TB_GraphBuilder* g) {
         tb_kill_node(f, ret->inputs[0]);
 
         int last = f->root_node->input_count - 1;
-        TB_Node* last_n = f->root_node->inputs[last];
-        TB_ASSERT(last != 1); // can't have no termination
+        assert(last != 1);
 
+        TB_Node* last_n = f->root_node->inputs[last];
         set_input(f, f->root_node, NULL, last);
         set_input(f, f->root_node, last_n, 1);
         f->root_node->input_count--;
