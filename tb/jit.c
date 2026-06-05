@@ -456,7 +456,8 @@ static const uint8_t tb_jit__trampoline[] = {
     0xC3,                       // ret
 };
 
-size_t tb_jit_thread_userdata(void) { return offsetof(TB_Stacklet, user_data); }
+_Static_assert(sizeof(TB_Stacklet) <= 0x40, "TODO? tb_jit_thread_userdata");
+size_t tb_jit_thread_userdata(void) { return 0x40; }
 
 TB_Safepoint* tb_jit_get_safepoint(TB_JIT* jit, void* pc) {
     mtx_lock(&jit->lock);

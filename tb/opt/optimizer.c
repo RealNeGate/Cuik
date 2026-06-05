@@ -1161,7 +1161,7 @@ static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
     if (k->dt.raw == n->dt.raw) {
         Lattice* new_t = latuni_get(f, k);
         Lattice* old_t = latuni_get(f, n);
-        Lattice* merged = lattice_join_spec(f, old_t, new_t);
+        Lattice* merged = lattice_join(f, old_t, new_t);
         latuni_set(f, k, merged);
     }
 }
@@ -1219,19 +1219,17 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
     // pessimistic constant prop
     {
         #ifndef NDEBUG
-        Lattice* old_type = latuni_get(f, n);
+        Lattice* old_type = latuni_get_raw(f, n);
         Lattice* new_type = value_of(f, n);
 
         // monotonic moving up
-        Lattice* glb = lattice_meet(f, old_type, new_type);
-        if (glb != old_type) {
-            // HACK(NeGate): forward progress when making a range into a constant can sometimes get fucky with
-            // the known bits so i'll just hack around that for now.
-            // if (lattice_is_const(old_type) || !lattice_is_const(new_type)) {
-            TB_OPTLOG(PEEP, printf("\n\nFORWARD PROGRESS ASSERT!\n"));
-            TB_OPTLOG(PEEP, printf("  "), print_lattice(old_type), printf("  is not higher than  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
-            TB_ASSERT_MSG(0, "forward progress assert!");
-            // }
+        if (old_type != NULL) {
+            Lattice* glb = lattice_meet(f, old_type, new_type);
+            if (glb != old_type) {
+                TB_OPTLOG(PEEP, printf("\n\nFORWARD PROGRESS ASSERT!\n"));
+                TB_OPTLOG(PEEP, printf("  "), print_lattice(old_type), printf("  is not higher than  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
+                TB_ASSERT_MSG(0, "forward progress assert!");
+            }
         }
         #else
         Lattice* new_type = value_of(f, n);
@@ -1424,7 +1422,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
-    if (strcmp(f->super.name, "stbi__compute_huffman_codes") == 0) {
+    if (strcmp(f->super.name, "stbi__bmp_load") == 0) {
         f->enable_log = true;
     }
 

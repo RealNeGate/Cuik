@@ -2032,8 +2032,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 // jb gc_trap_stub
                 EMIT1(e, 0x0F); EMIT1(e, 0x82); EMIT4(e, 0);
                 stub->header.pos = e->count-4;
-                // shr addr, 4
-                __(SHR, TB_X86_QWORD, &dst, Vimm(4));
+                // shr addr, 3
+                __(SHR, TB_X86_QWORD, &dst, Vimm(3));
             }
             break;
         }
@@ -2347,8 +2347,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                     // jb gc_trap_stub
                     EMIT1(e, 0x0F); EMIT1(e, 0x82); EMIT4(e, 0);
                     stub->header.pos = e->count-4;
-                    // shr addr, 4
-                    __(SHR, TB_X86_QWORD, &dst, Vimm(4));
+                    // shr addr, 3
+                    __(SHR, TB_X86_QWORD, &dst, Vimm(3));
                 }
             }
             break;

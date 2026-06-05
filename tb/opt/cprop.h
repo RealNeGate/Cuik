@@ -505,7 +505,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             Lattice* new_type = value_of(f, n);
             // TB_OPTDEBUG(STATS)(n->type < TB_NODE_TYPE_MAX ? (f->stats.cprop_t[n->type] += (cuik_time_in_nanos() - start), 0) : 0);
 
-            if (f->enable_log && n->gvn == 340) {
+            /* if (f->enable_log && n->gvn == 340 && f->gcf_nodes[471] != NULL) {
                 printf("P%d: ", p_idx);
                 print_lattice(f->types[340]);
                 printf("    ");
@@ -514,7 +514,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 print_lattice(f->types[470]);
                 printf("    %d\n", gcf_is_congruent2(f, 471, 470));
                 __debugbreak();
-            }
+            } */
 
             TB_OPTLOG(SCCP, printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m\n"));
 
@@ -819,6 +819,11 @@ CProp tb_opt_cprop_init(TB_Function* f) {
         top_p->members = node;
         top_p->member_count += 1;
         cprop.nodes[n->gvn] = node;
+    }
+
+    printf("YOKE %zu\n", f->node_count);
+    if (f->node_count == 497) {
+        tb_print_dumb(f);
     }
 
     cprop.cprop_ws = sparse_set_alloc(&f->tmp_arena, f->node_count);

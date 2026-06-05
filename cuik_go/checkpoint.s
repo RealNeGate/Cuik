@@ -60,7 +60,7 @@ checkpoint_handler:
   push rcx
   mov rcx, rsp
   and rcx, -0x4000
-  add rcx, 0x40
+  add rcx, 0x50
   ; manually save all the regs
   mov qword [rcx],       rax
   mov qword [rcx + 8],   rcx
@@ -80,10 +80,13 @@ checkpoint_handler:
   mov qword [rcx + 120], r15
   fxsave [rcx + 128]
   ; call into real C
-  sub rcx, 0x40
+  sub rcx, 0x50
+%ifidn __?OUTPUT_FORMAT?__, elf64
+  mov rdi, rcx
+%endif
   call c_checkpoint
   ; restore regs
-  lea rcx, [rax + 0x40]
+  lea rcx, [rax + 0x50]
   mov rax, [rcx]
   mov rdx, [rcx + 16]
   mov rbx, [rcx + 24]

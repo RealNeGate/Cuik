@@ -185,6 +185,10 @@ Lattice* latuni_get(TB_Function* f, TB_Node* n) {
     return f->types[n->gvn];
 }
 
+Lattice* latuni_get_raw(TB_Function* f, TB_Node* n) {
+    return n->gvn < f->type_cap ? f->types[n->gvn] : NULL;
+}
+
 static bool lattice_top_or_bot(Lattice* l) {
     return l->tag <= LATTICE_TOP;
 }
