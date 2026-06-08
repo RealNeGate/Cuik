@@ -1228,7 +1228,9 @@ static Lattice* value_zext(TB_Function* f, TB_Node* n) {
         return lattice_gimme_uint(f, min, min, dst_bits);
     }
 
-    Lattice* full_zxt_range = lattice_gimme_int3(f, 0, lattice_uint_max(src_bits), 0, 0, src_bits, a->_int.widen);
+    Lattice* old = latuni_get_raw(f, n);
+    int widen = old && old->tag == LATTICE_INT ? TB_MIN(old->_int.widen, a->_int.widen) : 0;
+    Lattice* full_zxt_range = lattice_gimme_int3(f, 0, lattice_uint_max(src_bits), 0, 0, src_bits, widen);
     if (a->_int.min >= 0 || (a->_int.known_zeros >> (src_bits - 1)) & 1) { // known non-negative
         return lattice_join(f, full_zxt_range, a);
     } else {
@@ -1241,7 +1243,7 @@ static Lattice* value_sext(TB_Function* f, TB_Node* n) {
     if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
 
     #if 1
-    return a;
+    return lattice_remove_widen(f, a);
     #else
     if (a->_int.min == a->_int.max) { return a; }
 

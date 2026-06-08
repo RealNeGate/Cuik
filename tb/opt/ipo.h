@@ -305,12 +305,12 @@ static void func_opt_task(TPool* tp, void** arg) {
         ipo_worklist = tb_worklist_alloc();
     }
 
-    if (1 || strcmp(f->super.name, "stbi__bmp_set_mask_defaults") == 0) {
-        log_debug("OPT: %s: function local optimizer", f->super.name);
-        // printf("A %d of %d\n", ++counter_counter, total_counter);
-        tb_opt(f, ipo_worklist, false);
-        // tb_print_dumb(f);
-    }
+    // if (1 || strcmp(f->super.name, "stbi__bmp_set_mask_defaults") == 0) {
+    log_debug("OPT: %s: function local optimizer", f->super.name);
+    // printf("A %d of %d\n", ++counter_counter, total_counter);
+    tb_opt(f, ipo_worklist, false);
+    // tb_print_dumb(f);
+    // }
 
     if (tracker) {
         tracker[0] += 1;

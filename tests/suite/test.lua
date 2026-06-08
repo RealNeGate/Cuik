@@ -112,7 +112,7 @@ for i=1,#x do
                 print("    GOOD!!!")
             end
         else
-            print("    BAD CUIK!!!", configs[j])
+            print("    BAD CUIK!!!", configs[j], code)
             pass = false
         end
     end

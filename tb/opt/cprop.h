@@ -821,11 +821,6 @@ CProp tb_opt_cprop_init(TB_Function* f) {
         cprop.nodes[n->gvn] = node;
     }
 
-    printf("YOKE %zu\n", f->node_count);
-    if (f->node_count == 497) {
-        tb_print_dumb(f);
-    }
-
     cprop.cprop_ws = sparse_set_alloc(&f->tmp_arena, f->node_count);
     cprop.split_ws = sparse_set_alloc(&f->tmp_arena, f->node_count);
 

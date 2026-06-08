@@ -697,6 +697,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
             done:;
             if (bad) {
                 FOR_N(j, 0, op->width) {
+                    // printf("REMOVE %%%u\n", op->ops[j]->gvn);
                     nl_table_remove(&ops, op->ops[j]);
                 }
                 schedule[i] = NULL;
@@ -724,6 +725,8 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
                         bad_use = true;
                         dead = true;
                         break;
+                    } else {
+                        dead = false;
                     }
                 }
 
@@ -837,6 +840,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         }
     }
 
+    // tb_print(f);
     return true;
 }
 

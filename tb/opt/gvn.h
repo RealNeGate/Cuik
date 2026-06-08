@@ -1,9 +1,11 @@
 #include "../tb_internal.h"
 
 static size_t extra_bytes(TB_Node* n) {
-    TB_ASSERT(n->type != TB_VSHUFFLE);
-    // TB_NodeVShuffle* v = TB_NODE_GET_EXTRA(n);
-    // return sizeof(TB_NodeVShuffle) + (v->width * sizeof(int));
+    if (n->type == TB_VSHUFFLE) {
+        TB_NodeVShuffle* v = TB_NODE_GET_EXTRA(n);
+        return sizeof(TB_NodeVShuffle) + (v->width * sizeof(int));
+    }
+
     return tb_node_extra_bytes(n->type);
 }
 

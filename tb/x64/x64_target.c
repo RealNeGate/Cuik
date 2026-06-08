@@ -696,7 +696,9 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         const char* name = tb_node_get_name(n->type);
         name += 4;
 
-        printf("  %%%u ", n->gvn);
+        if (n->dt.type == TB_TAG_MEMORY) {
+            printf("  %%%u ", n->gvn);
+        }
 
         TB_DataType dt = n->dt;
         X86MemOp* op = TB_NODE_GET_EXTRA(n);
@@ -2475,10 +2477,10 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         }
 
         case TB_x86_call: {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            X86Call* op = TB_NODE_GET_EXTRA(n);
 
             // on SysV, AL stores the number of float params
-            /*if (ctx->calling_conv == &CC_SYSV && op_extra->proto->has_varargs) {
+            if (ctx->calling_conv == &CC_SYSV && op->proto->has_varargs) {
                 int float_params = 0;
                 FOR_N(i, 3, n->input_count) {
                     if (n->inputs[i]->type == TB_MACH_TEMP) { break; }
@@ -2490,7 +2492,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 } else {
                     __(MOV, TB_X86_BYTE, Vgpr(RAX), Vimm(float_params));
                 }
-            }*/
+            }
 
             TB_Node* ctrl_out = USERN(proj_with_index(n, 0));
             TB_Node* mem_out  = USERN(proj_with_index(n, 1));
@@ -2498,20 +2500,15 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             TB_Node* next = cfg_next_control(ctrl_out);
             bool tail = next->type == TB_UNREACHABLE && next->inputs[1] == mem_out;
 
-            if (op->mode == MODE_REG) {
-                if (n->inputs[2]->type == TB_MACH_SYMBOL) {
-                    TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeMachSymbol)->sym;
+            if (n->inputs[2]->type == TB_MACH_SYMBOL) {
+                TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeMachSymbol)->sym;
 
-                    // CALL rel32
-                    EMIT1(e, tail ? 0xE9 : 0xE8);
-                    EMIT4(e, 0);
-                    tb_emit_symbol_patch(e->output, sym, e->count - 4, TB_OBJECT_RELOC_REL32);
-                } else {
-                    Val target = op_at(ctx, n->inputs[2]);
-                    __(tail ? JMP : CALL, TB_X86_QWORD, &target);
-                }
+                // CALL rel32
+                EMIT1(e, tail ? 0xE9 : 0xE8);
+                EMIT4(e, 0);
+                tb_emit_symbol_patch(e->output, sym, e->count - 4, TB_OBJECT_RELOC_REL32);
             } else {
-                Val target = parse_cisc_operand(ctx, n, NULL, op);
+                Val target = op_at(ctx, n->inputs[2]);
                 __(tail ? JMP : CALL, TB_X86_QWORD, &target);
             }
             break;

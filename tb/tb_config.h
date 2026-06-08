@@ -3,7 +3,7 @@
 //   ON_DBG/ON_REL(name, default_val)
 //
 ON_DBG(PASSES,           false)
-ON_DBG(PEEP,             true)
+ON_DBG(PEEP,             false)
 ON_DBG(SCCP,             false)
 ON_DBG(LOOP,             false)
 ON_DBG(SROA,             false)

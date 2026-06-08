@@ -390,7 +390,7 @@ static bool safe_to_dup(Ctx* ctx, TB_Node* n) {
         return false;
     } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
         return true;
-    } else if (can_remat(ctx, n) || n->type == TB_LOCAL) {
+    } else if (can_remat(ctx, n) || n->type == TB_LOCAL || n->type == TB_SYMBOL) {
         return true;
     } else if (n->user_count > 3) {
         // share if there's a lot of users
@@ -1050,7 +1050,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         bundle.count = 0;
         bundle.arr = tb_arena_alloc(&f->tmp_arena, BUNDLE_INST_MAX * sizeof(Bundle));
 
-        bool is_main = strcmp(f->super.name, "main") == 0;
         TB_OPTDEBUG(EMIT)(printf("====== EMIT %-20s ======\n", ctx.f->super.name));
 
         ArenaArray(TB_Safepoint*) safepoints = aarray_create(code_arena, TB_Safepoint*, 16);
@@ -1118,10 +1117,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                 // flush bundle
                 if (!legal && bundle.count > 0) {
-                    if (is_main && GET_CODE_POS(e) == 608) {
-                        EMIT1(e, 0xCC);
-                    }
-
                     flush_bundle(&ctx, e, &safepoints, &bundle);
                 }
 

@@ -54,6 +54,8 @@ typedef struct {
     DynArray(SplitDecision) splits;
     DynArray(int) potential_spills; // [gvn]
 
+    DynArray(TB_Node*) prio_alloc;
+
     int order_cap;
     int* order;
     TB_Node** gvn2node;
@@ -1191,7 +1193,7 @@ static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_N
 }
 
 static void put_to_sleep(Rogers* restrict ra, int class, int gvn) {
-    TB_OPTDEBUG(REGALLOC5)(printf("#   \x1b[33msleep\x1b[0m  %%%u\n", gvn));
+    TB_OPTDEBUG(REGALLOC)(printf("#   \x1b[33msleep\x1b[0m  %%%u\n", gvn));
     sparse_set_put(&ra->future_active[class], gvn);
 }
 
@@ -1227,7 +1229,7 @@ static void mark_active(Ctx* restrict ctx, Rogers* restrict ra, int gvn) {
 }
 
 static void wake_up_node(Ctx* restrict ctx, Rogers* restrict ra, int class, int gvn) {
-    TB_OPTDEBUG(REGALLOC5)(printf("#   wake   %%%u\n", gvn));
+    TB_OPTDEBUG(REGALLOC)(printf("#   wake   %%%u\n", gvn));
     sparse_set_remove(&ra->future_active[class], gvn);
     mark_active(ctx, ra, gvn);
 }
@@ -1254,11 +1256,13 @@ static SplitDecision choose_best_spill(Ctx* restrict ctx, Rogers* restrict ra, T
         }
     }
 
-    TB_OPTDEBUG(REGALLOC)(printf("\n\n"));
-
     int best_spill = 0;
     int best_gvn = 0;
     float best_score = INFINITY;
+
+    // if multiple nodes interfere then that's multiple vregs interferring
+    // and if that's the case it's best to self-spill.
+    int same_assignment = 0;
     FOR_REV_N(i, 0, dyn_array_length(ra->potential_spills)) {
         int gvn = ra->potential_spills[i];
 
@@ -1267,11 +1271,6 @@ static SplitDecision choose_best_spill(Ctx* restrict ctx, Rogers* restrict ra, T
         if (!within_reg_mask(useful_mask, vreg->assigned)) {
             continue;
         }
-
-        // we'll only spill things which can make aggressive forward progress
-        /* if (attempted_vreg->was_spilled && !within_reg_mask(useful_mask, vreg->assigned)) {
-            continue;
-        } */
 
         float score = rogers_get_spill_cost(ctx, ra, vreg);
         if (score <= best_score) {
@@ -1292,10 +1291,6 @@ static SplitDecision choose_best_spill(Ctx* restrict ctx, Rogers* restrict ra, T
         }
     }
 
-    /* if (foobar) {
-        printf("Q %zu\n", dyn_array_length(ra->potential_spills));
-    } */
-
     int us = ctx->vreg_map[attempted_n->gvn];
     float us_score = rogers_get_spill_cost(ctx, ra, &ctx->vregs[us]);
     if (us_score < best_score) {
@@ -1314,6 +1309,10 @@ static SplitDecision choose_best_spill(Ctx* restrict ctx, Rogers* restrict ra, T
     } else {
         mark_node_as_hrp(ctx, ra, attempted_n->gvn, best_gvn, useful_class);
     }
+
+    if (best_score == INFINITY) {
+        rogers_dump_sched(ctx, 1000);
+    }
     TB_ASSERT(best_score != INFINITY);
 
     TB_ASSERT(best_spill > 0);
@@ -1321,7 +1320,7 @@ static SplitDecision choose_best_spill(Ctx* restrict ctx, Rogers* restrict ra, T
     return (SplitDecision){ best_spill };
 }
 
-static int evict_vreg(Ctx* ctx, Rogers* ra, int target) {
+static int evict_vreg(Ctx* ctx, Rogers* ra, int evicted_class, int target) {
     TB_ASSERT(!set_get(&ra->been_spilled, target));
     VReg* evicted = &ctx->vregs[target];
     int evicted_reg = evicted->assigned;
@@ -1333,13 +1332,13 @@ static int evict_vreg(Ctx* ctx, Rogers* ra, int target) {
     FOR_N(i, 0, evicted_cnt) {
         unmark_active(ctx, ra, evicted_arr[i]->gvn);
         set_remove(&ra->live, evicted_arr[i]->gvn);
-        sparse_set_remove(&ra->future_active[evicted->class], evicted_arr[i]->gvn);
+        sparse_set_remove(&ra->future_active[evicted_class], evicted_arr[i]->gvn);
     }
 
     // reset assignment
     evicted->class = 0;
     evicted->assigned = -1;
-    TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mGONNA SPILL V%u\x1b[0m\n", target));
+    TB_OPTDEBUG(REGALLOC)(printf("#       \x1b[33mGONNA SPILL V%u\x1b[0m\n", target));
     return evicted_reg;
 }
 
@@ -1366,14 +1365,6 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
     }
 
     cuikperf_region_start("a", NULL);
-    IF_OPT(REGALLOC5) {
-        printf("#\n");
-        rogers_print_vreg(ctx, ra, vreg);
-        printf("# ");
-        tb_print_dumb_node(NULL, n);
-        printf("\n");
-    }
-
     int num_regs = def_class == REG_CLASS_STK ? ra->num_spills : ctx->num_regs[def_class];
 
     size_t mask_word_count = (num_regs + 63) / 64;
@@ -1460,6 +1451,13 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
         ?  ctx->vregs[hint_vreg].assigned
         :  -1;
 
+    if (hint_vreg < 0) {
+        hint_vreg = -hint_vreg;
+
+        int hint_class = hint_vreg >> 16;
+        hint_reg = hint_class == mask->class ? hint_vreg & 0xFFFF : -1;
+    }
+
     int spilled = -1;
     if (hint_reg >= 0 && (ra_mask[hint_reg / 64ull] & (1ull << (hint_reg % 64ull))) == 0) {
         vreg->class    = def_class;
@@ -1493,40 +1491,44 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
                 ra->mask = tb_arena_alloc(ra->arena, ((ra->mask_cap+63)/64) * sizeof(uint64_t));
             }
 
-            TB_OPTDEBUG(REGALLOC5)(printf("STACK%d (new stack slot)\n", vreg->assigned));
+            IF_OPT(REGALLOC) {
+                printf("#   \x1b[32massign\x1b[0m %%%-5u V%-5u => STACK%d (new stack slot)\n", n->gvn, vreg_id, vreg->assigned);
+            }
+
             cuikperf_region_end();
             return true;
         }
 
         SplitDecision s = choose_best_spill(ctx, ra, n);
         VReg* evicted   = &ctx->vregs[s.target];
-        int evicted_reg = evict_vreg(ctx, ra, s.target);
+        int evicted_reg = evict_vreg(ctx, ra, mask->class, s.target);
+
+        IF_OPT(REGALLOC) {
+            printf("#   \x1b[32massign\x1b[0m %%%-5u V%-5u => UNCOLORED ", n->gvn, vreg_id);
+            tb__print_regmask(&OUT_STREAM_DEFAULT, vreg->mask);
+            printf(" (spilled V%u) ", s.target);
+            printf("\n");
+        }
 
         dyn_array_put(ra->splits, s);
         if (s.target == vreg_id) {
-            // kill this node for now
-            IF_OPT(REGALLOC5) {
-                printf("#   \x1b[32massign\x1b[0m %%%-5u V%-5u (%d inactive) => UNCOLORED ", n->gvn, vreg_id, inactive_cnt);
-                tb__print_regmask(&OUT_STREAM_DEFAULT, vreg->mask);
-                if (spilled >= 0) {
-                    printf(" (spilled V%u) ", spilled);
-                }
-                printf("\n");
-            }
-
+            cuikperf_region_end();
+            return false;
+        } else {
+            // leave uncolored but we'll ideally steal the same reg as was evicted.
+            vreg->hint_vreg = -((mask->class << 16u) | evicted_reg);
+            set_put(&ra->been_spilled, vreg_id);
+            dyn_array_put(ra->prio_alloc, n);
             cuikperf_region_end();
             return false;
         }
-        vreg->class    = def_class;
-        vreg->assigned = evicted_reg;
-        spilled        = s.target;
     }
 
     mark_active(ctx, ra, n->gvn);
     put_to_sleep_vreg(ctx, ra, def_class, cnt, arr, n, vreg_id);
 
-    IF_OPT(REGALLOC5) {
-        printf("#   \x1b[32massign\x1b[0m %%%-5u V%-5u (%d inactive) => ", n->gvn, vreg_id, inactive_cnt);
+    IF_OPT(REGALLOC) {
+        printf("#   \x1b[32massign\x1b[0m %%%-5u V%-5u => ", n->gvn, vreg_id);
         print_reg_name(vreg->class, vreg->assigned);
         printf(" ");
         tb__print_regmask(&OUT_STREAM_DEFAULT, vreg->mask);
@@ -1718,7 +1720,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
     // Compute areas (probably slow...)
     compute_areas(ctx, ra, arena);
-    TB_OPTDEBUG(REGALLOC5)(printf("=== PRE-COLOR ===\n"));
+    TB_OPTDEBUG(REGALLOC)(printf("=== PRE-COLOR ===\n"));
 
     // Pre-allocate ranges
     CUIK_TIMED_BLOCK("pre-alloc") {
@@ -1738,7 +1740,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
                     int class = ctx->vregs[vreg_id].class;
 
-                    IF_OPT(REGALLOC5) {
+                    IF_OPT(REGALLOC) {
                         VReg* vreg = &ctx->vregs[vreg_id];
                         printf("#   \x1b[32massign\x1b[0m %%%-5u V%-5u => ", n->gvn, vreg_id);
                         print_reg_name(vreg->class, vreg->assigned);
@@ -1759,7 +1761,26 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
         }
     }
 
-    TB_OPTDEBUG(REGALLOC5)(printf("=== ASSIGN REGS ===\n"));
+    TB_OPTDEBUG(REGALLOC)(printf("=== PRIORITY COLORING ===\n"));
+
+    // Allocate regs which last failed first, this way they ideally
+    // get their best placements.
+    dyn_array_for(i, ra->prio_alloc) {
+        TB_Node* n = ra->prio_alloc[i];
+        TB_OPTDEBUG(REGALLOC)(printf("#\n#>"), tb_print_dumb_node(NULL, n), printf("\n"));
+
+        if (allocate_reg(ctx, ra, n)) {
+            // Move to inactive
+            int vreg_id = ctx->vreg_map[n->gvn];
+            int class = ctx->vregs[vreg_id].class;
+
+            unmark_active(ctx, ra, n->gvn);
+            put_to_sleep(ra, class, n->gvn);
+        }
+    }
+    dyn_array_clear(ra->prio_alloc);
+
+    TB_OPTDEBUG(REGALLOC)(printf("=== STANDARD COLORING ===\n"));
 
     size_t uf_len = ctx->f->node_count;
     FOR_REV_N(bb_id, 0, ctx->bb_count) {
@@ -1767,7 +1788,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
         Set* live_in      = &bb->live_in;
         Set* live_out     = &bb->live_out;
 
-        TB_OPTDEBUG(REGALLOC5)(printf("# ========= BB%zu =========\n", bb_id));
+        TB_OPTDEBUG(REGALLOC)(printf("# ========= BB%zu =========\n", bb_id));
 
         cuikperf_region_start("head", NULL);
         // expire intervals for block:
@@ -1798,7 +1819,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
         //   each def will either put the node to sleep or kill it.
         FOR_REV_N(j, 0, aarray_length(bb->items)) {
             TB_Node* n = bb->items[j];
-            TB_OPTDEBUG(REGALLOC5)(printf("#>"), tb_print_dumb_node(NULL, n), printf("\n"));
+            TB_OPTDEBUG(REGALLOC)(printf("#\n#>"), tb_print_dumb_node(NULL, n), printf("\n"));
 
             int def_t = ra->order[n->gvn];
             // cuikperf_region_start("step", NULL);
@@ -1813,13 +1834,6 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
                 expire_interval(ctx, ra, n, bb_id, vreg_id);
                 set_remove(&ra->live, n->gvn);
-
-                /*FOR_USERS(u, to_spill) {
-                    TB_BasicBlock* bb = f->scheduled[USERN(u)->gvn];
-                    if (IS_PROJ(USERN(u))) {
-                        is_tuple = true;
-                    }
-                }*/
             }
 
             // if anything in the active set interferes with
@@ -1853,7 +1867,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                         int best_spill = in_use_vreg_id;
                         int best_gvn = in_use;
                         double best_cost = rogers_get_spill_cost(ctx, ra, &ctx->vregs[in_use_vreg_id]);
-                        TB_OPTDEBUG(REGALLOC5)(printf("#     %%%u V%u (", in_use, in_use_vreg_id), print_reg_name(kill_class, l), printf(") is us! %f\n", best_cost));
+                        // TB_OPTDEBUG(REGALLOC)(printf("#     %%%u V%u (", in_use, in_use_vreg_id), print_reg_name(kill_class, l), printf(") is us! %f\n", best_cost));
 
                         // if we can split an existing cheaper VReg (which isn't clobbered)
                         // around ourselves, we can steal its register.
@@ -1883,17 +1897,17 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                             }
                         }
 
-                        TB_OPTDEBUG(REGALLOC5)(printf("#       \x1b[33mSPILLING V%u FOR %%%u (CLOBBERED BY %%%u)\x1b[0m\n", best_spill, in_use, n->gvn));
+                        TB_OPTDEBUG(REGALLOC)(printf("#       \x1b[33mSPILLING V%u FOR %%%u (CLOBBERED BY %%%u)\x1b[0m\n", best_spill, in_use, n->gvn));
 
                         if (best_spill != in_use_vreg_id) {
-                            evict_vreg(ctx, ra, best_spill);
+                            evict_vreg(ctx, ra, kill_class, best_spill);
                             mark_node_as_hrp(ctx, ra, in_use, best_gvn, kill_class);
 
                             SplitDecision s = { .target = best_spill, .clobber = kills[k] };
                             dyn_array_put(ra->splits, s);
                         }
 
-                        evict_vreg(ctx, ra, in_use_vreg_id);
+                        evict_vreg(ctx, ra, kill_class, in_use_vreg_id);
                         SplitDecision s = { .target = in_use_vreg_id, .clobber = kills[k] };
                         dyn_array_put(ra->splits, s);
                     }
@@ -1934,6 +1948,10 @@ static void expire_interval(Ctx* ctx, Rogers* restrict ra, TB_Node* n, size_t bb
     uint32_t gvn = n->gvn;
     TB_ASSERT(gvn < ctx->f->node_count);
 
+    if (set_get(&ra->been_spilled, ctx->vreg_map[gvn])) {
+        return;
+    }
+
     bool pause = false;
     FOR_N(k, 0, bb_i) {
         TB_BasicBlock* other = &ctx->cfg.blocks[k];
@@ -1961,72 +1979,9 @@ static void expire_interval(Ctx* ctx, Rogers* restrict ra, TB_Node* n, size_t bb
         int class = ctx->vregs[vreg_id].class;
         put_to_sleep(ra, class, gvn);
     } else {
-        TB_OPTDEBUG(REGALLOC5)(printf("#   \x1b[31mexpire\x1b[0m %%%u\n", gvn));
+        TB_OPTDEBUG(REGALLOC)(printf("#   \x1b[31mexpire\x1b[0m %%%u\n", gvn));
     }
     unmark_active(ctx, ra, gvn);
-}
-
-typedef struct {
-    TB_BasicBlock* bb;
-    size_t order;
-} SlotIndex;
-
-static SlotIndex find_slot_index_start(Ctx* ctx, Rogers* restrict ra, TB_Node* n, bool skip_projs) {
-    TB_BasicBlock* block = ctx->f->scheduled[n->gvn];
-
-    TB_Node* tup = n;
-    if (IS_PROJ(n)) { tup = n->inputs[0]; }
-
-    bool entry_block = block == &ctx->cfg.blocks[0];
-    int t = (entry_block && tup->type == TB_ROOT) || set_get(&block->live_in, n->gvn) ? 0 : ra->order[n->gvn] - 1;
-
-    if (skip_projs) {
-        t++;
-
-        size_t cnt = aarray_length(block->items);
-        while (t < cnt && (IS_PROJ(block->items[t]) || block->items[t]->type == TB_PHI || block->items[t]->type == TB_MACH_FRAME_PTR)) {
-            t++;
-        }
-    }
-
-    return (SlotIndex){ block, t };
-}
-
-static SlotIndex find_slot_index_end(Ctx* ctx, Rogers* restrict ra, TB_Node* n) {
-    // find endpoints
-    size_t i = ctx->bb_count;
-    while (i--) {
-        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-        if (set_get(&bb->live_in, n->gvn)) {
-            int t = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, bb, n, n->gvn) - 1;
-            return (SlotIndex){ bb, t };
-        }
-    }
-
-    TB_BasicBlock* bb = ctx->f->scheduled[n->gvn];
-    int t = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, bb, n, n->gvn) - 1;
-    return (SlotIndex){ bb, t };
-}
-
-static TB_BasicBlock* sched_spill_site(TB_BasicBlock* early, TB_BasicBlock* late) {
-    TB_BasicBlock* best = late;
-    for (;;) {
-        if (late->freq < best->freq) {
-            best = late;
-        }
-        if (late == early) { break; }
-        late = late->dom;
-    }
-    return best;
-}
-
-static SlotIndex skip_projs_and_weirdos(SlotIndex s) {
-    size_t i = s.order + 1, cnt = aarray_length(s.bb->items);
-    while (i < cnt && (IS_PROJ(s.bb->items[i]) || s.bb->items[i]->type == TB_PHI || s.bb->items[i]->type == TB_MACH_FRAME_PTR)) {
-        i++;
-    }
-    s.order = i;
-    return s;
 }
 
 static void rogers_remat(Ctx* ctx, Rogers* ra, TB_Node* n, bool kill_node) {

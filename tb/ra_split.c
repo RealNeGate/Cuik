@@ -173,6 +173,13 @@ static TB_Node* insert_spill(Ctx* ctx, Rogers* ra, RegSplitter* splitter, TB_Bas
     return cpy;
 }
 
+static void add_splitter_def(RegSplitter* splitter, TB_Node* n) {
+    aarray_for(i, splitter->all_defs) {
+        if (splitter->all_defs[i] == n) { return; }
+    }
+    aarray_push(splitter->all_defs, n);
+}
+
 static bool has_immediate_use(TB_Node* n, TB_Node* of) {
     FOR_N(i, 1, n->input_count) {
         if (n->inputs[i] == of) {
@@ -332,23 +339,30 @@ static uint64_t update_phi_edges(Ctx* ctx, Rogers* ra, RegSplitter* splitter, ui
             if (is_stk && !should_stk) {
                 pred_def = insert_reload(ctx, ra, splitter, &ctx->cfg.blocks[pred_id], defs, pred_defs, k, splitter->W_exit[pred_id], NULL);
             } else if (!is_stk && should_stk && splitter->spill_mask[k]) {
+                // spilling.
+                // int spill = spill_map_get2(&splitter->spill_map, pred_def);
+                pred_def = insert_spill(ctx, ra, splitter, &ctx->cfg.blocks[pred_id], pred_def, k, NULL);
+
+                #if 0
                 if (pred_def->type == TB_MACH_COPY && !reg_mask_is_stack(TB_NODE_GET_EXTRA_T(pred_def, TB_NodeMachCopy)->use)) {
                     if (pred_def->inputs[1]->type != TB_MACH_COPY && can_remat(ctx, pred_def->inputs[1])) {
                         pred_def = pred_def->inputs[1];
+                        add_splitter_def(splitter, pred_def);
                         TB_OPTDEBUG(REGSPLIT)(printf("  BB%d: SPILL%zu: convert copy %%%u to initially rematerializable value %%%u\n", bb_id, k, pred_def->gvn, pred_def->inputs[1]->gvn));
                     } else {
                         TB_NODE_GET_EXTRA_T(pred_def, TB_NodeMachCopy)->def = splitter->spill_mask[k];
                         TB_OPTDEBUG(REGSPLIT)(printf("  BB%d: SPILL%zu: convert copy to spill-store %%%u\n", bb_id, k, pred_def->gvn));
                     }
                 } else {
-                    if (pred_def->type == TB_MACH_COPY && is_reload(pred_def)) {
-                        // If we're gonna spill a reload, let's just extend the existing spill
+                    // If we're gonna spill a reload, let's just extend the existing spill
+                    if (pred_def->gvn >= splitter->old_node_count && pred_def->type == TB_MACH_COPY && is_reload(pred_def)) {
                         TB_OPTDEBUG(REGSPLIT)(printf("  BB%d: SPILL%zu: don't spill %%%u (a reload), extend lifetime of existing spill %%%u\n", bb_id, k, pred_def->gvn, pred_def->inputs[1]->gvn));
                         pred_def = pred_def->inputs[1];
+                        add_splitter_def(splitter, pred_def);
                     } else {
-                        pred_def = insert_spill(ctx, ra, splitter, &ctx->cfg.blocks[pred_id], pred_def, k, NULL);
                     }
                 }
+                #endif
             }
         }
 
@@ -579,6 +593,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
                 printf("  * ");
                 ctx->print_pretty(ctx, n);
                 printf(" (%d uses)\n", n->user_count);
+                TB_ASSERT(ctx->vreg_map[n->gvn] == vreg_id);
 
                 /* FOR_USERS(u, n) {
                     printf("||  ");
@@ -1208,6 +1223,15 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
     // make sure there's enough room for the vreg_map
     ctx->vreg_map = aarray__reserve2(ctx->vreg_map, sizeof(*ctx->vreg_map), f->node_count);
 
+    /* printf("ALL_DEFS:\n");
+    aarray_for(i, splitter.all_defs) {
+        printf(" [%zu] = %%%u\n", i, splitter.all_defs[i]->gvn);
+    }
+    printf("ALL_PHIS:\n");
+    aarray_for(i, splitter.all_phis) {
+        printf(" [%zu] = %%%u\n", i, splitter.all_phis[i]->gvn);
+    } */
+
     for (size_t i = 0; i < aarray_length(splitter.all_defs);) {
         TB_Node* n = splitter.all_defs[i];
         if (n->user_count == 0) {
@@ -1220,10 +1244,11 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
             #endif
 
             // delete the original def
-            TB_ASSERT(f->scheduled[n->gvn]);
-            ctx->vreg_map[n->gvn] = 0;
-            tb__remove_node(ctx, f, n);
-            tb_kill_node(f, n);
+            if (f->scheduled[n->gvn]) {
+                ctx->vreg_map[n->gvn] = 0;
+                tb__remove_node(ctx, f, n);
+                tb_kill_node(f, n);
+            }
 
             aarray_remove(splitter.all_defs, i);
             continue;
