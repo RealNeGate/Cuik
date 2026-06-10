@@ -1228,6 +1228,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
             if (glb != old_type) {
                 TB_OPTLOG(PEEP, printf("\n\nFORWARD PROGRESS ASSERT!\n"));
                 TB_OPTLOG(PEEP, printf("  "), print_lattice(old_type), printf("  is not higher than  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
+                tb_print_dumb_raw(f, &OUT_STREAM_DEFAULT, true);
                 TB_ASSERT_MSG(0, "forward progress assert!");
             }
         }
@@ -1422,9 +1423,9 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
-    if (strcmp(f->super.name, "stbi__bmp_load") == 0) {
+    /* if (0 && strcmp(f->super.name, "foo") == 0) {
         f->enable_log = true;
-    }
+    } */
 
     #if TB_OPTDEBUG_STATS
     f->stats.peeps = zalloc(TB_NODE_TYPE_MAX * sizeof(int));

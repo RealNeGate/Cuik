@@ -157,6 +157,7 @@ end
 local supported_archs = {
     x64 = "-DTB_HAS_X64",
     a64 = "-DTB_HAS_AARCH64",
+    m64 = "-DTB_HAS_MIPS64",
 }
 
 local archs = ""
@@ -286,6 +287,7 @@ local function walk(name)
 end
 
 walk("mimalloc")
+walk("cuik_go")
 
 if options.cuik then
     walk("cuik_c")
@@ -331,6 +333,9 @@ for i,f in ipairs(srcs) do
     table.insert(objs, out)
 end
 table.insert(lines, "")
+
+table.insert(lines, "build bin/objs/checkpoint.o: nasm cuik_go/checkpoint.s\n")
+objs[#objs + 1] = "bin/objs/checkpoint.o"
 
 local out = "bin/cuik"
 if is_windows then

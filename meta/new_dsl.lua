@@ -313,7 +313,11 @@ add_line(0, "#define NODE_ISA(s, t) tb_node_isa((s)->type, TB_ ## t)")
 for k,v in pairs(targets) do
     if k ~= "___" then
         local r = v.range
-        add_line(0, string.format("static bool tb_node_is_%s(TB_Node* n) { return n->type >= %d && n->type < %d; }", k, r[1], r[2]))
+        if r[1] == r[2] then
+            add_line(0, string.format("static bool tb_node_is_%s(TB_Node* n) { return false; /* no ops atm */ }", k))
+        else
+            add_line(0, string.format("static bool tb_node_is_%s(TB_Node* n) { return n->type >= %d && n->type < %d; }", k, r[1], r[2]))
+        end
     end
 end
 add_line(0, "")
@@ -440,7 +444,7 @@ for k,v in pairs(targets) do
         arch_features= v.arch_features
         arch_isel()
 
-        local path = string.format("tb/x64/x64_gen.h")
+        local path = string.format("tb/%s/%s_gen.h", k, k)
         f = io.open(path, "w")
         f:write(table.concat(lines, "\n"))
         f:close()

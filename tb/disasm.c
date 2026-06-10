@@ -1,8 +1,10 @@
 #include <tb_x64.h>
 #include <tb_a64.h>
+#include <tb_mips.h>
 
 size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs);
 size_t tb_a64_print_inst(TB_Disasm* disasm, TB_A64_Inst* inst, bool has_relocs);
+size_t tb_mips_print_inst(TB_Disasm* disasm, uint32_t inst, bool has_relocs);
 
 bool tb_disasm_outf(TB_Disasm* disasm, const char* fmt, ...) {
     size_t cap = disasm->out_len - disasm->out_curr;
@@ -49,6 +51,21 @@ ptrdiff_t tb_disasm_print(TB_Arch arch, TB_Disasm* disasm, bool has_relocs) {
 
             disasm->in_curr += inst.length;
             return inst.length;
+        }
+        #endif
+
+        #ifdef TB_HAS_MIPS64
+        case TB_ARCH_MIPS64: {
+            TB_ASSERT(disasm->in_len - disasm->in_curr >= sizeof(uint32_t));
+
+            uint32_t inst;
+            memcpy(&inst, &disasm->in[disasm->in_curr], sizeof(uint32_t));
+
+            size_t s = tb_mips_print_inst(disasm, inst, has_relocs);
+            TB_ASSERT(s != 0);
+
+            disasm->in_curr += 4;
+            return 4;
         }
         #endif
 

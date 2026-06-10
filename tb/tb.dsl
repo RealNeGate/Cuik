@@ -230,3 +230,6 @@
 #include "x64/x64.dsl"
 #endif
 
+#ifdef TB_HAS_MIPS64
+#include "mips/mips.dsl"
+#endif

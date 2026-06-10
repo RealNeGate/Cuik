@@ -15,7 +15,7 @@
         // (a => x y z)   feature a, which implies x, y, z
 
         (sse2)
-        (sse3 => sse2)
+        (sse3  => sse2)
         (sse41 => sse3)
         (sse42 => sse3)
 
@@ -65,12 +65,12 @@
     //   [4] val (only if flags' HAS_IMMEDIATE is unset)
     (struct X86MemOp
         (___ (union ___
-            (prob float)
-            (___ (struct ___
-                (disp int32_t)
-                (imm  int32_t)
+                (prob float)
+                (___ (struct ___
+                        (disp int32_t)
+                        (imm  int32_t)
+                    ))
             ))
-        ))
 
         (mode  (bits uint8_t 2))
         (scale (bits uint8_t 2))

@@ -455,10 +455,6 @@ static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
-static bool can_gvn(TB_Node* n) {
-    return true;
-}
-
 static float edge_prob(TB_Node* n) {
     TB_Node* tup = n->inputs[0];
     int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
@@ -1021,13 +1017,6 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     mach_dsl_init(ctx, abi);
 
     ctx->calling_conv = abi == TB_ABI_SYSTEMV ? &CC_SYSV : &CC_WIN64;
-
-    // currently only using 16 GPRs and 16 XMMs, AVX gives us
-    // 32 YMMs (which double as XMMs) and later on APX will do
-    // 32 GPRs.
-    ctx->num_regs[REG_CLASS_GPR] = 16;
-    ctx->num_regs[REG_CLASS_XMM] = 16;
-    ctx->num_regs[REG_CLASS_FLAGS] = 1;
 
     uint16_t all_gprs = 0xFFFF & ~(1 << RSP);
     if (ctx->f->features.gen & TB_FEATURE_FRAME_PTR) {
