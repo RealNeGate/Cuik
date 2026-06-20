@@ -32,22 +32,65 @@ end
 
 -- immediate execute
 local in_comment = 0
-local lex = string.gmatch(src, "%S+")
+local i   = 1
+local lex = function()
+    -- skip whitespace
+    while ch_class[str:byte(i)] == "ws" or str:byte(i) == 35 do
+        if str:byte(i) == 10 then
+            i = i + 1
+            line_num = line_num + 1
+        elseif ch_class[str:byte(i)] == "ws" then
+            i = i + 1
+        elseif str:byte(i) == 35 then -- hash are comments
+            while str:byte(i) ~= 10 do
+                i = i + 1
+            end
+        end
+    end
+
+    if i > #str then
+        return nil
+    end
+end
 
 local recording = nil
-local def = dict_get(word)
+local def_type  = nil
+
+local insts = {}
 
 dict_put(":", function()
     local name = lex()
+    def_type   = ":"
+    recording  = {}
+    dict_put(name, recording)
+end)
+
+dict_put(":reg", function()
+    local name = lex()
+    def_type   = ":reg"
+    recording  = {}
+    dict_put(name, recording)
+end)
+
+dict_put(":inst", function()
+    local name = lex()
+    def_type   = ":inst"
     recording  = {}
     dict_put(name, recording)
 end)
 
 dict_put(";", function()
+    if def_type == ":reg" then
+        local tab = dict[#dict][2]
+        print(inspect(tab))
+    elseif def_type == ":inst" then
+        insts[#insts + 1] = dict[#dict]
+    end
+
+    def_type = nil
     recording = nil
 end)
 
-local export = 1
 for word in lex do
     if word == "(" then
         in_comment = in_comment + 1
@@ -58,8 +101,6 @@ for word in lex do
         local def = dict_get(word)
         if word ~= ";" and recording then
             recording[#recording + 1] = def and def or word
-        elseif word == "export" then
-            export = #dict + 1
         else
             def()
         end
@@ -68,7 +109,7 @@ end
 
 print("DICTIONARY")
 for i=1,#dict do
-    print(inspect(dict[i]))
+    print(dict[i][1], inspect(dict[i][2]))
 end
 
 function expand(list, def)
@@ -89,14 +130,16 @@ function encode_path(name)
     local list = {}
     local def = dict_get(name)
     expand(list, def)
+    print(inspect(list))
 
     local stack = nil
     local param_count = 0
     local tmp_count = 0
+    local pattern_names = { "x", "y", "z", "w" }
     local function pop()
         if #stack == 0 then
             param_count = param_count + 1
-            return string.format("P%d", param_count)
+            return pattern_names[param_count]
         end
 
         local v = stack[#stack]
@@ -119,8 +162,9 @@ function encode_path(name)
     local function interp(num_fn, my_env)
         -- print()
         -- print("INTERP")
-
         stack = {}
+
+        local in_brackets = false
         for i=1,#list do
             -- print(list[i], inspect(stack))
             if type(list[i]) == "number" then
@@ -143,6 +187,16 @@ function encode_path(name)
             local y = pop()
             push(x)
             push(y)
+        end,
+        ["{"] = function() end,
+        ["}"] = function() print("DESC", pop()) end,
+        ["name@"] = function()
+            push(name)
+        end,
+        ["cat"] = function()
+            local x = pop()
+            local y = pop()
+            push(x..y)
         end,
         ["and"] = function()
             local r = pop()
@@ -172,15 +226,16 @@ function encode_path(name)
 
     local params = {}
     for i=1,param_count do
-        params[i] = "uint64_t P"..i
+        params[i] = "uint64_t "..pattern_names[1 + (param_count - i)]
     end
 
-    lines[to_patch] = string.format("static void %s(TB_CGEmitter* e, %s) {", name, table.concat(params, ","))
+    lines[to_patch] = string.format("static void %s(TB_CGEmitter* e, %s) {", name, table.concat(params, ", "))
     lines[#lines + 1] = "}"
 
     local function pop()
         if #stack == 0 then
-            return string.rep("x", 32)
+            param_count = param_count + 1
+            return string.rep(pattern_names[param_count], 32)
         end
 
         local v = stack[#stack]
@@ -197,6 +252,7 @@ function encode_path(name)
     end
 
     -- DECODE CASE
+    param_count = 0
     interp(
         function(x)
             -- convert number into known bits
@@ -213,6 +269,16 @@ function encode_path(name)
             local y = pop()
             push(x)
             push(y)
+        end,
+        ["{"] = function() end,
+        ["}"] = function() print("DESC", pop()) end,
+        ["name@"] = function()
+            push(name)
+        end,
+        ["cat"] = function()
+            local x = pop()
+            local y = pop()
+            push(x..y)
         end,
         ["and"] = function()
             local r = pop()
@@ -295,20 +361,129 @@ function encode_path(name)
     })
 end
 
-print()
-
-for i=export,#dict do
-    if dict[i][1] ~= "j-type" then
-        print(dict[i][1])
-        encode_path(dict[i][1])
-    end
+for i=1,#insts do
+    local d = insts[i]
+    print(d[1])
+    encode_path(d[1])
 end
 
 print()
 print("PATTERNS")
+
+parts = Partitions()
 for i=1,#patterns do
+    local oper_only = patterns[i][2]:gsub("0", "_"):gsub("1", "_")
+    parts:put(oper_only, patterns[i])
+
     print(patterns[i][1], patterns[i][2])
 end
+
+function find_first_oper(base, str)
+    for i=base,#str do
+        if str:sub(i,i) ~= "0" and str:sub(i,i) ~= "1" then
+            return i - 1
+        end
+    end
+    return #str
+end
+
+function find_first_opcode(base, str)
+    for i=base,#str do
+        if str:sub(i,i) == "0" or str:sub(i,i) == "1" then
+            return i
+        end
+    end
+    return #str
+end
+
+function final_state_str(q)
+    local list = {}
+    for i=1,#q do
+        list[i] = q[i][1]
+    end
+    return table.concat(list, ",")
+end
+
+print()
+
+local live = {}
+for k,v in parts:iter() do
+    print("PAT", k)
+    for i=1,#v do
+        print("", v[i][2], v[i][1])
+        live[#live + 1] = v[i]
+    end
+    print()
+end
+
+lines = {}
+function dfa_compile_terminator(q, base, bits, depth)
+    local indent = string.rep("    ", depth)
+    lines[#lines + 1] = string.format("%s// %s", indent, final_state_str(q))
+    lines[#lines + 1] = string.format("%sreturn SOMETHING;", indent)
+end
+
+function dfa_compile(q, base, bits, depth)
+    if base > 32 then
+        dfa_compile_terminator(q, base, bits, depth)
+        return
+    end
+
+    print("DFA", base)
+
+    -- For each live case, find how many opcodes
+    -- we can match against.
+    local parts = Partitions()
+    local lwb = base
+    local upb = 32
+    for i=1,#q do
+        local str = q[i][2]
+        local d   = find_first_opcode(base, str)
+        local d2  = find_first_oper(d, str)
+
+        upb = math.min(upb, d2)
+        lwb = math.max(lwb, d)
+
+        local discrim = str:sub(d, d2)
+        local key = str:sub(d+d2):gsub("0", "_"):gsub("1", "_")
+        print(base, discrim, key, d, d2)
+        parts:put(key, i)
+    end
+
+    if lwb >= upb then
+        dfa_compile_terminator(q, base, bits, depth)
+        return
+    end
+
+    local bit_off = (bits - upb)
+    local bit_len = 1 + (upb - lwb)
+    local indent = string.rep("    ", depth)
+
+    lines[#lines + 1] = string.format("%sswitch (BEXTR(inst, %d, %d)) {", indent, bit_off, bit_len)
+    for k,v in parts:iter() do
+        print(k)
+
+        local next = {}
+        local keys = OrderedSet()
+        for i=1,#v do
+            keys:put(q[v[i]][2]:sub(lwb, upb))
+            next[#next + 1] = q[v[i]]
+        end
+
+        for k in keys:iter() do
+            lines[#lines + 1] = string.format("%s    case 0b%s:", indent, k)
+        end
+        lines[#lines + 1] = indent.."    {"
+        dfa_compile(next, lwb + upb, bits, depth+2)
+        lines[#lines + 1] = indent.."    }"
+
+        print("", inspect(keys.ord))
+    end
+    lines[#lines + 1] = indent.."}"
+end
+
+lines[#lines + 1] = "static int disasm_classify_dfa(uint32_t inst) {"
+dfa_compile(live, 1, 32, 1)
 
 print(table.concat(lines, "\n"))
 

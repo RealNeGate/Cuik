@@ -199,3 +199,4 @@ TB_API bool tb_mips_disasm(TB_MIPS_Inst* restrict inst, size_t length, const uin
     memcpy(&inst->raw, data, sizeof(uint32_t));
     return true;
 }
+
