@@ -129,10 +129,10 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     SourceLoc loc = t.location;
     const unsigned char* start = t.content.data;
 
-    #if USE_INTRIN && CUIK__IS_X64
+    #if 0 // USE_INTRIN && CUIK__IS_X64
     // SIMD whitespace skip
     const unsigned char* end = t.content.data;
-    if (!t.hit_line) {
+    if (t.type && !t.hit_line) {
         end += t.content.length;
 
         for (;;) {
@@ -145,7 +145,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
             }
 
             __m128i chars = _mm_loadu_si128((__m128i*) end);
-            __m128i mask = _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'));
+            __m128i mask  = _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'));
 
             uint32_t bits = _mm_movemask_epi8(mask);
             if (bits == 0) {
@@ -429,7 +429,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
 
     Cuik_FileResult next_file;
     if (!ctx->fs(ctx->user_data, &canonical, &next_file, ctx->case_insensitive)) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: file doesn't exist.\n");
+        diag_err(&ctx->tokens, get_token_range(&ctx->directive_token), "couldn't find file: %s", filename);
         return DIRECTIVE_ERROR;
     }
 

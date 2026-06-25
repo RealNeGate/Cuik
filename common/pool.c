@@ -410,6 +410,8 @@ int _tpool_queue_steal(TPool_Thread *thread, TPool_Task *task) {
 
 void cuikperf_thread_start(void);
 void cuikperf_thread_stop(void);
+void cuikperf_region_start(const char* label, const char* extra);
+void cuikperf_region_end(void);
 
 int _tpool_worker(void *ptr) {
     TPool_Task task;

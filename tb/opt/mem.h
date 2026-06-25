@@ -495,7 +495,6 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
         }
         state->sealed = true;
     }
-    state->walked_once = true;
 
     #if TB_OPTDEBUG_MEMORY
     if (f->enable_log) {
@@ -682,19 +681,14 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             TB_Node* use_n = loads[i];
             int cat = find_local_idx(ctx, use_n->inputs[2]);
 
-            #if TB_OPTDEBUG_MEM2REG
-            printf("    LOAD %%%u (cat=%d)\n", use_n->gvn, cat);
-            #endif
+            TB_OPTLOG(MEMORY, printf("    LOAD %%%u (cat=%d)\n", use_n->gvn, cat));
 
             TB_Node* val = NULL;
             if (cat == 0) {
                 // normal load, try to elim
                 TB_Node* base;
                 SimpleMemRef ref = find_simple_mem_ref(f, ctx, use_n, &base);
-
-                #if TB_OPTDEBUG_MEM2REG
-                printf("      REF [%%%u + %"PRId64"]\n", base->gvn, ref.offset);
-                #endif
+                TB_OPTLOG(MEMORY, printf("      REF [%%%u + %"PRId64"]\n", base->gvn, ref.offset));
 
                 MemorySet* set = nl_table_get(non_aliasing, base);
                 if (set) {
@@ -711,9 +705,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
 
             if (val != NULL) {
                 if (latest) {
-                    #if TB_OPTDEBUG_MEM2REG
-                    printf("      ELIM %%%u => %%%u\n", use_n->gvn, val->gvn);
-                    #endif
+                    TB_OPTLOG(MEMORY, printf("      ELIM %%%u => %%%u\n", use_n->gvn, val->gvn));
 
                     if (use_n->dt.raw != val->dt.raw) {
                         // it's one of the half constructed phis we've got laying around
@@ -755,15 +747,14 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
         }
         curr = next;
     }
+    state->walked_once = true;
 
-    #if TB_OPTDEBUG_MEMORY
-    if (f->enable_log) {
+    IF_OPT(MEMORY) {
         printf("  FINAL  [ ");
         print_memory_state(non_aliasing);
         printf("]\n");
         print_var_state(ctx, state);
     }
-    #endif
 
     // Copy out the memory state
     nl_table_clear(&state->non_aliasing);
@@ -892,7 +883,7 @@ int tb_opt_locals(TB_Function* f) {
             } else if (USERI(mem) != 2 || !good_mem_op(f, USERN(mem))) {
                 mode = RENAME_NONE;
                 break;
-            } else {
+            } else if (mode != RENAME_MEMORY) {
                 if (USERN(mem)->type == TB_LOAD) {
                     dt = USERN(mem)->dt;
                 } else if (USERN(mem)->type == TB_STORE) {

@@ -157,6 +157,7 @@ end
 local supported_archs = {
     x64 = "-DTB_HAS_X64",
     a64 = "-DTB_HAS_AARCH64",
+    m64 = "-DTB_HAS_MIPS64",
 }
 
 local archs = ""
@@ -181,14 +182,23 @@ if not has_arch then
 end
 
 local cc = "clang"
+local ld = ""
 if options.gcc then
     cc = "gcc"
+    ld = "ld"
+else
+    if is_windows then
+        ld = "lld-link"
+    else
+        ld = "clang -fuse-ld=lld"
+    end
 end
 
 rules({
     { name = "cc",   command = cc.." $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
     { name = "cc2",  command = "cuik $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
-    { name = "ld",   command = cc.." $in $flags -o $out",                  description = "LINK $out" },
+    { name = "ld",   command = ld.." $in $flags$out",                  description = "LINK $out" },
+    { name = "ld2",  command = "cuik -link $in $flags -out:$out",          description = "LINK $out" },
     { name = "nasm", command = "nasm $in -f elf64 -o $out",                description = "NASM $out" },
     { name = "run",  command = "$cmd",                                     description = "$cmd"      },
     { name = "meta", command = arg[-1].." $script $out $in",               description = "META $out" }
@@ -198,7 +208,8 @@ local visited = {}
 local srcs    = {}
 local is_exe  = false
 
-local cflags = "-c -g -I include -I common"
+local cflags = "-c -g -I NBHM -I include -I common"
+
 -- Warnings
 cflags = cflags.." -Wall -Werror -Wno-unused -Wno-microsoft-enum-forward-reference -Wno-deprecated"
 
@@ -232,22 +243,20 @@ end
 local ldflags = ""
 if is_windows then
     cflags  = cflags.." -D_CRT_SECURE_NO_WARNINGS"
-    ldflags = "-g"
+    ldflags = ""
     if options.shared then
         cflags = cflags.." -DCUIK_DLL -DTB_DLL"
         ldflags = ldflags.." -shared"
     end
 
-    if not options.gcc then
-        ldflags = ldflags.." -fuse-ld=lld-link"
+    if is_windows then
+        ldflags = ldflags.." /debug /defaultlib:libcmt /out:"
+    else
+        ldflags = ldflags.." -g -o "
     end
 else
     cflags  = cflags.." -D_GNU_SOURCE"
-    ldflags = " -lc -lm -g"
-    if not options.gcc then
-        ldflags = ldflags.." -fuse-ld=lld"
-    end
-
+    ldflags = " -lc -lm -g -o "
     if options.shared then
         cflags = cflags.." -fPIC"
         ldflags = ldflags.." -shared"
@@ -279,6 +288,7 @@ local function walk(name)
 end
 
 walk("mimalloc")
+walk("cuik_go")
 
 if options.cuik then
     walk("cuik_c")
@@ -325,8 +335,11 @@ for i,f in ipairs(srcs) do
 end
 table.insert(lines, "")
 
+table.insert(lines, "build bin/objs/checkpoint.o: nasm cuik_go/checkpoint.s\n")
+objs[#objs + 1] = "bin/objs/checkpoint.o"
+
 local out = "bin/cuik"
-if is_exe then
+if is_windows then
     if options.shared then
         out = out..".dll"
     else

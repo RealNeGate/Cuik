@@ -7,12 +7,99 @@
 #include <tb_coff.h>
 #include <file_map.h>
 
-enum { IMP_PREFIX_LEN = sizeof("__imp_") - 1 };
+enum {
+    IMP_PREFIX_LEN = sizeof("__imp_") - 1,
+    PDB_BLOCK_SIZE = 4096,
+};
 
 typedef struct {
     uint32_t offset;
     TB_LinkerSegment* segment;
 } PE_BaseReloc;
+
+// https://llvm.org/docs/PDB/MsfFile.html#the-stream-directory
+typedef struct {
+    char file_magic[32];
+    uint32_t block_size;
+    uint32_t free_block_map_block;
+    uint32_t num_blocks;
+    uint32_t num_directory_bytes;
+    uint32_t unknown;
+    uint32_t dir_blocks[];
+} PDB_SuperBlock;
+
+// serialized form
+typedef struct {
+    uint32_t version;
+    uint32_t signature;
+    uint32_t age;
+    uint32_t unique_id[4];
+} PDB_InfoHeader;
+
+// https://llvm.org/docs/PDB/DbiStream.html
+typedef struct {
+    // I have no idea why they didn't make this
+    // part of the streams consistent btw. Info
+    // does ver+sign+age, here it's sign+ver+age
+    uint32_t signature;
+    uint32_t version;
+    uint32_t age;
+
+    uint16_t global_stream; // StreamIndex
+    uint16_t build_num;
+
+    uint16_t public_stream; // StreamIndex
+    uint16_t pdb_dll_version;
+    uint16_t sym_record_stream; // StreamIndex
+    uint16_t pdb_dll_rebuild;
+    uint32_t mod_info_size;
+    uint32_t section_contrib_size;
+    uint32_t section_map_size;
+    uint32_t source_info_size;
+    uint32_t type_server_size;
+    uint32_t mfc_type_server; // StreamIndex
+    uint32_t optional_debug_header_size;
+    uint32_t ec_subsystem_size;
+
+    uint16_t flags;
+    uint16_t machine;
+
+    uint32_t pad;
+    uint8_t data[]; // PDB_ModuleInfo[]
+} PDB_DBIHeader;
+
+// https://llvm.org/docs/PDB/DbiStream.html
+typedef struct {
+    uint32_t unused1;
+    struct {
+        uint16_t section;
+        char     padding1[2];
+        int32_t  offset;
+        int32_t  size;
+        uint32_t characteristics;
+        uint16_t module_index;
+        char     padding2[2];
+        uint32_t data_crc;
+        uint32_t reloc_crc;
+    } section_contr;
+    uint16_t flags;
+    uint16_t module_sym_stream;
+    uint32_t sym_size;
+    uint32_t c11_size;
+    uint32_t c13_size;
+    uint16_t source_file_count;
+    char     padding[2];
+    uint32_t unused2;
+    uint32_t source_file_name_index;
+    uint32_t pdb_file_path_name_index;
+    char     module_name[];
+} PDB_ModuleInfo;
+
+typedef struct {
+    size_t size;
+    // We assume that all blocks are contiguous for now
+    size_t first_block;
+} DebugStream;
 
 typedef struct {
     TB_Linker* linker;
@@ -74,6 +161,11 @@ static bool strprefix(const char* str, const char* pre, size_t len) {
     return tb_string_case_cmp(pre, str, len < prelen ? len : prelen) == 0;
 }
 
+static bool strsuffix(const uint8_t* str, const char* suf, size_t len) {
+    size_t suflen = strlen(suf);
+    return len >= suflen && memcmp(&str[len - suflen], suf, suflen) == 0;
+}
+
 static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* end_directive) {
     while (curr != end_directive && *curr == ' ') curr++;
 
@@ -109,6 +201,23 @@ static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* e
 
             // forcibly include symbol
             tb_linker_import_symbol(l, (TB_Slice){ curr, end - curr });
+        } else if (strprefix((const char*) curr, "/disallowlib:", end - curr)) {
+            curr += sizeof("/disallowlib:")-1;
+
+            int len = end - curr;
+            if (curr[0] == '"') {
+                curr += 1;
+                len -= 2;
+            }
+
+            // force the lib list to think this library is already opened
+            char* str = tb_arena_alloc(&linker_perm_arena, len + 1);
+            memcpy(str, curr, len + 1);
+            str[len] = 0;
+
+            if (strhs_intern(&l->libs, str) != str) {
+                tb_arena_free(&linker_perm_arena, str, len + 1);
+            }
         } else if (strprefix((const char*) curr, "/defaultlib:", end - curr)) {
             curr += sizeof("/defaultlib:")-1;
 
@@ -123,22 +232,27 @@ static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* e
 
             // low contention, don't care
             mtx_lock(&l->lock);
-            if (tb__linker_is_library_new(l, path)) {
-                dyn_array_put(l->default_libs, path);
-            }
+            dyn_array_put(l->default_libs, path);
             mtx_unlock(&l->lock);
         } else if (strprefix((const char*) curr, "/alternatename:", end - curr)) {
             curr += sizeof("/alternatename:")-1;
 
+            // If the symbol isn't defined yet
             const uint8_t* equals = curr;
             while (*equals && *equals != '=') equals++;
 
-            // printf("alternate: %.*s\n", (int) (end - curr), curr);
             if (*equals == '=') {
-                // we convert the symbol into a weak one
-                TB_LinkerSymbol* from = tb_linker_import_symbol(l, (TB_Slice){ curr, equals - curr });
-                TB_LinkerSymbol* to   = tb_linker_import_symbol(l, (TB_Slice){ equals + 1, (end - equals) - 1 });
-                tb_linker_symbol_weak(l, from, to);
+                // printf("alternate: %.*s\n", (int) (end - curr), curr);
+
+                TB_LinkerCmd cmd = {
+                    .from = { curr, equals - curr },
+                    .to   = { equals + 1, (end - equals) - 1 },
+                };
+
+                // low contention, don't care
+                mtx_lock(&l->lock);
+                dyn_array_put(l->alternate_names, cmd);
+                mtx_unlock(&l->lock);
             }
         } else {
             // log_warn("unknown linker directive: %.*s", (int) (end - curr), curr);
@@ -377,7 +491,7 @@ void pe_append_object(TPool* pool, void** args) {
     }
 
     cuikperf_region_start2("object", obj->name.length - slash, (const char*) obj->name.data + slash);
-    // printf("tb-link: Reading (%.*s):\n", (int) (obj->name.length - slash), (const char*) obj->name.data + slash);
+    // printf("tb-link: Reading (%.*s), %#llx:\n", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->time);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -395,7 +509,7 @@ void pe_append_object(TPool* pool, void** args) {
     TB_ArenaSavepoint sp = tb_arena_save(&linker_tmp_arena);
 
     // Apply all sections (generate lookup for sections based on ordinals)
-    TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
+    TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL, *debug_piece = NULL;
     TB_ObjectSection* sections = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_ObjectSection));
 
     uint64_t order = obj->time;
@@ -405,18 +519,6 @@ void pe_append_object(TPool* pool, void** args) {
             tb_coff_parse_section(&parser, i, s);
 
             int dollar = find_char(s->name, '$');
-
-            // trim the dollar sign (if applies)
-            /* TB_Slice coff_order = { 0 };
-            int dollar = find_char(s->name, '$');
-            if (dollar < s->name.length) {
-                coff_order.length = s->name.length - (dollar + 1);
-                coff_order.data = &s->name.data[dollar + 1];
-
-                s->name.length = dollar;
-            } */
-            // printf("L: %zu %.*s (dollar: %d)\n", s->name.length, (int) s->name.length, s->name.data, dollar);
-
             size_t drectve_len = sizeof(".drectve")-1;
             if (dollar >= drectve_len && memcmp(s->name.data, ".drectve", drectve_len) == 0) {
                 // printf("tb-link: Directives: %.*s\n", (int) s->raw_data.length, s->raw_data.data);
@@ -449,18 +551,24 @@ void pe_append_object(TPool* pool, void** args) {
             p->relocs = &parser.file.data[s->relocation_offset];
             if (s->flags & IMAGE_SCN_LNK_COMDAT) {
                 p->flags |= TB_LINKER_PIECE_COMDAT;
-            }
-
-            if (dollar == 5 && memcmp(s->name.data, ".text", 5) == 0) {
-                text_piece = p;
-            } else if (dollar == 6 && memcmp(s->name.data, ".pdata", 6) == 0) {
-                pdata_piece = p;
+            } else {
+                if (dollar == 5 && memcmp(s->name.data, ".text", 5) == 0) {
+                    // assert(text_piece == NULL);
+                    text_piece = p;
+                } else if (dollar == 6 && memcmp(s->name.data, ".pdata", 6) == 0) {
+                    // assert(pdata_piece == NULL);
+                    pdata_piece = p;
+                } else if (s->name.length == 8 && memcmp(s->name.data, ".debug$S", 8) == 0) {
+                    obj->debug_s = p;
+                } else if (s->name.length == 8 && memcmp(s->name.data, ".debug$T", 8) == 0) {
+                    obj->debug_t = p;
+                }
             }
         }
     }
 
-    // associate the pdata with the text
-    if (text_piece) {
+    // associate the debug and pdata with the text
+    if (text_piece && pdata_piece) {
         tb_linker_associate(l, text_piece, pdata_piece);
     }
 
@@ -482,9 +590,12 @@ void pe_append_object(TPool* pool, void** args) {
             if (sym->section_num > 0) {
                 TB_ObjectSection* sec = &sections[sym->section_num - 1];
 
+                bool is_section = false;
                 if (sym->type == TB_OBJECT_SYMBOL_STATIC && sym->value == 0) {
                     if (sec->name.length == sym->name.length && memcmp(sec->name.data, sym->name.data, sym->name.length) == 0) {
-                        // printf("L: %d %zu %.*s\n", dollar, sym->name.length, (int) sym->name.length, sym->name.data);
+                        is_section = true;
+
+                        // printf("L: %d %zu %.*s\n", sym->name.length, (int) sym->name.length, sym->name.data);
 
                         // COMDAT is how linkers handle merging of inline functions in C++
                         if ((sec->flags & IMAGE_SCN_LNK_COMDAT)) {
@@ -513,11 +624,20 @@ void pe_append_object(TPool* pool, void** args) {
                 COFF_AuxSectionSymbol* comdat_aux = search >= 0 ? comdat_sections[search].v : NULL;
 
                 TB_ASSERT(sym->type != TB_OBJECT_SYMBOL_WEAK_EXTERN);
-                if (sym->type == TB_OBJECT_SYMBOL_EXTERN) {
-                    if (comdat_aux) {
+                if (sym->type == TB_OBJECT_SYMBOL_EXTERN && (!is_section && comdat_aux)) {
+                    if (comdat_aux->selection == 1) {
+                        s->comdat = TB_LINKER_COMDAT_NODUP;
+                    } else if (comdat_aux->selection == 5) {
+                        s->comdat = TB_LINKER_COMDAT_ASSOCATIVE;
+
+                        TB_ObjectSection* assoc = &sections[comdat_aux->number - 1];
+                        TB_LinkerSectionPiece* assoc_piece = (TB_LinkerSectionPiece*) assoc->user_data;
+                        tb_linker_associate(l, assoc_piece, sec->user_data);
+                    } else {
                         s->comdat = TB_LINKER_COMDAT_ANY;
-                        nl_map_remove(comdat_sections, sym->section_num);
                     }
+
+                    // nl_map_remove(comdat_sections, sym->section_num);
                 }
             } else if (sym->type == TB_OBJECT_SYMBOL_EXTERN || sym->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
                 // symbols without a section number are proper externals (ones defined somewhere
@@ -613,7 +733,13 @@ static void lazy_import_task(TPool* pool, void** args) {
         const char* name = &strtab[j];
         size_t len = ideally_fast_strlen(name);
 
+        j += len + 1;
+        if (tb_archive_member_is_short(parser, offset_index)) {
+            continue;
+        }
+
         TB_ArchiveEntry e = tb_archive_member_get(parser, offset_index);
+        assert(e.content.length);
 
         // We don't *really* care about this info beyond nicer errors (use an arena tho)
         TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
@@ -638,7 +764,6 @@ static void lazy_import_task(TPool* pool, void** args) {
             tb_arena_free(&linker_perm_arena, s, sizeof(TB_LinkerSymbol));
             s = new_s;
         }
-        j += len + 1;
     }
 
     if (l->jobs.pool != NULL) {
@@ -661,7 +786,7 @@ void pe_append_library(TPool* pool, void** args) {
     }
 
     cuikperf_region_start2("library", lib->name.length - slash, (const char*) lib->name.data + slash);
-    log_debug("linking against %.*s", (int) lib->name.length, lib->name.data);
+    log_debug("linking against %.*s %#llx", (int) lib->name.length, lib->name.data, lib->time);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -688,32 +813,24 @@ void pe_append_library(TPool* pool, void** args) {
             TB_ArchiveFileParser* p = tb_arena_alloc(&linker_perm_arena, sizeof(TB_ArchiveFileParser));
             *p = ar_parser;
 
-            size_t i = 0, j = 0, start_i = 0, start_j = 0;
-            while (i < ar_parser.symbol_count) {
-                uint16_t offset_index = ar_parser.symbols[i] - 1;
-
-                const char* name = &strtab[j];
-                size_t len = ideally_fast_strlen(name);
-
-                // dispatch lazy syms
-                if (i - start_i >= 249) {
-                    l->jobs.count += 1;
-                    LazyImportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(LazyImportTask));
-                    *task = (LazyImportTask){ l, lib, p, start_i, start_j, (i - start_i) + 1 };
-                    tpool_add_task(l->jobs.pool, lazy_import_task, task);
-
-                    start_i = i, start_j = j;
+            size_t i = 0, str_head = 0;
+            for (size_t i = 0; i < ar_parser.symbol_count; i += 250) {
+                size_t limit = i + 250;
+                if (limit > ar_parser.symbol_count) {
+                    limit = ar_parser.symbol_count;
                 }
 
-                i += 1, j += len + 1;
-            }
-
-            // finish up the remaining work on this task
-            if (i != start_i) {
                 l->jobs.count += 1;
+                LazyImportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(LazyImportTask));
+                *task = (LazyImportTask){ l, lib, p, i, str_head, limit - i };
+                tpool_add_task(l->jobs.pool, lazy_import_task, task);
 
-                LazyImportTask t = { l, lib, p, start_i, start_j, i - start_i };
-                lazy_import_task(NULL, &(void*){ &t });
+                // Skip strings
+                FOR_N(j, i, limit) {
+                    uint16_t offset_index = ar_parser.symbols[j] - 1;
+                    const char* name = &strtab[str_head];
+                    str_head += ideally_fast_strlen(name) + 1;
+                }
             }
             #else
             abort(); // Unreachable
@@ -865,11 +982,23 @@ static void pe_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_
     out_reloc->target     = p->symbol_map[rel.symbol_index];
 }
 
+static int compare_name(const void* a, const void* b) {
+    const TB_Slice* aa = *(const TB_Slice**) a;
+    const TB_Slice* bb = *(const TB_Slice**) b;
+
+    if (aa->length != bb->length) {
+        return aa->length - bb->length;
+    }
+    return memcmp(aa->data, bb->data, aa->length);
+}
+
 // returns the two new section pieces for the IAT and ILT
 static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* imp_dir, PE_ImageDataDirectory* iat_dir) {
     // cull unused imports
     size_t j = 0;
     size_t import_entry_count = 0;
+
+    DynArray(ImportTable*) sorted_imports = dyn_array_create(ImportTable*, 32);
     nbhs_for(e, &l->imports) {
         ImportTable* imp = *e;
         DynArray(TB_LinkerSymbol*) tbl = imp->thunks;
@@ -885,7 +1014,18 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
         if (cnt > 0) {
             // there's an extra NULL terminator for the import entry lists
             import_entry_count += cnt + 1;
+
+            CUIK_TIMED_BLOCK("sort import syms") {
+                qsort(tbl, dyn_array_length(tbl), sizeof(TB_LinkerSymbol*), compare_name);
+            }
+
+            dyn_array_put(sorted_imports, imp);
         }
+    }
+
+    CUIK_TIMED_BLOCK("sort import tables") {
+        qsort(sorted_imports, dyn_array_length(sorted_imports), sizeof(ImportTable*), compare_name);
+        l->sorted_imports = sorted_imports;
     }
 
     if (import_entry_count == 0) {
@@ -898,9 +1038,9 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
     uint32_t thunk_id_counter = 0;
     size_t import_dir_count = 0;
     l->trampolines = (TB_Emitter){ 0 };
-    nbhs_for(e, &l->imports) {
-        ImportTable* imp = *e;
-        if (dyn_array_length(imp->thunks) == 0) { continue; }
+    dyn_array_for(i, sorted_imports) {
+        ImportTable* imp = sorted_imports[i];
+        // printf("IMPORT %.*s\n", (int) imp->libpath.length, imp->libpath.data);
 
         dyn_array_for(j, imp->thunks) {
             imp->thunks[j]->import.ds_address = l->trampolines.count;
@@ -923,9 +1063,8 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
     size_t import_dir_size = (1 + import_dir_count) * sizeof(COFF_ImportDirectory);
     size_t iat_size = import_entry_count * sizeof(uint64_t);
     size_t total_size = import_dir_size + 2*iat_size;
-    nbhs_for(e, &l->imports) {
-        ImportTable* imp = *e;
-        if (dyn_array_length(imp->thunks) == 0) { continue; }
+    dyn_array_for(i, sorted_imports) {
+        ImportTable* imp = sorted_imports[i];
 
         total_size += imp->libpath.length + 1;
         dyn_array_for(j, imp->thunks) {
@@ -967,9 +1106,8 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
     *iat_dir = (PE_ImageDataDirectory){ import_piece_offset + import_dir_size, iat_size };
 
     size_t p = 0, q = 0;
-    nbhs_for(e, &l->imports) {
-        ImportTable* imp = *e;
-        if (dyn_array_length(imp->thunks) == 0) { continue; }
+    dyn_array_for(i, sorted_imports) {
+        ImportTable* imp = sorted_imports[i];
 
         COFF_ImportDirectory* header = &import_dirs[q++];
         *header = (COFF_ImportDirectory){
@@ -1051,7 +1189,6 @@ static void pe_init(TB_Linker* l) {
     // This is practically just ripped from LLD
     //   https://github.com/llvm/llvm-project/blob/3d0a5bf7dea509f130c51868361a38daeee7816a/lld/COFF/Driver.cpp#L2192
     symbol("__AbsoluteZero");
-    symbol("__volatile_metadata");
     symbol("__volatile_metadata");
     symbol("__guard_memcpy_fptr");
     symbol("__guard_fids_count");
@@ -1140,6 +1277,9 @@ static DynArray(PE_BaseReloc) find_base_relocs(TB_Linker* l) {
     return base_relocs;
 }
 
+#define WRITE8(data)  (output[write_pos++] = (data))
+#define WRITE16(data) (memcpy(&output[write_pos], &(uint16_t){ data }, 2), write_pos += (2))
+#define WRITE32(data) (memcpy(&output[write_pos], &(uint32_t){ data }, 4), write_pos += (4))
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
 static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
@@ -1164,6 +1304,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         namehs_resize_barrier(&l->symbols);
         namehs_resize_barrier(&l->sections);
         namehs_resize_barrier(&l->imports);
+        namehs_resize_barrier(&l->objects);
     }
 
     // this will resolve the sections, GC any pieces which aren't used and
@@ -1174,12 +1315,12 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         tb_linker_mark_live(l);
     }
 
-    CUIK_TIMED_BLOCK("Merge ops") {
+    /* CUIK_TIMED_BLOCK("Merge ops") {
         tb_linker_merge_sections(l, tb_linker_find_section(l, ".00cfg"), rdata);
         tb_linker_merge_sections(l, tb_linker_find_section(l, ".idata"), rdata);
         tb_linker_merge_sections(l, tb_linker_find_section(l, ".xdata"), rdata);
         tb_linker_merge_sections(l, tb_linker_find_section(l, ".CRT"), rdata);
-    }
+    } */
 
     if (!tb_linker_layout(l)) {
         cuikperf_region_end();
@@ -1227,7 +1368,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         s->address = virt_addr;
         virt_addr += align_up(s->size, 4096);
 
-        log_debug("Segment %.*s: %#x - %#x", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
+        // printf("Segment %.*s: %#zx - %#zx\n", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
     }
 
     if (l->main_reloc != NULL) {
@@ -1249,7 +1390,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
                         *((uint32_t*) &relocs.data[count_offset]) += 2;
                     }
 
-                    last_page = actual_page;
+                    last_page    = actual_page;
                     count_offset = relocs.count + 4;
 
                     tb_out4b(&relocs, actual_page);
@@ -1320,9 +1461,8 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         l->iat_pos = iat_dir.virtual_address;
 
         CUIK_TIMED_BLOCK("relocate imports and trampolines") {
-            nbhs_for(e, &l->imports) {
-                ImportTable* imp = *e;
-                if (dyn_array_length(imp->thunks) == 0) { continue; }
+            dyn_array_for(i, l->sorted_imports) {
+                ImportTable* imp = l->sorted_imports[i];
 
                 COFF_ImportDirectory* header = imp->header;
                 header->import_lookup_table  += rdata_rva;
@@ -1484,9 +1624,184 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         close_file_map(&fm);
     }
 
+    CUIK_TIMED_BLOCK("pdb output") {
+        // Collect all modules
+        DynArray(TB_LinkerObject*) sorted_objs = dyn_array_create(TB_LinkerObject*, 8);
+        nbhs_for(e, &l->objects) {
+            TB_LinkerObject* obj = *e;
+            if (obj->live && obj->name.data[obj->name.length - 1] != '/') {
+                if (obj->name.length < 4 || memcmp(&obj->name.data[obj->name.length - 4], ".dll", 4) != 0) {
+                    dyn_array_put(sorted_objs, obj);
+                }
+            }
+        }
+        qsort(sorted_objs, dyn_array_length(sorted_objs), sizeof(TB_LinkerObject*), compare_name);
+        // dyn_array_set_length(sorted_objs, 100);
+
+        DynArray(DebugStream*) streams = dyn_array_create(DebugStream*, 8);
+        FOR_N(i, 0, 6) {
+            DebugStream* s = tb_arena_alloc(&linker_perm_arena, sizeof(DebugStream));
+            s->size = 0;
+            if (i == 1) {
+                s->size = 71; // Info stream
+            } else if (i == 3) {
+                s->size = sizeof(PDB_DBIHeader);
+            }
+            dyn_array_put(streams, s);
+        }
+
+        size_t mod_info_size = 0;
+        dyn_array_for(i, sorted_objs) {
+            TB_LinkerObject* obj = sorted_objs[i];
+
+            DebugStream* s = tb_arena_alloc(&linker_perm_arena, sizeof(DebugStream));
+            s->size = 0;
+            dyn_array_put(streams, s);
+
+            mod_info_size += sizeof(PDB_ModuleInfo);
+            mod_info_size += obj->name.length + 1;
+            if (obj->parent) {
+                mod_info_size += obj->parent->name.length + 1;
+            } else {
+                mod_info_size += obj->name.length + 1;
+            }
+            mod_info_size = (mod_info_size + 3) & ~3;
+        }
+
+        // DBI
+        streams[3]->size += mod_info_size;
+        streams[3]->size += sizeof(uint16_t[2]) + dyn_array_length(sorted_objs)*sizeof(uint16_t[2]);
+
+        size_t blocks_needed = 5;
+        dyn_array_for(i, streams) {
+            streams[i]->first_block = blocks_needed;
+            blocks_needed += (streams[i]->size + PDB_BLOCK_SIZE - 1) / PDB_BLOCK_SIZE;
+        }
+
+        // 0          1     2     3    4       5      6       7     8
+        // Superblock Free0 Free1 Dirs Headers Block Block Block Block
+        size_t pdb_size = blocks_needed*PDB_BLOCK_SIZE;
+        FileMap fm = open_file_map_write("a.pdb", pdb_size);
+        if (fm.data == NULL) {
+            printf("tblink: could not open file! %s", "a.pdb");
+            return false;
+        }
+
+        size_t write_pos = 0;
+        uint8_t* output = fm.data;
+
+        PDB_SuperBlock super = {
+            .file_magic = "Microsoft C/C++ MSF 7.00\r\n\x1A\x44\x53\0\0",
+            .block_size = PDB_BLOCK_SIZE,
+            .free_block_map_block = 1,
+            .num_blocks = blocks_needed,
+            .num_directory_bytes = 4 + dyn_array_length(streams)*8,
+        };
+
+        // SuperBlock + directory page blocks
+        WRITE(&super, sizeof(super));
+        WRITE32(3);
+
+        // Block3: Directory
+        write_pos = 3*PDB_BLOCK_SIZE;
+        WRITE32(4);
+
+        // Block4: Stream Headers
+        write_pos = 4*PDB_BLOCK_SIZE;
+        WRITE32(dyn_array_length(streams));
+        dyn_array_for(i, streams) { WRITE32(streams[i]->size); }
+        dyn_array_for(i, streams) {
+            size_t block_count = (streams[i]->size + PDB_BLOCK_SIZE - 1) / PDB_BLOCK_SIZE;
+            FOR_N(j, 0, block_count) {
+                WRITE32(streams[i]->first_block + j);
+            }
+        }
+
+        dyn_array_for(i, streams) {
+            size_t start = write_pos = streams[i]->first_block*PDB_BLOCK_SIZE;
+            if (i == 1) {
+                PDB_InfoHeader stream = {
+                    .version = 20000404, // VC70
+                };
+                WRITE(&stream, sizeof(stream));
+
+                // PDB Names streams
+                WRITE32(sizeof("/names"));
+                WRITE("/names", sizeof("/names"));
+
+                // https://llvm.org/docs/PDB/HashTable.html
+                //   There's a really weird hash map stuffed here rather than
+                //   some direct stream indices but whatever, my job isn't to
+                //   question microsoft, that's a hobby, my job is to put up
+                //   with microsoft.
+                //
+                // Size & Capacity
+                WRITE32(1);
+                WRITE32(1);
+                // Present Bit Vector
+                WRITE32(1);
+                WRITE32(1);
+                // Deleted Bit Vector
+                WRITE32(1);
+                WRITE32(0);
+                // Entries
+                WRITE32(0);
+                WRITE32(5);
+            } else if (i == 3) {
+                PDB_DBIHeader stream = {
+                    .signature = -1,
+                    .version = 19990903, // VC70
+                    .machine = 0xD0,
+                    .mod_info_size = mod_info_size,
+                    .source_info_size = sizeof(uint16_t[2]) + dyn_array_length(sorted_objs)*sizeof(uint16_t[2]),
+                };
+                WRITE(&stream, sizeof(stream));
+
+                dyn_array_for(i, sorted_objs) {
+                    TB_LinkerObject* obj = sorted_objs[i];
+                    PDB_ModuleInfo mod = {
+                        .module_sym_stream = 6 + i,
+                    };
+                    WRITE(&mod, sizeof(mod));
+
+                    WRITE(obj->name.data, obj->name.length);
+                    WRITE8(0);
+                    if (obj->parent) {
+                        WRITE(obj->parent->name.data, obj->parent->name.length);
+                        WRITE8(0);
+                    } else {
+                        WRITE(obj->name.data, obj->name.length);
+                        WRITE8(0);
+                    }
+
+                    int next = (write_pos + 3) & ~3;
+                    while (write_pos < next) { WRITE8(0); }
+                }
+
+                // Source File info
+                WRITE16(dyn_array_length(sorted_objs));
+                WRITE16(0);
+
+                dyn_array_for(i, sorted_objs) {
+                    WRITE16(i);
+                }
+
+                dyn_array_for(i, sorted_objs) {
+                    WRITE16(0);
+                }
+            }
+            assert(write_pos - start == streams[i]->size);
+        }
+
+        close_file_map(&fm);
+    }
+
     cuikperf_region_end();
     return true;
 }
+#undef WRITE32
+#undef WRITE16
+#undef WRITE8
 #undef WRITE
 
 TB_LinkerVtbl tb__linker_pe = {

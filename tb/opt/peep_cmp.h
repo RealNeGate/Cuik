@@ -72,40 +72,55 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
     TB_DataType dt = n->inputs[1]->dt;
     if (TB_IS_INTEGER_TYPE(dt)) {
         Lattice* old_type = latuni_get(f, n);
-        bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
-        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, a, b, c, old_type == &TOP_IN_THE_SKY);
+        bool congruent = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
+        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, a, b, congruent, old_type == &TOP_IN_THE_SKY);
+
+        // the optimistic assumption for some of these cases is a bit different
+        if (congruent && lattice_meet(f, cmp, &FALSE_IN_THE_SKY) != cmp) {
+            switch (n->type) {
+                case TB_CMP_NE:  // cmp != 0
+                case TB_CMP_ULT:
+                case TB_CMP_SLT: // cmp < 0
+                return &FALSE_IN_THE_SKY;
+
+                case TB_CMP_EQ:  // cmp == 0
+                case TB_CMP_ULE:
+                case TB_CMP_SLE: // cmp <= 0
+                return &TRUE_IN_THE_SKY;
+            }
+        }
 
         // ok it's really annoying that i have to deal with the "idk bro" case in the middle
         // of each but that's why it looks like this... if you were curious (which you aren't :p)
         switch (n->type) {
             case TB_CMP_EQ:  // cmp == 0
-            if (lattice_int_eq(cmp, 0)) { return lattice_int_const(f,-1); }
-            if (lattice_int_ne(cmp, 0)) { return lattice_int_const(f, 0); }
+            if (lattice_int_eq(cmp, 0)) { return &TRUE_IN_THE_SKY; }
+            if (lattice_int_ne(cmp, 0)) { return &FALSE_IN_THE_SKY; }
             break;
             case TB_CMP_NE:  // cmp != 0
-            if (lattice_int_eq(cmp, 0)) { return lattice_int_const(f, 0); }
-            if (lattice_int_ne(cmp, 0)) { return lattice_int_const(f,-1); }
+            if (lattice_int_eq(cmp, 0)) { return &FALSE_IN_THE_SKY; }
+            if (lattice_int_ne(cmp, 0)) { return &TRUE_IN_THE_SKY; }
             break;
             case TB_CMP_SLT: // cmp < 0
-            if (lattice_int_lt(cmp, 0)) { return lattice_int_const(f,-1); }
-            if (lattice_int_gt(cmp, 0)) { return lattice_int_const(f, 0); }
+            if (lattice_int_lt(cmp, 0)) { return &TRUE_IN_THE_SKY; }
+            if (lattice_int_gt(cmp, 0)) { return &FALSE_IN_THE_SKY; }
             break;
             case TB_CMP_SLE: // cmp <= 0
-            if (lattice_int_le(cmp, 0)) { return lattice_int_const(f,-1); }
-            if (lattice_int_gt(cmp, 0)) { return lattice_int_const(f, 0); }
+            if (lattice_int_le(cmp, 0)) { return &TRUE_IN_THE_SKY; }
+            if (lattice_int_gt(cmp, 0)) { return &FALSE_IN_THE_SKY; }
             break;
 
             case TB_CMP_ULT:
             if (lattice_is_unsigned(a) && lattice_is_unsigned(b)) {
-                if (lattice_int_lt(cmp, 0)) { return lattice_int_const(f,-1); }
-                if (lattice_int_ge(cmp, 0)) { return lattice_int_const(f, 0); }
+                if (lattice_int_lt(cmp, 0)) { return &TRUE_IN_THE_SKY; }
+                if (lattice_int_ge(cmp, 0)) { return &FALSE_IN_THE_SKY; }
             }
             break;
 
             case TB_CMP_ULE:
             if (lattice_is_unsigned(a) && lattice_is_unsigned(b)) {
-                if (lattice_int_le(cmp, 0)) { return lattice_int_const(f,-1); }
-                if (lattice_int_gt(cmp, 0)) { return lattice_int_const(f, 0); }
+                if (lattice_int_le(cmp, 0)) { return &TRUE_IN_THE_SKY;  }
+                if (lattice_int_gt(cmp, 0)) { return &FALSE_IN_THE_SKY; }
             }
             break;
         }
@@ -118,46 +133,47 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
                 return a == b ? &FALSE_IN_THE_SKY : &BOOL_IN_THE_SKY;
             }
         }
-    }
+    } else if (TB_IS_FLOAT_TYPE(dt)) {
+        // float oddities: regardless of the comparison, they'll always be false if a NaN is involved.
+        bool eq_id = true;
+        if (dt.type == TB_TAG_F32) {
+            if (a->tag == LATTICE_FLTCON32 && b->tag == LATTICE_FLTCON32) {
+                if (n->type == TB_CMP_EQ) { return a->_f32 == b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+                if (n->type == TB_CMP_NE) { return a->_f32 != b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+                if (n->type == TB_CMP_FLT) { return a->_f32 < b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+                if (n->type == TB_CMP_FLE) { return a->_f32 <= b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            }
 
-    bool eq_id = true;
+            if (lattice_at_least(f, a, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
+            if (lattice_at_least(f, b, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
 
-    // float oddities: regardless of the comparison, they'll always be false if a NaN is involved.
-    if (dt.type == TB_TAG_F32) {
-        if (a->tag == LATTICE_FLTCON32 && b->tag == LATTICE_FLTCON32) {
-            if (n->type == TB_CMP_EQ) { return a->_f32 == b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_NE) { return a->_f32 != b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_FLT) { return a->_f32 < b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_FLE) { return a->_f32 <= b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (!lattice_at_least(f, a, &XNAN32_IN_THE_SKY) || !lattice_at_least(f, b, &XNAN32_IN_THE_SKY)) {
+                eq_id = false;
+            }
+        } else if (dt.type == TB_TAG_F64) {
+            if (a->tag == LATTICE_FLTCON64 && b->tag == LATTICE_FLTCON64) {
+                if (n->type == TB_CMP_EQ) { return a->_f64 == b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+                if (n->type == TB_CMP_NE) { return a->_f64 != b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+                if (n->type == TB_CMP_FLT) { return a->_f64 < b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+                if (n->type == TB_CMP_FLE) { return a->_f64 <= b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            }
+
+            if (lattice_at_least(f, a, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
+            if (lattice_at_least(f, b, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
+
+            if (!lattice_at_least(f, a, &XNAN64_IN_THE_SKY) || !lattice_at_least(f, b, &XNAN64_IN_THE_SKY)) {
+                eq_id = false;
+            }
+        } else {
+            tb_todo();
         }
 
-        if (lattice_at_least(f, a, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
-        if (lattice_at_least(f, b, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
-
-        if (!lattice_at_least(f, a, &XNAN32_IN_THE_SKY) || !lattice_at_least(f, b, &XNAN32_IN_THE_SKY)) {
-            eq_id = false;
-        }
-    } else if (dt.type == TB_TAG_F64) {
-        if (a->tag == LATTICE_FLTCON64 && b->tag == LATTICE_FLTCON64) {
-            if (n->type == TB_CMP_EQ) { return a->_f64 == b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_NE) { return a->_f64 != b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_FLT) { return a->_f64 < b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-            if (n->type == TB_CMP_FLE) { return a->_f64 <= b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
-        }
-
-        if (lattice_at_least(f, a, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
-        if (lattice_at_least(f, b, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
-
-        if (!lattice_at_least(f, a, &XNAN64_IN_THE_SKY) || !lattice_at_least(f, b, &XNAN64_IN_THE_SKY)) {
-            eq_id = false;
-        }
-    }
-
-    if (eq_id && gcf_is_congruent(f, n->inputs[1], n->inputs[2])) {
-        if (n->type == TB_CMP_EQ) {
-            return &TRUE_IN_THE_SKY;
-        } else if (n->type == TB_CMP_NE) {
-            return &FALSE_IN_THE_SKY;
+        if (eq_id && gcf_is_congruent(f, n->inputs[1], n->inputs[2])) {
+            if (n->type == TB_CMP_EQ) {
+                return &TRUE_IN_THE_SKY;
+            } else if (n->type == TB_CMP_NE) {
+                return &FALSE_IN_THE_SKY;
+            }
         }
     }
 

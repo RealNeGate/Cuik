@@ -1,6 +1,8 @@
 #include "tb_internal.h"
 #include "host.h"
 
+void* tb_jit_stack_create(size_t size);
+
 #ifdef EMSCRIPTEN
 void* tb_jit_wasm_obj(TB_Arena* arena, TB_Function* f) {
     TB_Arena* arena = get_temporary_arena(m);
@@ -454,7 +456,8 @@ static const uint8_t tb_jit__trampoline[] = {
     0xC3,                       // ret
 };
 
-size_t tb_jit_thread_userdata(void) { return offsetof(TB_Stacklet, user_data); }
+_Static_assert(sizeof(TB_Stacklet) <= 0x40, "TODO? tb_jit_thread_userdata");
+size_t tb_jit_thread_userdata(void) { return 0x40; }
 
 TB_Safepoint* tb_jit_get_safepoint(TB_JIT* jit, void* pc) {
     mtx_lock(&jit->lock);

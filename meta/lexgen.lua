@@ -328,6 +328,23 @@ function dfa_pattern_next(n)
     end
 end
 
+function dfa_pattern_match_asis(n, input)
+    if type(n) ~= "table" then
+        return false
+    end
+
+    local pat  = n[1]
+    local pos  = n[2]
+    local edge = pat[pos]
+    if type(edge) == "table" and (edge[1] == "plus" or edge[1] == "star") then
+        return true
+    elseif pos >= #pat then
+        return false
+    else
+        return true
+    end
+end
+
 function dfa_pattern_step(q_prime, og, n, input, peek)
     if type(n) ~= "table" then
         return
@@ -462,6 +479,25 @@ function dfa_compile(state, q)
 
                 if leader then
                     dfa_to_tag[next] = leader
+                else
+                    -- there's no "leader", but if we terminated here what's the only possible answer?
+                    for k=1,#q_prime do
+                        local tag = q_prime[k]
+                        if dfa_pattern_match_asis(q_prime[k], input) then
+                            tag = to_tag[q_prime[k][1]]
+
+                            if not leader then
+                                leader = tag
+                            elseif leader ~= tag then
+                                leader = nil
+                                break
+                            end
+                        end
+                    end
+
+                    if leader then
+                        dfa_to_tag[next] = leader
+                    end
                 end
                 -- print("ADD", input, inspect(q_prime), next, leader)
 
@@ -672,6 +708,7 @@ do
         A.leader = from
         new_DFA[new_state_count] = {}
         new_to_tag[new_state_count] = dfa_to_tag[A[1]]
+        --print("A", new_state_count - 1, dfa_to_tag[A[1]], A[1])
 
         for input,next in pairs(DFA[A[1]]) do
             local to = walk(to_part[next])
@@ -780,10 +817,9 @@ Token lexer_read(Lexer* restrict l) {
             goto retry;
         } else if (current[0] == '/' && current[1] == '*') {
             current += 2;
-
             // skip until comment end
             while (current[0] && !(current[0] == '*' && current[1] == '/')) {
-                t.hit_line |= *current++ == '\n';
+                current++; // t.hit_line |= *current++ == '\n';
             }
 
             current += 2;
@@ -884,7 +920,7 @@ Token lexer_read(Lexer* restrict l) {
     // NOTE(NeGate): the lexer will modify code to allow for certain patterns
     // if we wanna get rid of this we should make virtual code regions
     if (__builtin_expect(current[0] == '\\' && (current[1] == '\r' || current[1] == '\n'), 0)) {
-        __debugbreak();
+        assert(0 && "TODO");
     }
 
     l->current = current;
@@ -897,7 +933,7 @@ lines[#lines + 1] = ""
 local keyword_table = {}
 local prime = 173
 if type(jit) == "table" then
-    print("A", #keywords)
+    -- print("A", #keywords)
 
     local tries = 0
     local time = os.clock()
@@ -925,7 +961,7 @@ if type(jit) == "table" then
 
         x = bit.tohex(x)
         if keyword_table[x] then
-            print("Woah!!!", keywords[keyword_table[x]], base, x)
+            -- print("Woah!!!", keywords[keyword_table[x]], base, x)
         end
         keyword_table[x] = i
         -- print(base, x, bit.tohex(y))
@@ -952,7 +988,7 @@ if type(jit) == "table" then
         end
 
         if collide == 0 then
-            print("Yippee!!! ", bit.tohex(magic))
+            -- print("Yippee!!! ", bit.tohex(magic))
             break
         end
 

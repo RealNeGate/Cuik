@@ -3,6 +3,15 @@
 #include "host.h"
 #include <hashes.h>
 
+#ifdef NDEBUG
+#define ON_DBG(name, def)
+#else
+#define ON_DBG(name, def) bool tb_opt__ ## name = def;
+#endif
+
+#define ON_REL(name, def)
+#include "tb_config.h"
+
 #ifndef TB_NO_THREADS
 static once_flag tb_global_init = ONCE_FLAG_INIT;
 #else
@@ -51,10 +60,13 @@ static void init_codegen_families(void) {
     tb_codegen_families[TB_ARCH_AARCH64] = tb__aarch64_codegen;
     #endif
 
-    #ifdef TB_HAS_MIPS
+    #ifdef TB_HAS_MIPS32
     extern ICodeGen tb__mips32_codegen;
-    extern ICodeGen tb__mips64_codegen;
     tb_codegen_families[TB_ARCH_MIPS32] = tb__mips32_codegen;
+    #endif
+
+    #ifdef TB_HAS_MIPS64
+    extern ICodeGen tb__mips64_codegen;
     tb_codegen_families[TB_ARCH_MIPS64] = tb__mips64_codegen;
     #endif
 

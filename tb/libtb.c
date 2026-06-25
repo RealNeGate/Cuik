@@ -1,6 +1,4 @@
 // This is the TB unity build
-void* tb_jit_stack_create(size_t);
-
 #define TB_GEN_IMPL
 #include "tb.c"
 #include "hash.c"
@@ -9,6 +7,7 @@ void* tb_jit_stack_create(size_t);
 #include "debug_builder.c"
 #include "exporter.c"
 #include "disasm.c"
+#include "sparse_set.c"
 
 // JIT
 #include "jit.c"

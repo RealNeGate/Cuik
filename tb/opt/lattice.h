@@ -185,6 +185,10 @@ Lattice* latuni_get(TB_Function* f, TB_Node* n) {
     return f->types[n->gvn];
 }
 
+Lattice* latuni_get_raw(TB_Function* f, TB_Node* n) {
+    return n->gvn < f->type_cap ? f->types[n->gvn] : NULL;
+}
+
 static bool lattice_top_or_bot(Lattice* l) {
     return l->tag <= LATTICE_TOP;
 }
@@ -393,7 +397,8 @@ static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max, i
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
+// if spec is true, widening is unaffected.
+static Lattice* lattice_dual(TB_Function* f, Lattice* type, bool spec) {
     switch (type->tag) {
         case LATTICE_BOT: return &TOP_IN_THE_SKY;
         case LATTICE_TOP: return &BOT_IN_THE_SKY;
@@ -404,7 +409,9 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
         case LATTICE_INT: {
             LatticeInt i = type->_int;
             SWAP(int64_t, i.min, i.max);
-            i.widen = INT_WIDEN_LIMIT - i.widen;
+            if (!spec) {
+                i.widen = INT_WIDEN_LIMIT - i.widen;
+            }
 
             // invert unknowns
             // uint64_t known = (i.known_zeros | i.known_ones);
@@ -422,7 +429,7 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
             Lattice* l = tb_arena_alloc(arena, size);
             *l = (Lattice){ LATTICE_TUPLE, ._elem_count = type->_elem_count };
             FOR_N(i, 0, type->_elem_count) {
-                l->elems[i] = lattice_dual(f, type->elems[i]);
+                l->elems[i] = lattice_dual(f, type->elems[i], spec);
             }
 
             Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
@@ -573,7 +580,7 @@ static bool lattice_spec_eq(TB_Function* f, Lattice* a, Lattice* b) {
         return true;
     } else if (a->tag == LATTICE_INT && b->tag == LATTICE_INT) {
         LatticeInt aa = a->_int;
-        LatticeInt bb = a->_int;
+        LatticeInt bb = b->_int;
         aa.widen = 0, bb.widen = 0;
         return memcmp(&aa, &bb, sizeof(aa)) == 0;
     } else {
@@ -583,11 +590,19 @@ static bool lattice_spec_eq(TB_Function* f, Lattice* a, Lattice* b) {
 
 // least upper bound between a and b
 static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b) {
-    a = lattice_dual(f, a);
-    b = lattice_dual(f, b);
+    a = lattice_dual(f, a, false);
+    b = lattice_dual(f, b, false);
 
     Lattice* glb = lattice_meet(f, a, b);
-    return lattice_dual(f, glb);
+    return lattice_dual(f, glb, false);
+}
+
+static Lattice* lattice_join_spec(TB_Function* f, Lattice* a, Lattice* b) {
+    a = lattice_dual(f, a, true);
+    b = lattice_dual(f, b, true);
+
+    Lattice* glb = lattice_meet(f, a, b);
+    return lattice_dual(f, glb, true);
 }
 
 // a >= b if a /\ b = b

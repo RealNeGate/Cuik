@@ -78,7 +78,7 @@ bool cuikfs_canonicalize(Cuik_Path* restrict output, const char* path, bool case
     output->length = p - output->data;
     return true;
     #else
-    if (case_insensitive) {
+    if (0 && case_insensitive) {
         char* r = output->data;
 
         size_t l = strlen(path);

@@ -102,7 +102,7 @@ struct VReg {
     // BRIGGS: when coalesced this number will go up
     int uses;
 
-    bool was_spilled : 1;
+    int  was_spilled : 2;
     bool was_reload  : 1;
 };
 
@@ -256,8 +256,7 @@ struct Ctx {
 };
 
 // Rogers RA stats collection crap
-TB_OPTDEBUG(STATS)(extern int stats_miss, stats_hit);
-
+extern int stats_miss, stats_hit;
 extern RegMask TB_REG_EMPTY;
 
 void tb__rogers(Ctx* restrict ctx, TB_Arena* arena);
@@ -348,7 +347,12 @@ static double get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
         return INFINITY;
     }
 
-    return vreg->spill_cost / vreg->area;
+    double score = vreg->spill_cost / vreg->area;
+    if (vreg->was_spilled == 2) {
+        score += 1e6;
+    }
+
+    return score;
 }
 
 static int op_reg_at(Ctx* ctx, TB_Node* n, int class) {
@@ -414,6 +418,10 @@ static int popcnt_reg_mask(RegMask* mask) {
 }
 
 static bool within_reg_mask(RegMask* mask, uint64_t i) {
+    if (mask->class == REG_CLASS_STK && mask->may_spill) {
+        return true;
+    }
+
     return i/64 < mask->count ? mask->mask[i/64] & (1ull << (i%64)) : false;
 }
 
@@ -515,7 +523,8 @@ static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg
 }
 
 #define BITS64_FOR(it, set, cap) for (int it = bits64_first(set, cap); it >= 0; it = bits64_next(set, cap, it))
-#define BITS64_FOR_ANDN(it, A, B, cap) for (int it = bits64_first_andn(A, B, cap); it >= 0; it = bits64_next_andn(A, B, cap, it))
+#define BITS64_FOR_ANDN(it, A, B, C, cap) for (int it = bits64_first_andn(A, B, C, cap); it >= 0; it = bits64_next_andn(A, B, C, cap, it))
+#define BITS64_FOR_AND(it, A, B, cap) for (int it = bits64_first_and(A, B, cap); it >= 0; it = bits64_next_and(A, B, cap, it))
 
 static int bits64_next(uint64_t* arr, size_t cnt, int x) {
     // skip one ahead
@@ -543,7 +552,7 @@ static int bits64_first(uint64_t* arr, size_t cnt) {
     return arr[0] & 1 ? 0 : bits64_next(arr, cnt, 0);
 }
 
-static int bits64_next_andn(uint64_t* A, uint64_t* B, size_t cnt, int x) {
+static int bits64_next_and(uint64_t* A, uint64_t* B, size_t cnt, int x) {
     // skip one ahead
     x += 1;
 
@@ -556,7 +565,7 @@ static int bits64_next_andn(uint64_t* A, uint64_t* B, size_t cnt, int x) {
         if (i*64 >= cnt) { return -1; }
         // chop off the bottom bits which have been processed
         uint64_t mask = UINT64_MAX << j;
-        word = (A[i] & ~B[i]) & mask;
+        word = (A[i] & B[i]) & mask;
         if (word != 0) {
             return i*64 + tb_ffs64(word) - 1;
         }
@@ -564,13 +573,55 @@ static int bits64_next_andn(uint64_t* A, uint64_t* B, size_t cnt, int x) {
     }
 }
 
-static int bits64_first_andn(uint64_t* A, uint64_t* B, size_t cnt) {
+static int bits64_first_and(uint64_t* A, uint64_t* B, size_t cnt) {
     TB_ASSERT(cnt > 0);
-    return (A[0] & ~B[0]) & 1 ? 0 : bits64_next_andn(A, B, cnt, 0);
+    return (A[0] & B[0]) & 1 ? 0 : bits64_next_and(A, B, cnt, 0);
+}
+
+static int bits64_next_andn(uint64_t* A, uint64_t* B, uint64_t* C, size_t cnt, int x) {
+    // skip one ahead
+    x += 1;
+
+    // unpack coords
+    size_t i = x / 64, j = x % 64;
+
+    uint64_t word;
+    for (;;) {
+        // we're done
+        if (i*64 >= cnt) { return -1; }
+        // chop off the bottom bits which have been processed
+        uint64_t mask = UINT64_MAX << j;
+        word = ((A[i] & ~B[i]) & C[i]) & mask;
+        if (word != 0) {
+            return i*64 + tb_ffs64(word) - 1;
+        }
+        i += 1, j = 0;
+    }
+}
+
+static int bits64_first_andn(uint64_t* A, uint64_t* B, uint64_t* C, size_t cnt) {
+    TB_ASSERT(cnt > 0);
+    return ((A[0] & ~B[0]) & C[0]) & 1 ? 0 : bits64_next_andn(A, B, C, cnt, 0);
 }
 
 static bool bits64_member(uint64_t* arr, size_t x) {
     return arr[x / 64] & (1ull << (x % 64));
+}
+
+static bool is_reload(TB_Node* n) {
+    if (n->type == TB_MACH_COPY) {
+        TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
+        return reg_mask_is_stack(cpy->use);
+    }
+    return false;
+}
+
+static bool is_spill_store(TB_Node* n) {
+    if (n->type == TB_MACH_COPY) {
+        TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
+        return reg_mask_is_stack(cpy->def);
+    }
+    return false;
 }
 
 static bool is_gcref_dt(TB_DataType dt) {

@@ -33,8 +33,6 @@ typedef struct {
     Set has_sfpt;
     Set ready_set;
     ArenaArray(ReadyNode) ready;
-
-    int* latency;
 } ListSched;
 
 // assuming the inputs are on their final leg, what
@@ -55,18 +53,20 @@ static int pressure_delta(ListSched* sched, TB_Node* n) {
 }
 
 // should probably move this out, it's useful elsewhere
-static void ready_up(ListSched* sched, TB_Node* n) {
+static void ready_up(ListSched* sched, int* latency, TB_Node* n) {
     if (set_get(&sched->ready_set, n->gvn) || n->type == TB_MACH_TEMP) {
         return;
     }
 
     CUIK_TIMED_BLOCK("add ready") {
-        TB_OPTDEBUG(SCHED1)(printf("        READY    "), tb_print_dumb_node(NULL, n), printf(" (lat=%d)\n", sched->latency[n->gvn]));
+        TB_OPTDEBUG(SCHED1)(printf("        READY    "), tb_print_dumb_node(NULL, n), printf(" (lat=%d)\n", latency[n->gvn]));
         set_put(&sched->ready_set, n->gvn);
 
         // projections are readied but not in the ready list
         FOR_USERS(u, n) {
-            if (IS_PROJ(USERN(u))) { set_put(&sched->ready_set, USERN(u)->gvn); }
+            if (IS_PROJ(USERN(u))) {
+                set_put(&sched->ready_set, USERN(u)->gvn);
+            }
         }
 
         ReadyNode r = { n };
@@ -96,7 +96,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, T
     int best_score = 0;
     FOR_REV_N(i, 0, aarray_length(sched->ready)) {
         TB_Node* n = sched->ready[i].n;
-        int lat = sched->latency[n->gvn];
+        int lat = f->latency[n->gvn];
 
         // high latency ops should be scheduled first
         int score = lat*100;
@@ -175,9 +175,9 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
     sched.has_sfpt  = set_create_in_arena(&f->tmp_arena, f->node_count);
     sched.ready_set = set_create_in_arena(&f->tmp_arena, f->node_count);
     sched.ready     = aarray_create(&f->tmp_arena, ReadyNode, 32);
-    sched.latency   = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
 
-    CUIK_TIMED_BLOCK("trace") {
+    #ifndef NDEBUG
+    CUIK_TIMED_BLOCK("asserts") {
         TB_Node* top = bb->start;
         int* aux_stack = tb_arena_alloc(&f->tmp_arena, aarray_length(bb->items) * sizeof(int));
 
@@ -205,9 +205,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             }
         }
 
-        #ifndef NDEBUG
         int* depth = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
-        #endif
 
         while (dyn_array_length(ws->items)) retry: {
             int i = dyn_array_length(ws->items) - 1;
@@ -237,8 +235,27 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             dyn_array_pop(ws->items);
         }
 
+        #if 0
+        printf("digraph G {\n");
+        FOR_REV_N(i, 0, cnt) {
+            TB_Node* n = ordered[i];
+            printf("N%d [label=\"%%%u: %s %d\"]\n", n->gvn, n->gvn, tb_node_get_name(n->type), f->latency[n->gvn]);
+
+            int max_depth = 0;
+            if (n->type != TB_PHI && n != top) {
+                FOR_N(i, 0, n->input_cap) {
+                    TB_Node* in = n->inputs[i];
+                    if (in && f->scheduled[in->gvn] == bb) {
+                        printf("N%d -> N%d\n", in->gvn, n->gvn);
+                    }
+                }
+            }
+        }
+        printf("}\n");
+        __debugbreak();
+        #endif
+
         // Cycle detection
-        #ifndef NDEBUG
         {
             bool cycle = false;
             FOR_REV_N(i, 0, cnt) {
@@ -285,56 +302,12 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
                 __debugbreak();
             }
         }
-        #endif
-
-        FOR_N(i, 0, cnt) {
-            TB_Node* n = ordered[i];
-            sched.latency[n->gvn] = 0;
-        }
-
-        TB_OPTDEBUG(SCHED4)(printf("digraph G {\n"));
-
-        // compute depths
-        // TB_ASSERT(cnt == aarray_length(bb->items));
-        bool cycle = false;
-        FOR_N(i, 0, cnt) {
-            TB_Node* n = ordered[i];
-            int use_latency = sched.latency[n->gvn];
-
-            TB_OPTDEBUG(SCHED4)(printf("N%d [label=\"%%%u: %s\"]\n", n->gvn, n->gvn, tb_node_get_name(n->type)));
-
-            if (n->type != TB_PHI && !NODE_ISA(n, REGION)) {
-                FOR_N(i, 0, n->input_cap) {
-                    TB_Node* in = n->inputs[i];
-                    if (in) {
-                        if (IS_PROJ(in)) { in = in->inputs[0]; }
-                        if (in->type != TB_MACH_TEMP && f->scheduled[in->gvn] == bb) {
-                            int edge_latency = sched.get_lat(sched.f, n, i);
-                            int curr_latency = edge_latency + use_latency;
-                            if (curr_latency > sched.latency[in->gvn]) {
-                                sched.latency[in->gvn] = curr_latency;
-                            }
-
-                            TB_OPTDEBUG(SCHED4)(printf("N%d -> N%d [label=\"%d\"]\n", in->gvn, n->gvn, edge_latency));
-                        }
-                    }
-                }
-            }
-        }
-        TB_OPTDEBUG(SCHED4)(printf("}\n"));
-
-        #if TB_OPTDEBUG_SCHED3
-        FOR_N(i, 0, cnt) {
-            TB_Node* n = ordered[i];
-            tb_print_dumb_node(NULL, n);
-            printf(" latency=%d\n", sched.latency[n->gvn]);
-        }
-        #endif
-
-        worklist_clear(ws);
     }
+    #endif
 
     TB_OPTDEBUG(SCHED1)(printf("         Dispatch "), tb_print_dumb_node(NULL, bb->start), printf("\n"));
+
+    worklist_clear(ws);
     worklist_push(ws, bb->start);
 
     // first block has access to root's users
@@ -374,7 +347,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
     aarray_for(i, bb->items) {
         TB_Node* n = bb->items[i];
         if (!worklist_test(ws, n) && f->scheduled[n->gvn] == bb && count_waiting_deps(f, ws, bb, n) == 0) {
-            ready_up(&sched, n);
+            ready_up(&sched, f->latency, n);
         }
     }
 
@@ -383,13 +356,13 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
     while (aarray_length(sched.ready) > 0) {
         cuikperf_region_start("step", NULL);
 
-        #if TB_OPTDEBUG_SCHED1
-        printf("  ready [ ");
-        FOR_N(i, 0, aarray_length(sched.ready)) {
-            printf("%%%u ", sched.ready[i].n->gvn);
+        IF_OPT(SCHED1) {
+            printf("  ready [ ");
+            FOR_N(i, 0, aarray_length(sched.ready)) {
+                printf("%%%u ", sched.ready[i].n->gvn);
+            }
+            printf("]\n");
         }
-        printf("]\n");
-        #endif
 
         int idx = best_ready_node(f, ws, bb, end, &sched);
         if (idx < 0) {
@@ -430,11 +403,11 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
                     // projections are where all the real users ended up
                     FOR_USERS(proj_u, un) {
                         if (can_ready_user(f, ws, bb, &sched.ready_set, USERN(proj_u))) {
-                            ready_up(&sched, USERN(proj_u));
+                            ready_up(&sched, f->latency, USERN(proj_u));
                         }
                     }
                 } else if (can_ready_user(f, ws, bb, &sched.ready_set, un)) {
-                    ready_up(&sched, un);
+                    ready_up(&sched, f->latency, un);
                 }
             }
 

@@ -131,7 +131,27 @@ static KnownPointer known_pointer(TB_Node* n) {
     }
 }
 
+static Lattice* value_ld(TB_Function* f, TB_Node* n) {
+    if (n->inputs[0] && latuni_get(f, n->inputs[0]) != &LIVE_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
+    if (latuni_get(f, n->inputs[1]) != &MEM_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
+    return NULL;
+}
+
 static Lattice* value_mem(TB_Function* f, TB_Node* n) {
+    if (n->inputs[0] && latuni_get(f, n->inputs[0]) != &LIVE_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
+    if (latuni_get(f, n->inputs[1]) != &MEM_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
     return &MEM_IN_THE_SKY;
 }
 

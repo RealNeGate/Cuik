@@ -8,12 +8,11 @@ enum {
 
 typedef _Atomic uint64_t atomic_word;
 
-atomic_word gc_mid_reloc;
 NL_Table fwd_table;
+atomic_bool gc_mid_reloc[2];
 
 static atomic_bool main_complete;
 
-static atomic_bool nmt_target;
 static atomic_word* expected_nmt;
 static atomic_word gc_checkpoint_trigger;
 static atomic_word gc_checkpoint_time;
@@ -38,21 +37,28 @@ static void* alloc_page(void) {
     #endif
 }
 
-// Bottom 3 bits: SSN
+// 3 colors per generation, 2 generations.
+// 1 special colorless case for off-heap.
 //
-// (S)pace bits, (N)MT
+// Colorless
+// 000 OFF-HEAP
 //
-// Possible space options:
-//   00 - Null/C ptr
-//   01 - Young gen
-//   10 - Old gen
-//   11 - Unused
+// Young gen
+// 001 RED
+// 010 GREEN
+// 011 BLUE
+//
+// Old gen
+// 100 RED
+// 101 GREEN
+// 110 BLUE
 typedef uintptr_t GC_Ref;
 
 enum {
-    GC_SPACE_NULL  = 0b00,
-    GC_SPACE_YOUNG = 0b01,
-    GC_SPACE_OLD   = 0b10,
+    GC_SPACE_YOUNG = 1,
+    GC_SPACE_OLD   = 4,
+
+    GC_COLOR_MAX   = 3,
 };
 
 typedef struct {
@@ -129,7 +135,7 @@ static void gc_log_flush(void) {
     #if _WIN32
     int tid = GetCurrentThreadId();
     #else
-    int tid = getpid();
+    int tid = pthread_self();
     #endif
 
     int head = entry_tail > 255 ? ((entry_tail+1) % 256) : 0;
@@ -317,7 +323,7 @@ static NL_HashSet gc_all_pages;
 // TLAB (thread-local allocation buffer)
 static thread_local GC_Page* gc_tlab;
 static void* gc_rawptr(GC_Ref ref) {
-    return (void*) (ref >> 4ull);
+    return (void*) (ref >> 3ull);
 }
 
 static GC_Page* gc_alloc_page(void) {
@@ -382,20 +388,23 @@ static GC_Object* gc_find_obj(uintptr_t addr) {
     return (GC_Object*) &page->data[i*512 + offset*8];
 }
 
-static uint64_t gc_good_bits(uint64_t exp, uint64_t space) {
-    uint64_t expected = ~(exp >> (space*4)) & 0xF;
-    return __builtin_ffsll(expected) - 1;
+static uint64_t gc_good_bits(uint64_t exp, bool is_old) {
+    int base = is_old ? 4 : 1;
+    uint64_t expected = ~(exp >> base) & 0b111;
+    return base + (__builtin_ffsll(expected) - 1);
 }
 
 static GC_Marklist marklist_n;
 static GC_Ref gc_alloc(size_t size, uint32_t tag) {
     size += sizeof(GC_Object);
-    // should be aligned to 8B by default
-    assert((size % 8) == 0);
+    size = (size + 15) & -16ull;
+
+    // should be aligned to 16B by default
+    assert((size % 16) == 0);
     // only support small space allocs for now
     assert(size <= 64*1024);
 
-    uint64_t good_bits = gc_good_bits(*expected_nmt, GC_SPACE_YOUNG);
+    uint64_t good_bits = gc_good_bits(*expected_nmt, false);
     if (gc_tlab == NULL || gc_tlab->used + size >= GC_PAGE_SIZE - sizeof(GC_Page)) {
         gc_tlab = gc_alloc_page();
     }
@@ -414,7 +423,7 @@ static GC_Ref gc_alloc(size_t size, uint32_t tag) {
     obj->tag  = tag;
     obj->size = size;
 
-    GC_Ref ref = (((GC_Ref) obj->data) << 4ull) | good_bits;
+    GC_Ref ref = (((GC_Ref) obj->data) << 3ull) | good_bits;
     gc_log_submit(GC_LOG_ALLOC_OBJ, ref, 0);
     return ref;
 }
@@ -426,7 +435,7 @@ static uintptr_t bit_test(uintptr_t x, uintptr_t y) {
     return (x >> y) & 1;
 }
 
-static void gc_mark_obj(GC_Ref addr) {
+static void gc_mark_obj(uintptr_t addr) {
     GC_Object* base = gc_find_obj(addr);
     GC_Page* page = (GC_Page*) (addr & -GC_PAGE_SIZE);
 
@@ -479,14 +488,18 @@ static GC_Ref remap_ptr(GC_Ref addr) {
 }
 
 static GC_Ref visit_ref(GC_Ref old, GC_Ref exp) {
-    GC_Ref addr = remap_ptr(old >> 4ull);
+    bool is_old = (old & 0b111) >= GC_SPACE_OLD;
+    uintptr_t addr = old >> 3ull;
+    if (gc_mid_reloc[is_old]) {
+        addr = remap_ptr(addr);
+    } else {
+        // mark object, if it's not marked yet push to marklist
+        gc_mark_obj(addr);
+    }
 
-    // mark object, if it's not marked yet push to marklist
-    gc_mark_obj(addr);
-
-    // transition NMT+PROT to the current good state
-    uint64_t trigger = gc_good_bits(exp, (old >> 2) & 3);
-    return (old & -4ull) | trigger;
+    // flip to the good color
+    uint64_t trigger = gc_good_bits(exp, is_old);
+    return (addr << 3ull) | trigger;
 }
 
 GC_Ref c_lvb(_Atomic(GC_Ref)* ref) {
@@ -528,24 +541,29 @@ static void gc_cross_checkpoint(bool mark_roots) {
     gc_log_submit(GC_LOG_CROSS_CHECKPOINT, 0, 0);
 }
 
-// traps if bits don't match pattern, NULL space never traps
-static void set_expected_nmt(int space, int prot, int nmt) {
-    gc_log_submit(GC_LOG_PHASE_SHIFT, prot, nmt);
+static int target_colors[2]; // [0] young, [1] old
 
-    uint64_t pattern  = (space << 2) | (prot << 1) | nmt;
-    uint64_t expected = ~((1ull << pattern) | 0b1111) & 0xFFFF;
-    atomic_store_explicit(expected_nmt, expected * 0x0001000100010001, memory_order_release);
+// traps if bits don't match pattern, NULL color never traps
+static void move_to_next_color(bool is_old) {
+    int color = (target_colors[is_old] + 1) % GC_COLOR_MAX;
+    target_colors[is_old] = color;
+
+    gc_log_submit(GC_LOG_PHASE_SHIFT, color, 0);
+    uint64_t pattern  = (is_old ? 4 : 1) + color;
+    uint64_t expected = ~((1ull << pattern) | 1) & 0xFF;
+    // broadcast bits
+    expected *= 0x0101010101010101ull;
+    atomic_store_explicit(expected_nmt, expected, memory_order_release);
 }
 
-static bool prot_expected = false;
 static void gc_mark_remap(void) {
     gc_log_submit(GC_LOG_MARK_PHASE, 0, 0);
 
-    // Flip NMT, the LUT will trap if NMT is nmt_dir.
     // This event might not be acknowledged immediately by
-    // mutator threads which leads to some NMT "throbbing"
-    nmt_target = !nmt_target;
-    set_expected_nmt(GC_SPACE_YOUNG, prot_expected, nmt_target);
+    // mutator threads which leads to some "throbbing" where
+    // two threads flip flop the color because they disagree
+    // on it.
+    move_to_next_color(false);
 
     bool progress;
     do {
@@ -666,11 +684,10 @@ static void gc_relocate(void) {
     // before the relocation can actually happen, we need to
     // make sure all threads acknowledge the NMT flip... they'll
     // LVB storm up for a bit but we'll tank it
-    gc_mid_reloc = 1;
+    gc_mid_reloc[0] = true;
     CUIK_TIMED_BLOCK("GC Protect") {
         // Trap on wrong-PROT
-        prot_expected = !prot_expected;
-        set_expected_nmt(GC_SPACE_YOUNG, prot_expected, nmt_target);
+        move_to_next_color(false);
         gc_cross_checkpoint(false);
 
         // No LVB traps are being hit right now, it's the perfect time to reset the bitmap
@@ -683,7 +700,7 @@ static void gc_relocate(void) {
         }
         gc_log_submit(GC_LOG_CLEAR_MARK, 0, 0);
     }
-    gc_mid_reloc = 0;
+    gc_mid_reloc[0] = false;
 }
 
 static int gc_main(void* arg) {

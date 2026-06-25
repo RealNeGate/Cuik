@@ -100,7 +100,7 @@ TB_Stacklet* c_checkpoint(TB_Stacklet* stack) {
         return next;
     }*/
 
-    if (gc_mid_reloc) {
+    if (gc_mid_reloc[0]) {
         // Reset TLAB
         if (gc_tlab && gc_tlab->from_space) {
             gc_tlab = NULL;
@@ -108,7 +108,7 @@ TB_Stacklet* c_checkpoint(TB_Stacklet* stack) {
     } else {
         GC_Ref exp = *expected_nmt;
         void** rsp = (void**) g->state.gprs[4];
-        void* rpc  = rsp[1];
+        void*  rpc = rsp[1];
 
         // fixup because we used it for scratch and saved it elsewhere
         g->state.gprs[1] = (uint64_t) rsp[0];

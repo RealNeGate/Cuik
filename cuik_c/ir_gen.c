@@ -195,48 +195,50 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
     }
 
     // try to emit constant integer + constant addresses
-    assert(s->op == EXPR_CONST);
-
-    Cuik_ConstVal value = s->const_val;
     uint64_t int_form = 0;
-    if (value.tag == CUIK_CONST_ADDR) {
-        Stmt* stmt = value.s.base;
-        assert((stmt->op == STMT_GLOBAL_DECL || stmt->op == STMT_FUNC_DECL) && "could not resolve as constant initializer");
+    if (s->op == EXPR_CHAR || s->op == EXPR_WCHAR) {
+        int_form = s->char_lit;
+    } else if (s->op == EXPR_CONST) {
+        Cuik_ConstVal value = s->const_val;
+        if (value.tag == CUIK_CONST_ADDR) {
+            Stmt* stmt = value.s.base;
+            assert((stmt->op == STMT_GLOBAL_DECL || stmt->op == STMT_FUNC_DECL) && "could not resolve as constant initializer");
 
-        tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
-        int_form = value.s.offset;
-    } else if (value.tag == CUIK_CONST_STR) {
-        size_t len = atoms_len(value.str);
-        if (type->kind == KIND_PTR) {
-            uint32_t hash = tb__murmur3_32(value.str, len);
+            tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
+            int_form = value.s.offset;
+        } else if (value.tag == CUIK_CONST_STR) {
+            size_t len = atoms_len(value.str);
+            if (type->kind == KIND_PTR) {
+                uint32_t hash = tb__murmur3_32(value.str, len);
 
-            TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-            ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
-            tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
+                TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+                ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
+                tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
 
-            char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
-            memcpy(dst, value.str, len);
+                char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
+                memcpy(dst, value.str, len);
 
-            tb_global_add_symbol_reloc(tu->ir_mod, g, offset, (TB_Symbol*) dummy);
-        } else {
-            char* dst = tb_global_add_region(tu->ir_mod, g, offset, type->size);
-            memcpy(dst, value.str, len);
-        }
-    } else if (value.tag == CUIK_CONST_INT) {
-        int_form = value.i;
-    } else if (value.tag == CUIK_CONST_FLOAT) {
-        Cuik_TypeKind kind = cuik_canonical_type(e->cast_types[e->count - 1])->kind;
-        if (kind == KIND_DOUBLE) {
-            typedef union { double f; uint64_t u; } F64U64;
-            int_form = (F64U64){ value.f }.u;
-        } else if (kind == KIND_FLOAT) {
-            typedef union { float f; uint32_t u; } F32U32;
-            int_form = (F32U32){ value.f }.u;
+                tb_global_add_symbol_reloc(tu->ir_mod, g, offset, (TB_Symbol*) dummy);
+            } else {
+                char* dst = tb_global_add_region(tu->ir_mod, g, offset, type->size);
+                memcpy(dst, value.str, len);
+            }
+        } else if (value.tag == CUIK_CONST_INT) {
+            int_form = value.i;
+        } else if (value.tag == CUIK_CONST_FLOAT) {
+            Cuik_TypeKind kind = cuik_canonical_type(e->cast_types[e->count - 1])->kind;
+            if (kind == KIND_DOUBLE) {
+                typedef union { double f; uint64_t u; } F64U64;
+                int_form = (F64U64){ value.f }.u;
+            } else if (kind == KIND_FLOAT) {
+                typedef union { float f; uint32_t u; } F32U32;
+                int_form = (F32U32){ value.f }.u;
+            } else {
+                assert(0 && "TODO");
+            }
         } else {
             assert(0 && "TODO");
         }
-    } else {
-        assert(0 && "TODO");
     }
 
     if (int_form != 0) {

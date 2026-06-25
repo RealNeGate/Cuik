@@ -157,8 +157,8 @@ TB_ArchiveEntry tb_archive_member_get(TB_ArchiveFileParser* restrict parser, siz
         }
 
         // printf("%s : %s : %d\n", dll_path, imported_symbol, import->name_type);
-        return (TB_ArchiveEntry){ { (const uint8_t*) dll_path, strlen(dll_path) }, .import_name = import_name, .ordinal = import->ordinal_hint };
+        return (TB_ArchiveEntry){ .name = { (const uint8_t*) dll_path, strlen(dll_path) }, .import_name = import_name, .ordinal = import->ordinal_hint };
     } else {
-        return (TB_ArchiveEntry){ sym_name, .content = { sym->contents, len } };
+        return (TB_ArchiveEntry){ .name = sym_name, .content = { sym->contents, len } };
     }
 }

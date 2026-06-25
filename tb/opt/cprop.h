@@ -1,59 +1,4 @@
 
-// An Efficient Representation for Sparse Sets (1993), Briggs and Torczon
-typedef struct {
-    size_t count;
-
-    int* array;
-    ArenaArray(int) stack;
-} SparseSet;
-
-static SparseSet sparse_set_alloc(TB_Arena* arena, size_t count) {
-    SparseSet s;
-    s.count = count;
-    s.array = tb_arena_alloc(arena, count * sizeof(int));
-    s.stack = aarray_create(arena, int, 16);
-    FOR_N(i, 0, s.count) {
-        s.array[i] = -1;
-    }
-    return s;
-}
-
-static void sparse_set_put(SparseSet* set, int v) {
-    TB_ASSERT(v < set->count);
-    if (set->array[v] < 0) {
-        set->array[v] = aarray_length(set->stack);
-        aarray_push(set->stack, v);
-    }
-}
-
-static void sparse_set_clear(SparseSet* set) {
-    aarray_for(i, set->stack) {
-        set->array[set->stack[i]] = -1;
-    }
-    aarray_clear(set->stack);
-}
-
-static int sparse_set_pop(SparseSet* set) {
-    if (aarray_length(set->stack) > 0) {
-        int v = aarray_pop(set->stack);
-        set->array[v] = -1;
-        return v;
-    } else {
-        return -1;
-    }
-}
-
-static void sparse_set_remove(SparseSet* set, int v) {
-    if (set->array[v] >= 0) {
-        aarray_remove(set->stack, set->array[v]);
-        set->array[v] = -1;
-    }
-}
-
-static bool sparse_set_test(SparseSet* set, int v) {
-    return set->array[v] >= 0;
-}
-
 struct CProp_Partition {
     int id, input_count;
 
@@ -126,12 +71,35 @@ bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b) {
         // TOPs are always congruent
         if (aa == &TOP_IN_THE_SKY || bb == &TOP_IN_THE_SKY) {
             return true;
+        } else if (lattice_spec_eq(f, aa, bb)) {
+            return true;
         }
 
         // they must directly cross each other, if not then they couldn't be
         // congruent
-        Lattice* glb = lattice_meet(f, aa, bb);
-        return lattice_spec_eq(f, aa, glb) || lattice_spec_eq(f, bb, glb);
+        // Lattice* glb = lattice_meet(f, aa, bb);
+        // return lattice_spec_eq(f, aa, glb) || lattice_spec_eq(f, bb, glb);
+    }
+
+    return false;
+}
+
+bool gcf_is_congruent2(TB_Function* f, uint32_t a, uint32_t b) {
+    // pessimistic? just use value number equivalence
+    if (f->gcf_nodes == NULL) {
+        return a == b;
+    }
+
+    if (f->gcf_nodes[a]->partition == f->gcf_nodes[b]->partition) {
+        Lattice* aa = f->types[a];
+        Lattice* bb = f->types[b];
+
+        // TOPs are always congruent
+        if (aa == &TOP_IN_THE_SKY || bb == &TOP_IN_THE_SKY) {
+            return true;
+        } else if (lattice_spec_eq(f, aa, bb)) {
+            return true;
+        }
     }
 
     return false;
@@ -195,7 +163,7 @@ static void push_cprop_users(TB_Function* f, CProp* cprop, TB_Node* n) {
     // push affected users
     FOR_USERS(u, n) {
         TB_Node* un = USERN(u);
-        if (un->type == TB_CALLGRAPH) {
+        if (un->type == TB_CALLGRAPH || IS_PROJ(un)) {
             continue;
         }
 
@@ -205,6 +173,13 @@ static void push_cprop_users(TB_Function* f, CProp* cprop, TB_Node* n) {
             }
         }
         push_cprop(f, cprop, un);
+    }
+
+    FOR_USERS(u, n) {
+        TB_Node* un = USERN(u);
+        if (IS_PROJ(un)) {
+            push_cprop(f, cprop, un);
+        }
     }
 }
 
@@ -360,6 +335,30 @@ static bool cprop_opcode_compare(void* a, void* b) {
     return extra == 0 || memcmp(x->extra, y->extra, extra) == 0;
 }
 
+static bool cprop_is_basically_top(TB_Function* f, TB_Node* n, Lattice* new_type) {
+    if (new_type->tag == LATTICE_TUPLE) {
+        if (tb_node_is_fork_ctrl(n)) {
+            FOR_USERS(u, n) {
+                if (IS_PROJ(USERN(u)) && USERN(u)->dt.type == TB_TAG_CONTROL) {
+                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                    Lattice* elem = new_type->elems[index];
+                    if (elem != &TOP_IN_THE_SKY && elem != &DEAD_IN_THE_SKY) {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        } else if (n->dt.type == TB_TAG_TUPLE && tb_node_is_ctrl(n)) {
+            // if it's a tuple with a dead control then it's basically top
+            TB_ASSERT(new_type->_elem_count >= 1);
+            return new_type->elems[0] == &TOP_IN_THE_SKY || new_type->elems[0] == &DEAD_IN_THE_SKY;
+        }
+    }
+
+    return new_type == &DEAD_IN_THE_SKY;
+}
+
 typedef void* SplitByWhat(TB_Function* f, CProp* cprop, CProp_Node* node);
 static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* root, SplitByWhat* what, int depth) {
     nl_table_clear(&cprop->da_map[depth]);
@@ -506,9 +505,20 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             Lattice* new_type = value_of(f, n);
             // TB_OPTDEBUG(STATS)(n->type < TB_NODE_TYPE_MAX ? (f->stats.cprop_t[n->type] += (cuik_time_in_nanos() - start), 0) : 0);
 
+            /* if (f->enable_log && n->gvn == 340 && f->gcf_nodes[471] != NULL) {
+                printf("P%d: ", p_idx);
+                print_lattice(f->types[340]);
+                printf("    ");
+                print_lattice(f->types[471]);
+                printf("    ");
+                print_lattice(f->types[470]);
+                printf("    %d\n", gcf_is_congruent2(f, 471, 470));
+                __debugbreak();
+            } */
+
             TB_OPTLOG(SCCP, printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m\n"));
 
-            if (old_type != new_type) {
+            if (old_type != new_type && !cprop_is_basically_top(f, n, new_type)) {
                 #ifndef NDEBUG
                 // validate int
                 if (new_type->tag == LATTICE_INT) {
@@ -528,7 +538,9 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 #endif
 
                 latuni_set(f, n, new_type);
-                sparse_set_put(&cprop->fallen, n->gvn);
+                if (node->leader == NULL) {
+                    sparse_set_put(&cprop->fallen, n->gvn);
+                }
                 progress = true;
 
                 /*if (n->dt.type == TB_TAG_TUPLE) {
@@ -553,7 +565,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
         // for splitting, we first split that group then handle the more precise splitting.
         CProp_Partition* y = p;
         size_t fallen_cnt = aarray_length(cprop->fallen.stack);
-        if (fallen_cnt > 0 && fallen_cnt < p->member_count) {
+        if (fallen_cnt > 0 && fallen_cnt < p->member_count - p->follower_count) {
             y = cprop_split(f, cprop, p, cprop_what_fallen);
             // TB_ASSERT(y->member_count - y->follower_count == fallen_cnt);
 
@@ -669,7 +681,10 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
         for (CProp_Node* node = p->members; node; node = node->next) {
             TB_Node* x = node->n;
 
-            TB_OPTDEBUG(STATS)(uint64_t start = cuik_time_in_nanos());
+            #if TB_OPTDEBUG_STATS
+            uint64_t start = cuik_time_in_nanos();
+            #endif
+
             FOR_USERS(u, x) {
                 TB_Node* y = USERN(u);
                 CProp_Node* y_node = cprop->nodes[y->gvn];
@@ -718,7 +733,12 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
                     }
                 }
             }
-            TB_OPTDEBUG(STATS)(x->type < TB_NODE_TYPE_MAX ? (f->stats.cprop_t[x->type] += x->user_count, 0) : 0); // (cuik_time_in_nanos() - start), 0) : 0);
+
+            #if TB_OPTDEBUG_STATS
+            if (x->type < TB_NODE_TYPE_MAX) {
+                f->stats.cprop_t[x->type] += x->user_count;
+            }
+            #endif
         }
         // cuikperf_region_end();
         // printf("\n\n\n");
@@ -756,9 +776,12 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
     }
 }
 
+static int dbg_time = 0;
 CProp tb_opt_cprop_init(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
     TB_OPTLOG(SCCP, tb_print(f));
+
+dbg_time++;
 
     // disjoint-set for the eqclasses
     CProp cprop;
@@ -999,7 +1022,10 @@ int tb_opt_cprop_rewrite(TB_Function* f) {
 
         TB_Node* k = try_as_const(f, n, latuni_get(f, n));
         if (k != NULL) {
-            TB_OPTDEBUG(STATS)(inc_nums(f->stats.opto_constants, n->type));
+            #if TB_OPTDEBUG_STATS
+            inc_nums(f->stats.opto_constants, n->type);
+            #endif
+
             TB_OPTLOG(SCCP, printf(" => "), tb_print_dumb_node(NULL, k), printf(" (CONST)\n"));
 
             node->n = k;

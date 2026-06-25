@@ -219,7 +219,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
 
                 TB_ELF_RelocType type;
                 switch (p->type) {
-                    case TB_OBJECT_RELOC_REL32: type = TB_ELF_X86_64_PC32;  break;
+                    case TB_OBJECT_RELOC_REL32: type = TB_ELF_X86_64_PLT32; break;
                     case TB_OBJECT_RELOC_PLT32: type = TB_ELF_X86_64_PLT32; break;
                     default: tb_todo();
                 }
@@ -230,6 +230,34 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
                     .info   = TB_ELF64_R_INFO(symbol_id, type),
                     .addend = addend - 4
                 };
+            }
+        }
+
+        size_t section_base = sections[i].raw_data_pos;
+        dyn_array_for(j, globals) {
+            TB_Global* g = globals[j];
+
+            FOR_N(k, 0, g->obj_count) {
+                size_t actual_pos = g->pos + g->objects[k].offset;
+
+                if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
+                    const TB_Symbol* s = g->objects[k].reloc;
+                    size_t symbol_id = s->symbol_id;
+                    if (s->linkage == TB_LINKAGE_PUBLIC) {
+                        symbol_id += local_sym_count;
+                    }
+                    TB_ASSERT(symbol_id != 0);
+
+                    int64_t addend;
+                    memcpy(&addend, &output[section_base + actual_pos], sizeof(addend));
+
+                    *relocs++ = (TB_Elf64_Rela){
+                        .offset = actual_pos,
+                        // check when we should prefer R_X86_64_GOTPCREL
+                        .info   = TB_ELF64_R_INFO(symbol_id, TB_ELF_X86_64_64),
+                        .addend = addend,
+                    };
+                }
             }
         }
 

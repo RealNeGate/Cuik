@@ -232,7 +232,9 @@ ptrdiff_t parse_char(size_t len, const char* str, int* output) {
     }
 
     // error: expected something after the backslash
-    if (len < 1) return -1;
+    if (len < 1) {
+        return -1;
+    }
 
     int ch = 0;
     size_t i = 2;

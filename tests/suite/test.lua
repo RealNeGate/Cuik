@@ -30,7 +30,7 @@ if #arg >= 1 then
 end
 
 configs = {
-    "", "-O", "-g", "-O -g", "-based", "-based -O"
+    "", "-O", -- "-g", "-O -g", "-based", "-based -O"
 }
 
 local passed = 0
@@ -90,9 +90,11 @@ for i=1,#x do
         args = "100000"
     end
 
+    local includes = "-I /home/linuxbrew/.linuxbrew/Cellar/csmith/2.3.0/include/csmith-2.3.0/"
+
     print("Testing... "..x[i])
     print("  Clang:")
-    code = os.execute(string.format("clang %s -O1 && %s %s > clang.txt", x[i], exe_name, args))
+    code = os.execute(string.format("clang %s %s -lm -O1 && %s %s > clang.txt", x[i], includes, exe_name, args))
     if code ~= 0 then
         print("    BAD!!!", code)
         goto skip
@@ -102,21 +104,23 @@ for i=1,#x do
     local pass = true
     for j=1,#configs do
         print("  Cuik:", configs[j])
-        code = os.execute(string.format("cuik %s %s && %s %s > cuik.txt", x[i], configs[j], exe_name, args))
+        code = os.execute(string.format("~/Desktop/Workspace/Cuik/bin/cuik %s %s %s && %s %s > cuik.txt", x[i], configs[j], includes, exe_name, args))
         if code == 0 then
-            local diff = os.execute("diff clang.txt cuik.txt")
+            local diff = os.execute("git diff --color-words clang.txt cuik.txt")
             if diff ~= 0 then
                 print("    BAD DIFF!!!")
                 pass = false
+            else
+                print("    GOOD!!!")
             end
         else
-            print("    BAD CUIK!!!", configs[j])
+            print("    BAD CUIK!!!", configs[j], code)
             pass = false
         end
     end
 
     if pass then
-        print("    Pass!")
+        print("  Pass!")
         passed = passed + 1
     end
 

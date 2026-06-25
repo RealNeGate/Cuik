@@ -71,7 +71,7 @@ static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e);
 // just a pretty asm-like printer
 static void print_pretty(Ctx* restrict ctx, TB_Node* n);
 
-TB_OPTDEBUG(STATS)(int stats_miss, stats_hit);
+int stats_miss, stats_hit;
 
 typedef struct {
     TB_Node* n;
@@ -146,22 +146,22 @@ static void dump_pretty_sched(Ctx* restrict ctx) {
 }*/
 
 static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, ArenaArray(TB_Safepoint*)* safepoints, Bundle* b) {
-    #if TB_OPTDEBUG_EMIT
-    FOR_N(i, 0, b->count) {
-        if (i) {
-            printf("\n");
+    IF_OPT(EMIT) {
+        FOR_N(i, 0, b->count) {
+            if (i) {
+                printf("\n");
+            }
+
+            TB_Node* n = b->arr[i];
+            print_pretty(ctx, n);
         }
 
-        TB_Node* n = b->arr[i];
-        print_pretty(ctx, n);
+        if (BUNDLE_INST_MAX > 1) {
+            printf(" ;;\n");
+        } else {
+            printf("\n");
+        }
     }
-
-    #if BUNDLE_INST_MAX > 1
-    printf(" ;;\n");
-    #else
-    printf("\n");
-    #endif
-    #endif
 
     bundle_emit(ctx, e, b);
     if (b->safepoint) {
@@ -369,7 +369,7 @@ static void disassemble(TB_Arch arch, TB_CGEmitter* e, Disasm* restrict d, int b
 #undef E
 
 static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
-    log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena) - og_size) / 1024.0f, label);
+    log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, tb_arena_current_size(&f->arena) / 1024.0f, label);
 }
 
 static bool is_vreg_match(Ctx* ctx, TB_Node* a, TB_Node* b) {
@@ -380,6 +380,24 @@ static bool is_vreg_match(Ctx* ctx, TB_Node* a, TB_Node* b) {
     }
 
     return aa->class == bb->class && aa->assigned == bb->assigned;
+}
+
+static bool safe_to_dup(Ctx* ctx, TB_Node* n) {
+    // certain nodes can be duplicated safely
+    if (n->type == TB_PHI) {
+        return false;
+    } else if (n->type == TB_ROOT || (tb_node_get_flags(n) & (NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT))) {
+        return false;
+    } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
+        return true;
+    } else if (can_remat(ctx, n) || n->type == TB_LOCAL || n->type == TB_SYMBOL) {
+        return true;
+    } else if (n->user_count > 3) {
+        // share if there's a lot of users
+        return false;
+    } else {
+        return true;
+    }
 }
 
 static bool postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node* n, size_t old_node_count) {
@@ -393,7 +411,7 @@ static bool postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node*
         TB_OPTDEBUG(ISEL)(printf("  PUSH "), tb_print_dumb_node(NULL, n), printf("\n"));
         dyn_array_put(ws->items, n);
 
-        if (n->user_count > 1) {
+        if (!safe_to_dup(ctx, n)) {
             set_put(shared, n->gvn);
         }
     } else {
@@ -405,7 +423,7 @@ static bool postorder_isel_walk(Ctx* ctx, TB_Worklist* ws, Set* shared, TB_Node*
     return true;
 }
 
-static void print_tree(Set* shared, TB_Node* n) {
+static void print_tree(Set* shared, TB_Node* n, int depth) {
     if (IS_PROJ(n) && set_get(shared, n->inputs[0]->gvn)) {
         int idx = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
         printf(" %%%u.%d", n->inputs[0]->gvn, idx);
@@ -430,7 +448,9 @@ static void print_tree(Set* shared, TB_Node* n) {
     } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
         printf(" %.10f", f->value);
-    } else if (n->type >= 0x100) {
+    } else if (n->type == TB_MACH_SYMBOL) {
+        printf(" %%%u ", n->gvn);
+    } else if (n->type >= TB_MACH_TEMP) {
         printf(" ");
         print_extra(&OUT_STREAM_DEFAULT, n);
     }
@@ -441,30 +461,13 @@ static void print_tree(Set* shared, TB_Node* n) {
             printf(" ___");
         } else if (set_get(shared, in->gvn)) {
             printf(" %%%u", in->gvn);
+        } else if (depth > 3) {
+            printf(" ...");
         } else {
-            print_tree(shared, in);
+            print_tree(shared, in, depth+1);
         }
     }
     printf(")");
-}
-
-static bool safe_to_dup(TB_Node* n) {
-    // certain nodes can be duplicated safely
-    if (n->type == TB_PHI) {
-        return false;
-    } else if (n->type == TB_ROOT || (tb_node_get_flags(n) & (NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT))) {
-        return false;
-    } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
-        return true;
-    } else if (n->type == TB_ICONST || n->type == TB_F32CONST || n->type == TB_F64CONST || n->type == TB_SYMBOL || n->type == TB_LOCAL) {
-        // constants always dup
-        return true;
-    } else if (n->user_count > 3) {
-        // share if there's a lot of users
-        return false;
-    } else {
-        return true;
-    }
 }
 
 static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
@@ -472,9 +475,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     tb_print_dumb(f);
     #endif
 
-    #if TB_OPTDEBUG_SERVER
-    dbg_startup_server(f->super.module);
-    #endif
+    TB_OPTDEBUG(SERVER)(dbg_startup_server(f->super.module));
 
     if (0) {
         static float dst[256];
@@ -524,7 +525,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     tb_opt_free_types(f);
 
     TB_Worklist* restrict ws = f->worklist;
-
     size_t og_size = tb_arena_current_size(&f->arena);
 
     ctx.mask_intern = nl_hashset_alloc(200);
@@ -539,7 +539,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
     CUIK_TIMED_BLOCK("isel") {
         STATS_ENTER(MACH_ISEL);
-        log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f);
+        log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (pre isel)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena)) / 1024.0f);
 
         // rewrite the root node
         construct_prologue_epilogue(&ctx, f);
@@ -568,7 +568,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         set_put(&shared, n->inputs[j]->gvn);
                     }
                 }
-            } else if (!safe_to_dup(n)) {
+            } else if (!safe_to_dup(&ctx, n)) {
                 set_put(&shared, n->gvn);
             }
 
@@ -590,7 +590,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         aarray_for(i, pins) {
             TB_Node* pin_n = pins[i];
 
-            // TB_OPTDEBUG(ISEL)(printf("PIN  t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
+            TB_OPTDEBUG(ISEL)(printf("PIN  t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
             aarray_push(walker, (NodeCursor){ pin_n, pin_n->input_count });
 
             while (aarray_length(walker)) {
@@ -610,11 +610,11 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
                 if (ready) {
                     if (set_get(&shared, c.n->gvn)) {
-                        #if TB_OPTDEBUG_ISEL
-                        printf("%%%u", c.n->gvn);
-                        print_tree(&shared, c.n);
-                        printf("\n");
-                        #endif
+                        IF_OPT(ISEL) {
+                            printf("%%%u", c.n->gvn);
+                            print_tree(&shared, c.n, 0);
+                            printf("\n");
+                        }
 
                         // push to ordered list
                         worklist_push(ws, c.n);
@@ -627,14 +627,26 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         set_clear(&visited);
         aarray_clear(walker);
 
+        // reverse
+        size_t last = dyn_array_length(ws->items) - 1;
+        FOR_N(i, 0, dyn_array_length(ws->items) / 2) {
+            SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
+        }
+
+        /* SWAP(TB_Arena, f->arena, f->tmp_arena);
+        f->node_count = 0;
+        f->dead_node_bytes = 0;
+
+        TB_Node** fwd = tb_arena_alloc(&f->arena, f->node_count * sizeof(TB_Node*));
+        FOR_N(i, 0, f->node_count) { fwd[i] = NULL; }*/
+
         // as we do instruction selection, the graph will have small trees introduced, there's
         // no need to check patterns for anything by the root of the tree.
-        while (worklist_count(ws)) {
-            int start = worklist_count(ws);
-            TB_Node* n = ws->items[start - 1];
+        size_t head = 0;
+        while (head < worklist_count(ws)) {
+            size_t tail = worklist_count(ws);
+            TB_Node* n = ws->items[head++];
             if (n->user_count == 0 && !IS_PROJ(n)) {
-                worklist_pop(ws);
-
                 tb__gvn_remove(f, n);
                 tb_kill_node(f, n);
                 continue;
@@ -644,10 +656,11 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             TB_OPTDEBUG(ISEL)(printf("Match? "), tb_print_dumb_node(NULL, n), printf("\n"));
 
             // create new nodes in the new-space
-            bool progress;
+            bool progress, added = false;
             do {
                 progress = false;
                 ctx.dsl.top = 0;
+
                 MatchRuleID r = node_isel_raw(&ctx, f, &shared, n, 0);
                 TB_OPTDEBUG(ISEL)(printf("\n"));
 
@@ -666,50 +679,54 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         worklist_push(ws, sub_k);
                         set_put(&shared, sub_k->gvn);
 
-                        #if TB_OPTDEBUG_ISEL
-                        printf("  %%%u", sub_n->gvn);
-                        print_tree(&shared, sub_n);
-                        printf(" => %%%u", sub_k->gvn);
-                        print_tree(&shared, sub_k);
-                        printf("\n");
-                        #endif
+                        IF_OPT(ISEL) {
+                            printf("  %%%u", sub_n->gvn);
+                            print_tree(&shared, sub_n, 0);
+                            printf(" => %%%u", sub_k->gvn);
+                            print_tree(&shared, sub_k, 0);
+                            printf("\n");
+                        }
                     }
 
                     TB_Node* k = match_rules[r](&ctx, f, n);
-
-                    #if TB_OPTDEBUG_ISEL
-                    printf("  %%%u", n->gvn);
-                    print_tree(&shared, n);
-                    printf(" => %%%u", k->gvn);
-                    print_tree(&shared, k);
-                    printf("\n\n");
-                    #endif
+                    IF_OPT(ISEL) {
+                        printf("  %%%u", n->gvn);
+                        print_tree(&shared, n, 0);
+                        printf(" => %%%u", k->gvn);
+                        print_tree(&shared, k, 0);
+                        printf("\n\n");
+                    }
 
                     if (n != k) {
                         subsume_node(f, n, k);
                     }
-                    set_put(&shared, k->gvn);
+                    if (!safe_to_dup(&ctx, n)) {
+                        set_put(&shared, k->gvn);
+                    }
                     n = k;
-                    progress = true;
+                    progress = added = true;
                 }
             } while (progress);
 
             // ISel can introduce fresh nodes, we should add these to the worklist
             // in postorder, I don't mind this using the stack because it's mostly
             // bounded by the target's code.
+            cuikperf_region_start("W", NULL);
             FOR_N(i, 0, n->input_count) {
                 postorder_isel_walk(&ctx, ws, &shared, n->inputs[i], old_node_count);
             }
+            cuikperf_region_end();
 
+            cuikperf_region_start("I", NULL);
             // kill any nodes on the right side of the node, preserve the rest and reprocess them
-            size_t read_head  = start;
-            size_t write_head = start-1;
+            size_t read_head  = tail;
+            size_t write_head = tail;
             while (read_head < worklist_count(ws)) {
                 TB_Node* k = ws->items[read_head];
                 if (k->user_count == 0 && !IS_PROJ(k)) {
                     // technically the visited bit stays on in this path but i don't care, it's dead
                     TB_OPTDEBUG(ISEL)(printf("  KILL "), tb_print_dumb_node(NULL, k), printf("\n"));
-                    tb__gvn_remove(f, k);
+                    // printf("  KILL "), tb_print_dumb_node(NULL, k), printf("\n");
                     tb_kill_node(f, k);
                 } else {
                     if (read_head != write_head) {
@@ -720,11 +737,15 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 read_head++;
             }
             dyn_array_set_length(ws->items, write_head);
+            cuikperf_region_end();
 
             if (IS_PROJ(n)) {
                 n = n->inputs[0];
             }
-            node_add_tmps(&ctx, n);
+
+            if (added) {
+                node_add_tmps(&ctx, n);
+            }
         }
 
         if (ctx.frame_ptr->user_count == 0) {
@@ -803,12 +824,12 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 TB_Node* n = ws->items[j];
 
                 // projections cannot emit code
-                #if TB_OPTDEBUG_SCHED2
-                if (!NODE_ISA(n, REGION)) {
-                    print_pretty(&ctx, n);
-                    printf("\n");
+                IF_OPT(SCHED2) {
+                    if (!NODE_ISA(n, REGION)) {
+                        print_pretty(&ctx, n);
+                        printf("\n");
+                    }
                 }
-                #endif
 
                 // temps are added as extras so they don't
                 // increase the "input_count"
@@ -849,53 +870,45 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     }
 
     CUIK_TIMED_BLOCK("gather RA constraints") {
-        #if TB_OPTDEBUG_REGALLOC
-        printf("====== PRE-RA %-20s ======\n", ctx.f->super.name);
-        #endif
+        IF_OPT(REGALLOC) {
+            printf("====== PRE-RA %-20s ======\n", ctx.f->super.name);
+        }
 
         FOR_N(i, 0, bb_count) {
             TB_BasicBlock* bb = &cfg.blocks[i];
 
-            #if TB_OPTDEBUG_REGALLOC
-            printf("BB %zu (freq=%.4f)\n", i, bb->freq);
-            #endif
-
+            TB_OPTDEBUG(REGALLOC)(printf("BB %zu (freq=%.4f)\n", i, bb->freq));
             aarray_for(j, bb->items) {
                 TB_Node* n = bb->items[j];
-
-                #if TB_OPTDEBUG_REGALLOC
-                printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
-                #endif
+                TB_OPTDEBUG(REGALLOC)(printf("  "), tb_print_dumb_node(NULL, n), printf("\n"));
 
                 RegMask* def_mask = node_constraint(&ctx, n, ctx.ins);
                 int vreg_id = try_create_vreg(&ctx, n, def_mask);
 
-                #if TB_OPTDEBUG_REGALLOC
-                if (vreg_id > 0) {
-                    printf("    OUT    = "), tb__print_regmask(&OUT_STREAM_DEFAULT, def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
-                }
+                IF_OPT(REGALLOC) {
+                    if (vreg_id > 0) {
+                        printf("    OUT    = "), tb__print_regmask(&OUT_STREAM_DEFAULT, def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
+                    }
 
-                FOR_N(k, 1, n->input_count) {
-                    if (n->inputs[k]) {
-                        if (n->inputs[k]->type == TB_MACH_TEMP) {
-                            printf("    TMP[%zu] = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
-                        } else if (ctx.ins[k] != &TB_REG_EMPTY) {
-                            printf("    IN[%zu]  = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
+                    FOR_N(k, 1, n->input_count) {
+                        if (n->inputs[k]) {
+                            if (n->inputs[k]->type == TB_MACH_TEMP) {
+                                printf("    TMP[%zu] = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
+                            } else if (ctx.ins[k] != &TB_REG_EMPTY) {
+                                printf("    IN[%zu]  = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
+                            }
                         }
                     }
-                }
 
-                int kill_count = node_constraint_kill(&ctx, n, ctx.ins);
-                FOR_N(k, 0, kill_count) {
-                    printf("    KILL[%zu] = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf("\n");
+                    int kill_count = node_constraint_kill(&ctx, n, ctx.ins);
+                    FOR_N(k, 0, kill_count) {
+                        printf("    KILL[%zu] = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf("\n");
+                    }
                 }
-                #endif
             }
         }
 
-        #if TB_OPTDEBUG_REGALLOC
-        printf("=======================================\n");
-        #endif
+        TB_OPTDEBUG(REGALLOC)(printf("=======================================\n"));
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
@@ -1058,7 +1071,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
             // mark label
-            TB_OPTDEBUG(EMIT)(printf(".bb%d:\n", id));
+            TB_OPTDEBUG(EMIT)(printf("BB%d:\n", id));
 
             TB_Node* prev_n = NULL;
             aarray_for(i, bb->items) {
@@ -1085,13 +1098,16 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         // if n refers to prev then we're dependent, if not then we can't
                         // be, just because there's nothing between them that could make
                         // the connection more indirect.
-                        TB_Node* prev = bundle.arr[bundle.count - 1];
                         FOR_N(i, 0, n->input_count) {
-                            if (n->inputs[i] == prev) {
-                                legal = false;
-                                break;
+                            FOR_N(j, 0, bundle.count) {
+                                TB_Node* prev = bundle.arr[j];
+                                if (n->inputs[i] == prev) {
+                                    legal = false;
+                                    goto exit_loop;
+                                }
                             }
                         }
+                        exit_loop:;
                     }
                 }
 
@@ -1266,7 +1282,9 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     log_debug("%s: code_arena=%.1f KiB", f->super.name, tb_arena_current_size(code_arena) / 1024.0f);
     #endif
 
-    TB_OPTDEBUG(STATS)(printf("%f miss rate (%d misses, %d hits)\n", stats_miss / (float) (stats_miss + stats_hit), stats_miss, stats_hit));
+    #if TB_OPTDEBUG_STATS
+    printf("%f miss rate (%d misses, %d hits)\n", stats_miss / (float) (stats_miss + stats_hit), stats_miss, stats_hit);
+    #endif
 
     tb_arena_clear(&f->tmp_arena);
 

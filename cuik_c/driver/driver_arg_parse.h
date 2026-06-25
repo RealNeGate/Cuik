@@ -14,11 +14,6 @@ static once_flag arg_global_init = ONCE_FLAG_INIT;
 static bool arg_global_init;
 #endif
 
-typedef struct {
-    const char* key;
-    void* val;
-} CLIOptVal;
-
 typedef enum {
     ARG_INT,
     ARG_ENUM,
@@ -45,8 +40,8 @@ typedef struct {
 #define Y(type, short_name, long_name, value,  desc) { short_name, long_name, ARG_ ## type, desc, value }
 #define Z(short_name) { short_name, .type = ARG_GROUP }
 static Option options[] = {
-    X(PATH_LIST,NULL,         NULL, sources,           NULL),
-    X(BOOL,     "V",          NULL, verbose,           "print verbose messages"),
+    X(PATH_LIST,NULL,         NULL, sources,                NULL),
+    X(BOOL,     "V",          NULL, verbose,                "print verbose messages"),
     X(ENUM,     "phase",      NULL, phase,                  "define which phase to stop at"),
     Y(ENUM_VAL, "preprocess", NULL, CUIK_PHASE_PREPROCESS,  "preprocessor"),
     Y(ENUM_VAL, "syntax",     NULL, CUIK_PHASE_SYNTAX,      "syntax & type-checking"),
@@ -73,6 +68,7 @@ static Option options[] = {
     #ifdef CONFIG_HAS_TB
     X(BOOL,     "c",          NULL, flavor,            "output object file"),
     #endif
+    X(STR_LIST, "l",          NULL, libraries,         "TODO"),
     X(BOOL,     "S",          NULL, assembly,          "output assembly to stdout"),
     X(BOOL,     "g",          NULL, debug_info,        "compile with debug information"),
     X(BOOL,     "nochkstk",   NULL, nochkstk,          "disable buffer checks (think of MSVC's /GS-)"),
@@ -93,25 +89,22 @@ static Option options[] = {
 enum { OPTION_COUNT = sizeof(options) / sizeof(options[0]) };
 
 typedef struct TargetOption {
+    const char* key;
     Cuik_Target* (*target)(Cuik_System, Cuik_Environment);
     Cuik_System system;
     Cuik_Environment env;
     Cuik_Toolchain (*toolchain)(void);
 } TargetOption;
 
-static CLIOptVal CLI_STR;
-static CLIOptVal CLI_NUM;
-static CLIOptVal CLI_OPT_NUM;
-static CLIOptVal TARGET_ENUMS[] = {
-    { "x64_windows_msvc",         &(TargetOption){ cuik_target_x64,       CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC, cuik_toolchain_msvc   } },
-    { "x64_macos_gnu",            &(TargetOption){ cuik_target_x64,       CUIK_SYSTEM_MACOS,       CUIK_ENV_GNU,  cuik_toolchain_darwin } },
-    { "x64_linux_gnu",            &(TargetOption){ cuik_target_x64,       CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    } },
-    { "aarch64_windows_msvc",     &(TargetOption){ cuik_target_aarch64,   CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC, cuik_toolchain_msvc   } },
-    { "aarch64_linux_gnu",        &(TargetOption){ cuik_target_aarch64,   CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    } },
-    { "mips32_linux_gnu",         &(TargetOption){ cuik_target_mips32,    CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    } },
-    { "mips64_linux_gnu",         &(TargetOption){ cuik_target_mips64,    CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    } },
-    { "wasm32",                   &(TargetOption){ cuik_target_wasm32,    CUIK_SYSTEM_WEB,         CUIK_ENV_WEB,  NULL                  } },
-    {}
+static TargetOption TARGET_ENUMS[] = {
+    { "x64_windows_msvc",         cuik_target_x64,       CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC, cuik_toolchain_msvc   },
+    { "x64_macos_gnu",            cuik_target_x64,       CUIK_SYSTEM_MACOS,       CUIK_ENV_GNU,  cuik_toolchain_darwin },
+    { "x64_linux_gnu",            cuik_target_x64,       CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
+    { "aarch64_windows_msvc",     cuik_target_aarch64,   CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC, cuik_toolchain_msvc   },
+    { "aarch64_linux_gnu",        cuik_target_aarch64,   CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
+    { "mips32_linux_gnu",         cuik_target_mips32,    CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
+    { "mips64_linux_gnu",         cuik_target_mips64,    CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
+    { "wasm32",                   cuik_target_wasm32,    CUIK_SYSTEM_WEB,         CUIK_ENV_WEB,  NULL                  },
 };
 
 typedef struct {
@@ -265,15 +258,6 @@ static void print_help(void) {
 }
 
 CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const char* argv[]) {
-    /*Cuik_Arguments* args = cuik_alloc_args();
-    tb_arena_create(&args->arena, "Args");
-
-    cuik_parse_args(args, argc, argv);
-
-    bool result = cuik_args_to_driver(comp_args, args);
-    cuik_free_args(args);
-    return result;*/
-
     #ifndef TB_NO_THREADS
     call_once(&arg_global_init, arg_construct_ht);
     #else
@@ -300,6 +284,40 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
         } else if (strcmp("-h", first) == 0 || strcmp("--help", first) == 0) {
             print_help();
             continue;
+        } else if (strcmp("-target", first) == 0) {
+            if (i >= argc || argv[i][0] == '-') {
+                fprintf(stderr, "\x1b[31merror\x1b[0m: expected argument after %s\n", first);
+                return false;
+            }
+
+            bool success = false;
+            const char* val = argv[i++];
+            for (size_t j = 0; j < OPTION_COUNT; j++) {
+                if (strcmp(val, TARGET_ENUMS[j].key) == 0) {
+                    TargetOption* o = &TARGET_ENUMS[j];
+                    comp_args->target = o->target(o->system, o->env);
+                    if (o->toolchain) {
+                        comp_args->toolchain = o->toolchain();
+                    } else {
+                        comp_args->toolchain = (Cuik_Toolchain){ 0 };
+                    }
+                    success = true;
+                    break;
+                }
+            }
+
+            if (!success) {
+                if (val != arg_is_set) {
+                    fprintf(stderr, "unknown target: %s\n", val);
+                }
+                fprintf(stderr, "Supported targets:\n");
+                for (size_t i = 0; i < OPTION_COUNT; i++) {
+                    fprintf(stderr, "    %s\n", TARGET_ENUMS[i].key);
+                }
+                fprintf(stderr, "\n");
+                return false;
+            }
+            continue;
         }
 
         Option* opt = &options[0];
@@ -317,7 +335,11 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
                 len++;
             }
 
-            ArgEntry* e = arg_get_ht(len, first+1);
+            ArgEntry* e = arg_get_ht(1, first+1);
+            if (e == NULL) {
+                e = arg_get_ht(len, first+1);
+            }
+
             if (e == NULL || e->is_short != is_short || options[e->val].type == ARG_ENUM_VAL) {
                 fprintf(stderr, "\x1b[31merror\x1b[0m: could not find match for %s\n", first);
                 return false;
@@ -407,6 +429,15 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
         comp_args->toolchain.ctx = NULL;
     }
 
+    if (comp_args->verbose) {
+        comp_args->toolchain.print_verbose(comp_args->toolchain.ctx, comp_args->nocrt);
+
+        printf("User Includes:\n");
+        dyn_array_for(i, comp_args->includes) {
+            printf("  %s\n", comp_args->includes[i]->data);
+        }
+    }
+
     return true;
 }
 
@@ -416,36 +447,6 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args) {
     if (args->_[ARG_HELP]) {
         print_help();
         return false;
-    }
-
-    Cuik_Arg* target = args->_[ARG_TARGET];
-    if (target) {
-        bool success = false;
-        for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
-            if (strcmp(target->value, target_options[i].key) == 0) {
-                TargetOption* o = &target_options[i];
-                comp_args->target = o->target(o->system, o->env);
-                if (o->toolchain) {
-                    comp_args->toolchain = o->toolchain();
-                } else {
-                    comp_args->toolchain = (Cuik_Toolchain){ 0 };
-                }
-                success = true;
-                break;
-            }
-        }
-
-        if (!success) {
-            if (target->value != arg_is_set) {
-                fprintf(stderr, "unknown target: %s\n", target->value);
-            }
-            fprintf(stderr, "Supported targets:\n");
-            for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
-                fprintf(stderr, "    %s\n", target_options[i].key);
-            }
-            fprintf(stderr, "\n");
-            return false;
-        }
     }
 
     // initialize toolchain

@@ -475,7 +475,8 @@ static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {
         SourceRange loc = tokens_get_range(s);
 
         DiagFixit fixit = { loc, 0, ")" };
-        diag_err(s, fixit.loc, "#expected closing paren", fixit);
+        DiagFixit fixit2 = { { opening, opening }, 0, "(" };
+        diag_err(s, fixit.loc, "##expected closing paren", fixit2, fixit);
         return false;
     } else {
         tokens_next(s);

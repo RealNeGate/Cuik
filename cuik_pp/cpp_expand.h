@@ -27,7 +27,7 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
         ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t->location);
 
         // filepath as a string
-        unsigned char* output_path_start = tb_arena_alloc(&c->tmp_arena, FILENAME_MAX + 4);
+        unsigned char* output_path_start = tb_arena_alloc(&c->perm_arena, FILENAME_MAX + 4);
         unsigned char* output_path = output_path_start;
 
         bool is_wide = (t->content.data[0] == 'L');
@@ -59,7 +59,7 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
         return true;
     } else if (string_equals_cstr(&t->content, "__COUNTER__")) {
         // line number as a string
-        unsigned char* out = tb_arena_alloc(&c->tmp_arena, 10);
+        unsigned char* out = tb_arena_alloc(&c->perm_arena, 10);
         size_t length = sprintf_s((char*)out, 10, "%d", c->unique_counter);
 
         t->type = TOKEN_INTEGER;
@@ -69,7 +69,7 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
         ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t->location);
 
         // line number as a string
-        unsigned char* out = tb_arena_alloc(&c->tmp_arena, 10);
+        unsigned char* out = tb_arena_alloc(&c->perm_arena, 10);
         size_t length = sprintf_s((char*)out, 10, "%d", r.line);
         // trim_the_shtuffs(c, &out[length + 1]);
 

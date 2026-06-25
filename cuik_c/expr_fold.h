@@ -56,6 +56,12 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* t
             i = const_eval_subexpr(parser, tokens, types, exprs, i - 1, &src);
             if (i == CONST_ERROR) return i;
 
+            if (src.tag == CUIK_CONST_STR) {
+                // passthru for now
+                *res = src;
+                return i;
+            }
+
             assert(src.tag == CUIK_CONST_INT);
             *res = (Cuik_ConstVal){ CUIK_CONST_INT, .i = src.i };
             return i;

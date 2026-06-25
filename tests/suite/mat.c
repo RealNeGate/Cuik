@@ -3,6 +3,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+/* void ex() {
+    printf("A");
+    printf("B");
+    printf("C");
+    printf("D");
+} */
+
 static int foo(int a, int b) {
     return a / b;
 }

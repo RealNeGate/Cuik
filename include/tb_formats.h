@@ -66,6 +66,7 @@ typedef struct {
 typedef struct {
     TB_Slice name;
     uint32_t flags;
+    uint32_t comdat_assoc;
 
     size_t virtual_address;
     size_t virtual_size;

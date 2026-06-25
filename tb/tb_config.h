@@ -1,43 +1,37 @@
-////////////////////////////////
-// Random toggles
-////////////////////////////////
-#define TB_OPTDEBUG_STATS            0
-#define TB_OPTDEBUG_PASSES           0
-#define TB_OPTDEBUG_PEEP             0
-#define TB_OPTDEBUG_SCCP             0
-#define TB_OPTDEBUG_LOOP             0
-#define TB_OPTDEBUG_SROA             0
-#define TB_OPTDEBUG_GCM              0
-#define TB_OPTDEBUG_SLP              0
-#define TB_OPTDEBUG_GVN              0
-#define TB_OPTDEBUG_INTERP           0
-#define TB_OPTDEBUG_MEMORY           0
-#define TB_OPTDEBUG_ISEL             0
-#define TB_OPTDEBUG_EMIT             0
-#define TB_OPTDEBUG_DATAFLOW         0
-#define TB_OPTDEBUG_PLACEMENT        0
-#define TB_OPTDEBUG_INLINE           0
-#define TB_OPTDEBUG_INLINE2          0
-#define TB_OPTDEBUG_INLINE3          0
-#define TB_OPTDEBUG_INLINE4          0
-#define TB_OPTDEBUG_REGSPLIT         0
-#define TB_OPTDEBUG_REGALLOC         0
-#define TB_OPTDEBUG_REGALLOC2        0
-#define TB_OPTDEBUG_REGALLOC3        0
-#define TB_OPTDEBUG_REGALLOC_AREA    0
-#define TB_OPTDEBUG_REGALLOC5        0
-#define TB_OPTDEBUG_REGALLOC6        0
-#define TB_OPTDEBUG_COMPACT          0
-#define TB_OPTDEBUG_SCHED1           0
-#define TB_OPTDEBUG_SCHED2           0
-#define TB_OPTDEBUG_SCHED3           0
-#define TB_OPTDEBUG_SCHED4           0
-#define TB_OPTDEBUG_SERVER           0
+// ON_DBG flags only show up when you're debugging, ON_REL are release flags, these stay.
+//
+//   ON_DBG/ON_REL(name, default_val)
+//
+ON_DBG(PASSES,           false)
+ON_DBG(PEEP,             false)
+ON_DBG(SCCP,             false)
+ON_DBG(LOOP,             false)
+ON_DBG(SROA,             false)
+ON_DBG(GCM,              false)
+ON_DBG(SLP,              false)
+ON_DBG(INTERP,           false)
+ON_DBG(MEMORY,           false)
+ON_DBG(ISEL,             false)
+ON_DBG(EMIT,             false)
+ON_DBG(DATAFLOW,         false)
+ON_DBG(PLACEMENT,        false)
+ON_DBG(INLINE,           false)
+ON_DBG(INLINE2,          false)
+ON_DBG(INLINE3,          false)
+ON_DBG(INLINE4,          false)
+ON_DBG(REGSPLIT,         false)
+ON_DBG(REGALLOC,         false)
+ON_DBG(REGALLOC2,        false)
+ON_DBG(REGALLOC3,        false)
+ON_DBG(REGALLOC_AREA,    false)
+ON_DBG(COMPACT,          false)
+ON_DBG(SCHED1,           false)
+ON_DBG(SCHED2,           false)
+ON_DBG(SCHED3,           false)
+ON_DBG(SCHED4,           false)
+ON_DBG(SERVER,           false)
 // for toggling ANSI colors
-#define TB_OPTDEBUG_ANSI      1
+ON_DBG(ANSI,             true)
 
-#if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_MEMORY
-#define TB_OPT_LOG_ENABLED 1
-#else
-#define TB_OPT_LOG_ENABLED 0
-#endif
+#undef ON_DBG
+#undef ON_REL

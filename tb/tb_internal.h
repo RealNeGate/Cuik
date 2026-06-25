@@ -19,13 +19,27 @@
 #define thread_local _Thread_local
 #endif
 
+#ifndef CONCAT
+#define CONCAT_(x, y) x ## y
+#define CONCAT(x, y) CONCAT_(x, y)
+#endif
+
+#ifdef NDEBUG
+#  define ON_DBG(name, def) static const bool tb_opt__ ## name = def;
+#else
+#  define ON_DBG(name, def) extern bool tb_opt__ ## name;
+#endif
+#define ON_REL(name, def)
 #include "tb_config.h"
 
-#define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
+#define CURRY(...) { __VA_ARGS__; }
+#define TB_OPTDEBUG(cond) if (CONCAT(tb_opt__, cond)) CURRY
+#define IF_OPT(cond) if (CONCAT(tb_opt__, cond))
 
-#define DO_IF(cond) CONCAT(DO_IF_, cond)
-#define DO_IF_0(...)
-#define DO_IF_1(...) __VA_ARGS__
+// Can't run stats atm because the IPSCCP calls will try to access
+// the fields but they're freed after the tb_opt, so we wanna make
+// a copy during IPSCCP and im lazy.
+#define TB_OPTDEBUG_STATS 0
 
 #ifndef _WIN32
 // NOTE(NeGate): I love how we assume that if it's not windows
@@ -52,11 +66,6 @@
 
 #define TB_MIN(x, y) ((x) < (y) ? (x) : (y))
 #define TB_MAX(x, y) ((x) > (y) ? (x) : (y))
-
-#ifndef CONCAT
-#define CONCAT_(x, y) x ## y
-#define CONCAT(x, y) CONCAT_(x, y)
-#endif
 
 #include <arena.h>
 #include "set.h"
@@ -468,6 +477,7 @@ struct TB_Function {
         //   [value number] -> TB_BasicBlock*
         size_t scheduled_n;
         TB_BasicBlock** scheduled;
+        int* latency;
 
         // used during loop opts mostly, it's just SoN doms
         size_t doms_n;
@@ -488,15 +498,13 @@ struct TB_Function {
         int dbg_server_t;
         #endif
 
-        #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_MEMORY
+        #ifndef NDEBUG
         bool enable_log;
         #endif
 
         // nice stats
         struct {
-            #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_ISEL || TB_OPTDEBUG_ISEL3
             int time;
-            #endif
 
             #if TB_OPTDEBUG_STATS
             int initial;

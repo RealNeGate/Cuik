@@ -222,8 +222,6 @@ static void elf_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc
     out_reloc->addend     = rel->addend;
     out_reloc->target     = p->symbol_map[TB_ELF64_R_SYM(rel->info)];
 
-    printf("%llu\n", TB_ELF64_R_TYPE(rel->info));
-
     int type;
     switch (TB_ELF64_R_TYPE(rel->info)) {
         case TB_ELF_X86_64_64:       type = TB_OBJECT_RELOC_ADDR64;  break;

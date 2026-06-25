@@ -8,12 +8,12 @@
 #endif
 
 #ifdef CUIK_USE_SPALL_AUTO
-#define SPALL_BUFFER_PROFILING
+// #define SPALL_BUFFER_PROFILING
 #define SPALL_BUFFER_PROFILING_GET_TIME() __rdtsc()
 #define SPALL_AUTO_IMPLEMENTATION
 #include "spall_native_auto.h"
 #else
-#define SPALL_BUFFER_PROFILING
+// #define SPALL_BUFFER_PROFILING
 #define SPALL_BUFFER_PROFILING_GET_TIME() cuik_time_in_nanos()
 #include "spall.h"
 #endif

@@ -18,6 +18,8 @@
 #include <threads.h>
 #endif
 
+#include <cuik_go.h>
+
 #ifdef CUIK_USE_SPALL_AUTO
 #include <spall_native_auto.h>
 static void spall_die(void) {
@@ -200,12 +202,12 @@ int main(int argc, const char** argv) {
     #endif
 
     if (false) {
-        /* CuikGo_Parser parser = {
+        CuikGo_Parser parser = {
             .locate = cuikpp_locate_file,
             .fs     = cuikpp_default_fs,
         };
 
-        cuikgo_parse_file(&parser, args.sources[0]);*/
+        cuikgo_parse_file(&parser, args.sources[0]);
     } else {
         // compile source files
         size_t obj_count = dyn_array_length(args.sources);
@@ -230,7 +232,7 @@ int main(int argc, const char** argv) {
 
     if (args.time_report) {
         uint64_t elapsed = cuik_time_in_nanos() - build_time;
-        printf("\nBuild: %.3f", elapsed / 1000000.0);
+        printf("\nBuild: %.3f ms\n", elapsed / 1000000.0);
     }
 
     if (args.time) {

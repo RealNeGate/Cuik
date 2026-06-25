@@ -257,7 +257,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
                     }
                 }
 
-                TB_ASSERT(br->succ_count >= 2);
+                if (br->succ_count == 1) { __debugbreak(); }
                 if (br->succ_count == 2) {
                     int bits = tb_data_type_bit_size(f->super.module, n->inputs[1]->dt.type);
 

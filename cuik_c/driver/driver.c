@@ -142,35 +142,6 @@ static TB_Arena* get_code_arena(void) {
     return &muh_code_arena;
 }
 
-static void local_opt_func(TB_Function* f, void* arg) {
-    if (ir_worklist == NULL) {
-        // we just leak these btw, i don't care yet
-        ir_worklist = tb_worklist_alloc();
-    }
-
-    if (((TB_Symbol*) f)->tag == TB_SYMBOL_DEAD) {
-        return;
-    }
-
-    Cuik_DriverArgs* args = arg;
-    assert(args->optimize);
-
-    const char* name = ((TB_Symbol*) f)->name;
-    CUIK_TIMED_BLOCK_ARGS("passes", name) {
-        #if TB_ENABLE_LOG
-        TB_Arena *a1 = tb_function_get_arena(f, 0), *a2 = tb_function_get_arena(f, 1);
-        float s1 = tb_arena_current_size(a1), s2 = tb_arena_current_size(a2);
-        #endif
-
-        tb_opt(f, ir_worklist, false);
-
-        #if TB_ENABLE_LOG
-        float e1 = tb_arena_current_size(a1), e2 = tb_arena_current_size(a2);
-        log_debug("%s: arena1=%.1f KiB (%+.1f KiB), arena2=%.1f KiB (%+.1f KiB)", name, e1 / 1024.0f, (e1 - s1) / 1024.0f, e2 / 1024.0f, (e2 - e2) / 1024.0f);
-        #endif
-    }
-}
-
 static void apply_func(TB_Function* f, void* arg) {
     if (ir_worklist == NULL) {
         // we just leak these btw, i don't care yet
@@ -185,7 +156,7 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
-    if (0 && strcmp(name, "func_81") != 0) {
+    if (0 && strcmp(name, "main") != 0) {
         return;
     }
 

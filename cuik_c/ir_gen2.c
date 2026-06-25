@@ -812,13 +812,14 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             if (merge->inputs[1]->input_count == 0) {
                 tb_builder_label_kill(g, merge);
                 return (ValDesc){ RVALUE };
-            } else if (type->kind == KIND_VOID) {
-                return (ValDesc){ RVALUE };
             }
 
             tb_builder_label_set(g, merge);
             emit_loc(tu, g, e->loc.start);
 
+            if (type->kind == KIND_VOID) {
+                return (ValDesc){ RVALUE };
+            }
             TB_Node* vals[2] = { true_val, false_val };
             return (ValDesc){ RVALUE, .n = tb_builder_phi(g, 2, vals) };
         }
@@ -1104,11 +1105,27 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             case STMT_FOR:
             cg_stmt(tu, g, s->for_.body);
             return;
+            case STMT_SWITCH: {
+                TB_Node* old = muh_switch;
+                muh_switch = NULL;
+
+                cg_stmt(tu, g, s->switch_.body);
+
+                muh_switch = old;
+                return;
+            }
+
+            case STMT_DEFAULT:
+            case STMT_CASE:
+            if (muh_switch == NULL) {
+                _Static_assert(offsetof(struct StmtDefault, body) == offsetof(struct StmtCase, body), "bad offsets");
+                cg_stmt(tu, g, s->default_.body);
+                return;
+            }
+            break;
 
             // compiled the same regardless of being the previous code being dead
-            case STMT_DEFAULT:
             case STMT_COMPOUND:
-            case STMT_CASE:
             case STMT_LABEL:
             break;
 

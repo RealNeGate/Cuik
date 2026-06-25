@@ -79,7 +79,7 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
                     nl_hashset_put2(&f->gvn_nodes, k, gvn_hash, gvn_compare);
                 }
 
-                TB_OPTDEBUG(COMPACT)(printf("%s: %p (%u) -> %p (%u)\n", n, n->gvn, k, k->gvn));
+                TB_OPTDEBUG(COMPACT)(printf("%s: %p (%u) -> %p (%u)\n", f->super.name, n, n->gvn, k, k->gvn));
             }
 
             // redo the params list now

@@ -85,6 +85,10 @@ static void set_copy(Set* dst, Set* src) {
     memcpy(dst->data, src->data, ((src->capacity + 63) / 64) * sizeof(uint64_t));
 }
 
+static size_t set_bytes(Set* s) {
+    return ((s->capacity + 63) / 64) * 8;
+}
+
 static size_t set_popcount(Set* s) {
     size_t n = (s->capacity + 63) / 64;
 

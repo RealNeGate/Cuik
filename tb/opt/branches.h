@@ -139,6 +139,13 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                     }
                     TB_ASSERT(n->input_count == expected_phi_in_count - 1);
 
+                    FOR_USERS(u, n) {
+                        TB_Node* phi = USERN(u);
+                        if (phi->type == TB_PHI) {
+                            latuni_set(f, phi, value_of(f, phi));
+                        }
+                    }
+
                     while (pred->user_count > 0) {
                         TB_Node* use_n = USERN(&pred->users[pred->user_count - 1]);
                         int use_i      = USERI(&pred->users[pred->user_count - 1]);
@@ -465,6 +472,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     Lattice* in_ctrl = l->elems[0] = latuni_get(f, n->inputs[0]);
     Lattice* target = latuni_get(f, n->inputs[2]);
     if (in_ctrl != &LIVE_IN_THE_SKY || target == &TOP_IN_THE_SKY) {
+        l->elems[0] = &DEAD_IN_THE_SKY;
         FOR_N(i, 1, c->proj_count) {
             l->elems[i] = &TOP_IN_THE_SKY;
         }

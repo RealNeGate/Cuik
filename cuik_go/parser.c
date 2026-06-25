@@ -19,6 +19,7 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <pthread.h>
 #endif
 
 #ifndef NDEBUG
@@ -1231,6 +1232,8 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
     tb_module_use_cc_gc(ir_mod, (TB_Symbol*) expected_nmt_lut, lvb_trap_fn);
 
     expected_nmt = tb_jit_place_global(jit, expected_nmt_lut);
+    move_to_next_color(false);
+
     log_debug("Placing expected_nmt @ %p", expected_nmt);
 
     void lvb_handler(void);
@@ -1291,6 +1294,8 @@ void cuikgo_parse_file(CuikGo_Parser* ctx, Cuik_Path* filepath) {
             tb_opt(func, ws, false);
 
             TB_FunctionOutput* out = tb_codegen(func, TB_RA_ROGERS, ws, NULL, true);
+            tb_output_print_asm(out, stdout);
+
             void* fnptr = tb_jit_place_function(jit, func);
             if (is_main) {
                 go_stuff = fnptr;

@@ -336,11 +336,6 @@ static Lattice* value_int(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_root(TB_Function* f, TB_Node* n) {
-    // if we reach this point, it means we're somehow processing a function which has no
-    /* if (f->super.module->during_ipsccp && f->ipsccp_args == NULL) {
-        return &TOP_IN_THE_SKY;
-    } */
-
     return f->ipsccp_args;
 }
 
@@ -449,6 +444,10 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     }
 
     Lattice* old = latuni_get(f, n);
+    if (old->tag == LATTICE_INT && old->_int.widen >= INT_WIDEN_LIMIT) {
+        return old;
+    }
+
     if (r->type == TB_AFFINE_LOOP) {
         TB_Node* latch = affine_loop_latch(r);
         if (latch && (TB_IS_INTEGER_TYPE(n->dt) || TB_IS_FLOAT_TYPE(n->dt))) {
@@ -510,21 +509,6 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                         } else {
                             min = TB_MAX(min, old->_int.min);
                             max = TB_MIN(max, old->_int.max);
-
-                            #if 0
-                            if (init->_int.known_zeros) {
-                                tb_print(f);
-                                __debugbreak();
-                            }
-
-                            // if the bottom bits are all zeros in the init & step, we
-                            // want to make sure the phi knows that.
-                            uint64_t step_zeros = *step_ptr;
-                            uint64_t diff = ~(init->_int.known_zeros ^ step_zeros);
-                            int lsb_diff = __builtin_ffsll(diff) - 1;
-                            uint64_t zeros = lsb_diff ? UINT64_MAX >> (64 - lsb_diff) : 0;
-                            #endif
-
                             return lattice_int_widen(f, lattice_gimme_int2(f, min, max, 0, 0, bits), old);
                         }
                     }
@@ -1199,9 +1183,13 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
     // but in practice we should only hit a node like once or twice)
     TB_NodeTypeEnum old_n_type = n->type;
     TB_Node* k = idealize(f, n);
-    DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
+
+    int loop_count = 0;
     while (k != NULL) {
-        DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.rewrites, old_n_type));
+        #if TB_OPTDEBUG_STATS
+        inc_nums(f->stats.rewrites, old_n_type);
+        #endif
+
         TB_OPTLOG(PEEP, printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m"));
 
         // transfer users from n -> k
@@ -1219,7 +1207,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
         // try again, maybe we get another transformation
         old_n_type = n->type;
         k = idealize(f, n);
-        DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 5) { log_warn("%p: we looping a lil too much dawg...", n); });
+        TB_OPTDEBUG(PEEP)(if (++loop_count > 5) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
 
     // idealize ops could kill a node
@@ -1231,19 +1219,18 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
     // pessimistic constant prop
     {
         #ifndef NDEBUG
-        Lattice* old_type = latuni_get(f, n);
+        Lattice* old_type = latuni_get_raw(f, n);
         Lattice* new_type = value_of(f, n);
 
         // monotonic moving up
-        Lattice* glb = lattice_meet(f, old_type, new_type);
-        if (glb != old_type) {
-            // HACK(NeGate): forward progress when making a range into a constant can sometimes get fucky with
-            // the known bits so i'll just hack around that for now.
-            // if (lattice_is_const(old_type) || !lattice_is_const(new_type)) {
-            TB_OPTLOG(PEEP, printf("\n\nFORWARD PROGRESS ASSERT!\n"));
-            TB_OPTLOG(PEEP, printf("  "), print_lattice(old_type), printf("  is not higher than  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
-            TB_ASSERT_MSG(0, "forward progress assert!");
-            // }
+        if (old_type != NULL) {
+            Lattice* glb = lattice_meet(f, old_type, new_type);
+            if (glb != old_type) {
+                TB_OPTLOG(PEEP, printf("\n\nFORWARD PROGRESS ASSERT!\n"));
+                TB_OPTLOG(PEEP, printf("  "), print_lattice(old_type), printf("  is not higher than  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
+                tb_print_dumb_raw(f, &OUT_STREAM_DEFAULT, true);
+                TB_ASSERT_MSG(0, "forward progress assert!");
+            }
         }
         #else
         Lattice* new_type = value_of(f, n);
@@ -1268,7 +1255,10 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
             old_n_type = n->type;
             TB_Node* k = try_as_const(f, n, new_type);
             if (k && k != n) {
-                DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.constants, old_n_type));
+                #if TB_OPTDEBUG_STATS
+                inc_nums(f->stats.constants, old_n_type);
+                #endif
+
                 TB_OPTLOG(PEEP, printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
                 migrate_type(f, n, k);
@@ -1304,7 +1294,10 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
     old_n_type = n->type;
     k = identity(f, n);
     if (n != k) {
-        DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.identities, old_n_type));
+        #if TB_OPTDEBUG_STATS
+        inc_nums(f->stats.identities, old_n_type);
+        #endif
+
         TB_OPTLOG(PEEP, printf(" => \x1b[33m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
         if (n->type == TB_PHI) {
@@ -1318,28 +1311,17 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n, bool see_users) {
         return k;
     }
 
-    // global value numbering
-    #if TB_OPTDEBUG_GVN
-    DynArray(TB_Node*) arr = dyn_array_create(TB_Node*, 64);
-    nl_hashset_for(p, &f->gvn_nodes) {
-        dyn_array_put(arr, *p);
-    }
-    qsort(arr, dyn_array_length(arr), sizeof(TB_Node*), node_sort_cmp);
-    dyn_array_for(i, arr) {
-        printf("  * ");
-        tb_print_dumb_node(NULL, arr[i]);
-        if (gvn_compare(arr[i], n)) {
-            printf(" <-- HERE");
-        }
-        printf(" (hash=%#x)\n", gvn_hash(arr[i]));
-    }
-    #endif
-
     if (can_gvn(n)) {
-        DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_tries++);
+        #if TB_OPTDEBUG_STATS
+        f->stats.gvn_tries++;
+        #endif
+
         k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
         if (k && (k != n)) {
-            DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_hit++);
+            #if TB_OPTDEBUG_STATS
+            f->stats.gvn_hit++;
+            #endif
+
             TB_OPTLOG(PEEP, printf(" => \x1b[95mGVN %%%u\x1b[0m\n", k->gvn));
 
             migrate_type(f, n, k);
@@ -1399,7 +1381,10 @@ int tb_opt_peeps(TB_Function* f) {
             }
 
             if (!IS_PROJ(n) && n->user_count == 0) {
-                DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.killed, n->type));
+                #if TB_OPTDEBUG_STATS
+                inc_nums(f->stats.killed, n->type);
+                #endif
+
                 TB_OPTLOG(PEEP, printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
                 TB_OPTLOG(PEEP, printf(" => \x1b[196mKILL\x1b[0m\n"));
                 if (n->type == TB_SYMBOL_TABLE) {
@@ -1430,14 +1415,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         return false;
     }
 
-    #if 0
-    __debugbreak();
-    Lattice* a = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, 240, .known_zeros = 0xffffffffffffff0f } });
-    Lattice* b = lattice_gimme_int(f, 0, lattice_uint_max(32), 32);
-    Lattice* c = lattice_join(f, a, b);
-    __debugbreak();
-    #endif
-
     TB_ASSERT_MSG(f->root_node, "missing root node");
     f->worklist = ws;
 
@@ -1446,11 +1423,9 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
-    #if TB_OPT_LOG_ENABLED
-    if (1 || strcmp(f->super.name, "pack_table") == 0) {
+    /* if (0 && strcmp(f->super.name, "foo") == 0) {
         f->enable_log = true;
-    }
-    #endif
+    } */
 
     #if TB_OPTDEBUG_STATS
     f->stats.peeps = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
@@ -1480,7 +1455,9 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             }
         }*/
 
-        TB_OPTDEBUG(STATS)(f->stats.initial = worklist_count(ws));
+        #if TB_OPTDEBUG_STATS
+        f->stats.initial = worklist_count(ws);
+        #endif
     }
     TB_OPTLOG(PEEP, log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(f->worklist), f->node_count));
 
