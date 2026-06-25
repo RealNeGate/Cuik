@@ -305,12 +305,12 @@ static void func_opt_task(TPool* tp, void** arg) {
         ipo_worklist = tb_worklist_alloc();
     }
 
-    // if (1 || strcmp(f->super.name, "stbi__bmp_set_mask_defaults") == 0) {
-    log_debug("OPT: %s: function local optimizer", f->super.name);
-    // printf("A %d of %d\n", ++counter_counter, total_counter);
-    tb_opt(f, ipo_worklist, false);
-    // tb_print_dumb(f);
-    // }
+    if (1 || strcmp(f->super.name, "advance") == 0) {
+        log_debug("OPT: %s: function local optimizer", f->super.name);
+        // printf("A %d of %d\n", ++counter_counter, total_counter);
+        tb_opt(f, ipo_worklist, false);
+        // tb_print_dumb(f);
+    }
 
     if (tracker) {
         tracker[0] += 1;
@@ -354,9 +354,7 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
     cuikperf_region_start("Optimizer", NULL);
     mtx_init(&aaa, mtx_plain);
 
-    #if TB_OPTDEBUG_SERVER
-    dbg_startup_server(m);
-    #endif
+    TB_OPTDEBUG(SERVER)(dbg_startup_server(m));
 
     CUIK_TIMED_BLOCK("resize barrier") {
         symbolhs_resize_barrier(&m->symbols);
@@ -512,7 +510,9 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
 
     bool progress;
     CUIK_TIMED_BLOCK("Inliner") {
+        STATS_ENTER(INLINE);
         progress = run_inliner(m, &ipo, &scc, &ws, pool);
+        STATS_EXIT(INLINE);
     }
 
     worklist_free(&ws);

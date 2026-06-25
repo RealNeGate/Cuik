@@ -294,8 +294,6 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
         m->during_ipsccp = false;
         m->ipsccp_tracker[0] = m->ipsccp_tracker[1] = 0;
 
-        // dump_ipsccp(m);
-
         // Transform phase
         //   we can apply the rewrites now, in parallel
         nbhs_for(entry, &m->symbols) {
@@ -317,6 +315,8 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
         while (old = m->ipsccp_tracker[0], old != m->ipsccp_tracker[1]) {
             futex_wait(&m->ipsccp_tracker[0], old);
         }
+
+        // dump_ipsccp(m);
         #else
         abort(); // Unreachable
         #endif
@@ -362,11 +362,21 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
                 *f->cprop = tb_opt_cprop_init(f);
             }
 
+            f->enable_log = true;
             tb_opt_cprop_analyze(f, f->cprop, true);
+            f->enable_log = false;
             f->worklist = NULL;
 
             Lattice* new_type = ipsccp_return_type(f, true);
             if (old_type != new_type) {
+                #if 0
+                printf("%s: ", f->super.name);
+                print_lattice(old_type);
+                printf(" => ");
+                print_lattice(new_type);
+                printf("\n");
+                #endif
+
                 atomic_store_explicit(&f->ipsccp_ret, new_type, memory_order_relaxed);
                 log_debug("OPT: %s: made progress, pushing users!", f->super.name);
 

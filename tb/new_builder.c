@@ -197,9 +197,21 @@ void tb_builder_exit(TB_GraphBuilder* g) {
         tb_builder_label_kill(g, g->start_syms);
     }
 
-    // if the return block was never used, throw it away
     TB_Function* f = g->f;
     TB_Node* ret = f->root_node->inputs[1];
+
+    #if 1
+    // fold unnecessary phis out of the return path
+    if (ret->type == TB_RETURN && ret->inputs[0]->type == TB_REGION) {
+        FOR_N(i, 3, ret->input_count) {
+            if (ret->inputs[i]->type == TB_PHI && ret->inputs[i]->input_count == 2) {
+                subsume_node(f, ret->inputs[i], ret->inputs[i]->inputs[1]);
+            }
+        }
+    }
+    #endif
+
+    // if the return block was never used, throw it away
     if (ret->type == TB_RETURN && ret->inputs[0]->type == TB_REGION && ret->inputs[0]->input_count == 0) {
         tb_kill_node(f, ret->inputs[0]);
 
@@ -1092,6 +1104,7 @@ void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int count, TB_Node** args) 
     size_t i = 3;
     for (; i < count + 3; i++) {
         TB_Node* v = args[i - 3];
+        TB_ASSERT(ret->inputs[i]->type == TB_PHI);
         TB_ASSERT(ret->inputs[i]->dt.raw == v->dt.raw && "datatype mismatch");
         add_input_late(f, ret->inputs[i], v);
     }
@@ -1105,6 +1118,7 @@ void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int count, TB_Node** args) 
         set_input(f, poison, f->root_node, 0);
 
         poison = tb__gvn(f, poison, 0);
+        TB_ASSERT(ret->inputs[i]->type == TB_PHI);
         add_input_late(f, ret->inputs[i], poison);
     }
 

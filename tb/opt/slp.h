@@ -710,15 +710,19 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         FOR_N(i, 0, dyn_array_length(schedule)) {
             VectorOp* op = schedule[i];
             if (op == NULL) { continue; }
+
+            TB_NodeTypeEnum type = op->ops[0]->type;
+            if (type == TB_STORE) {
+                // these are endpoints, they don't need to check.
+                // TODO(NeGate): we should check for interleaving
+                // accesses or stores
+                continue;
+            }
+
             FOR_N(j, 0, op->width) {
                 bool dead = true;
                 bool bad_use = false;
                 FOR_USERS(u, op->ops[j]) {
-                    if (USERN(u)->dt.type == TB_TAG_MEMORY) {
-                        dead = false;
-                        continue;
-                    }
-
                     VectorOp* use_op = nl_table_get(&ops, USERN(u));
                     if (use_op == NULL) {
                         TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize %%%u, user %%%u isn't vector.\n", op->ops[j]->gvn, USERN(u)->gvn));
@@ -840,7 +844,6 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
         }
     }
 
-    // tb_print(f);
     return true;
 }
 

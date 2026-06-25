@@ -68,6 +68,7 @@ static Option options[] = {
     #ifdef CONFIG_HAS_TB
     X(BOOL,     "c",          NULL, flavor,            "output object file"),
     #endif
+    X(STR_LIST, "l",          NULL, libraries,         "TODO"),
     X(BOOL,     "S",          NULL, assembly,          "output assembly to stdout"),
     X(BOOL,     "g",          NULL, debug_info,        "compile with debug information"),
     X(BOOL,     "nochkstk",   NULL, nochkstk,          "disable buffer checks (think of MSVC's /GS-)"),
@@ -334,7 +335,11 @@ CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const
                 len++;
             }
 
-            ArgEntry* e = arg_get_ht(len, first+1);
+            ArgEntry* e = arg_get_ht(1, first+1);
+            if (e == NULL) {
+                e = arg_get_ht(len, first+1);
+            }
+
             if (e == NULL || e->is_short != is_short || options[e->val].type == ARG_ENUM_VAL) {
                 fprintf(stderr, "\x1b[31merror\x1b[0m: could not find match for %s\n", first);
                 return false;

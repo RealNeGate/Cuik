@@ -189,7 +189,6 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         f->scheduled[n->gvn] = bb0;
                         aarray_push(bb0->items, n);
                         aarray_push(pins, n);
-                        // aarray_push(bb0->items, n);
                     } else if (IS_PROJ(n) && !tb_node_is_pinned(n->inputs[0])) {
                         // projections are always pinned but they might refer to nodes which
                         // aren't (x86 division), we can skip these here as they're technically
@@ -403,17 +402,20 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     }
 
                     if (get_lat && n->type != TB_PHI && !NODE_ISA(n, REGION)) {
-                        int use_latency = f->latency[n->gvn];
-                        FOR_N(i, 0, n->input_cap) if (n->inputs[i]) {
-                            TB_Node* in = n->inputs[i];
-                            if (in != NULL && f->scheduled[in->gvn] == curr) {
-                                int edge_latency = get_lat(f, n, i);
+                        int latency = 0;
+                        FOR_USERS(u, n) {
+                            TB_Node* un = USERN(u);
+                            int ui      = USERI(u);
+                            if (f->scheduled[un->gvn] == curr) {
+                                int use_latency  = f->latency[un->gvn];
+                                int edge_latency = get_lat(f, un, ui);
                                 int curr_latency = edge_latency + use_latency;
-                                if (curr_latency > f->latency[in->gvn]) {
-                                    f->latency[in->gvn] = curr_latency;
+                                if (latency < curr_latency) {
+                                    latency = curr_latency;
                                 }
                             }
                         }
+                        f->latency[n->gvn] = latency;
                     }
 
                     if (!pinned) {
@@ -579,30 +581,30 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
             }
         }
 
-        #if TB_OPTDEBUG_DATAFLOW
-        // log live ins and outs
-        aarray_for(i, cfg.blocks) {
-            TB_BasicBlock* bb = &cfg.blocks[i];
+        IF_OPT(DATAFLOW) {
+            // log live ins and outs
+            aarray_for(i, cfg.blocks) {
+                TB_BasicBlock* bb = &cfg.blocks[i];
 
-            printf("BB%zu:\n  live-ins:", i);
-            FOR_N(j, 0, node_count) if (set_get(&bb->live_in, j)) {
-                printf(" %%%zu", j);
+                printf("BB%zu:\n  live-ins:", i);
+                FOR_N(j, 0, node_count) if (set_get(&bb->live_in, j)) {
+                    printf(" %%%zu", j);
+                }
+                printf("\n  live-outs:");
+                FOR_N(j, 0, node_count) if (set_get(&bb->live_out, j)) {
+                    printf(" %%%zu", j);
+                }
+                printf("\n  gen:");
+                FOR_N(j, 0, node_count) if (set_get(&bb->gen, j)) {
+                    printf(" %%%zu", j);
+                }
+                printf("\n  kill:");
+                FOR_N(j, 0, node_count) if (set_get(&bb->kill, j)) {
+                    printf(" %%%zu", j);
+                }
+                printf("\n");
             }
-            printf("\n  live-outs:");
-            FOR_N(j, 0, node_count) if (set_get(&bb->live_out, j)) {
-                printf(" %%%zu", j);
-            }
-            printf("\n  gen:");
-            FOR_N(j, 0, node_count) if (set_get(&bb->gen, j)) {
-                printf(" %%%zu", j);
-            }
-            printf("\n  kill:");
-            FOR_N(j, 0, node_count) if (set_get(&bb->kill, j)) {
-                printf(" %%%zu", j);
-            }
-            printf("\n");
         }
-        #endif
     }
     tb_arena_restore(arena, sp);
 }

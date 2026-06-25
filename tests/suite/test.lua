@@ -90,9 +90,11 @@ for i=1,#x do
         args = "100000"
     end
 
+    local includes = "-I /home/linuxbrew/.linuxbrew/Cellar/csmith/2.3.0/include/csmith-2.3.0/"
+
     print("Testing... "..x[i])
     print("  Clang:")
-    code = os.execute(string.format("clang %s -lm -O1 && %s %s > clang.txt", x[i], exe_name, args))
+    code = os.execute(string.format("clang %s %s -lm -O1 && %s %s > clang.txt", x[i], includes, exe_name, args))
     if code ~= 0 then
         print("    BAD!!!", code)
         goto skip
@@ -102,9 +104,9 @@ for i=1,#x do
     local pass = true
     for j=1,#configs do
         print("  Cuik:", configs[j])
-        code = os.execute(string.format("~/Desktop/Workspace/Cuik/bin/cuik %s %s && %s %s > cuik.txt", x[i], configs[j], exe_name, args))
+        code = os.execute(string.format("~/Desktop/Workspace/Cuik/bin/cuik %s %s %s && %s %s > cuik.txt", x[i], configs[j], includes, exe_name, args))
         if code == 0 then
-            local diff = os.execute("diff clang.txt cuik.txt")
+            local diff = os.execute("git diff --color-words clang.txt cuik.txt")
             if diff ~= 0 then
                 print("    BAD DIFF!!!")
                 pass = false

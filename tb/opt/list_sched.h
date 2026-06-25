@@ -235,6 +235,26 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             dyn_array_pop(ws->items);
         }
 
+        #if 0
+        printf("digraph G {\n");
+        FOR_REV_N(i, 0, cnt) {
+            TB_Node* n = ordered[i];
+            printf("N%d [label=\"%%%u: %s %d\"]\n", n->gvn, n->gvn, tb_node_get_name(n->type), f->latency[n->gvn]);
+
+            int max_depth = 0;
+            if (n->type != TB_PHI && n != top) {
+                FOR_N(i, 0, n->input_cap) {
+                    TB_Node* in = n->inputs[i];
+                    if (in && f->scheduled[in->gvn] == bb) {
+                        printf("N%d -> N%d\n", in->gvn, n->gvn);
+                    }
+                }
+            }
+        }
+        printf("}\n");
+        __debugbreak();
+        #endif
+
         // Cycle detection
         {
             bool cycle = false;
@@ -336,13 +356,13 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
     while (aarray_length(sched.ready) > 0) {
         cuikperf_region_start("step", NULL);
 
-        #if TB_OPTDEBUG_SCHED1
-        printf("  ready [ ");
-        FOR_N(i, 0, aarray_length(sched.ready)) {
-            printf("%%%u ", sched.ready[i].n->gvn);
+        IF_OPT(SCHED1) {
+            printf("  ready [ ");
+            FOR_N(i, 0, aarray_length(sched.ready)) {
+                printf("%%%u ", sched.ready[i].n->gvn);
+            }
+            printf("]\n");
         }
-        printf("]\n");
-        #endif
 
         int idx = best_ready_node(f, ws, bb, end, &sched);
         if (idx < 0) {

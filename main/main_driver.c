@@ -232,7 +232,7 @@ int main(int argc, const char** argv) {
 
     if (args.time_report) {
         uint64_t elapsed = cuik_time_in_nanos() - build_time;
-        printf("\nBuild: %.3f", elapsed / 1000000.0);
+        printf("\nBuild: %.3f ms\n", elapsed / 1000000.0);
     }
 
     if (args.time) {

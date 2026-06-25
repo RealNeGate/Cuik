@@ -505,6 +505,7 @@ static void print_extra(OutStream* s, TB_Node* n) {
     }
 }
 
+
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
     int vreg_id = ctx->vreg_map[n->gvn];
     if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
@@ -542,15 +543,11 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
     } else if (n->type == TB_PROJ) {
         printf("  proj ");
         print_pretty_edge(ctx, n);
-        printf(" = ");
-        print_pretty_edge(ctx, n->inputs[0]);
-        printf(", %d", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
+        printf(" = %%%u.%d", n->inputs[0]->gvn, TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
     } else if (n->type == TB_MACH_PROJ) {
         printf("  proj ");
         print_pretty_edge(ctx, n);
-        printf(" = ");
-        print_pretty_edge(ctx, n->inputs[0]);
-        printf(", %d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
+        printf(" = %%%u.%d ", n->inputs[0]->gvn, TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
         tb__print_regmask(&OUT_STREAM_DEFAULT, TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def);
     } else if (n->type == TB_MACH_SYMBOL) {
         printf("  mach_symbol %%%u", n->gvn);
@@ -2638,7 +2635,11 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 }
 
 static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) {
-    return false;
+    if (a->type == TB_x86_call || b->type == TB_x86_call) {
+        return false;
+    }
+
+    return true;
 }
 
 // Latency regardless of the operand

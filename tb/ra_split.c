@@ -110,7 +110,7 @@ static TB_Node* find_existing_copy(Ctx* ctx, Rogers* ra, TB_BasicBlock* bb, TB_N
 
     while (i > 0 && bb->items[i]->type == TB_MACH_COPY) {
         RegMask* cpy_rm = TB_NODE_GET_EXTRA_T(bb->items[i], TB_NodeMachCopy)->def;
-        if (tb__reg_mask_meet(ctx, cpy_rm, rm) == rm) {
+        if (tb__reg_mask_meet(ctx, cpy_rm, rm) == rm && bb->items[i]->inputs[1] == src) {
             return bb->items[i];
         }
         i--;
@@ -189,6 +189,15 @@ static bool has_immediate_use(TB_Node* n, TB_Node* of) {
     return false;
 }
 
+static void mark_stretched(Ctx* ctx, Rogers* ra, RegSplitter* splitter, TB_Node* n) {
+    if (ctx->vreg_map[n->gvn] > 0) {
+        VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
+        vreg->class = 0;
+        vreg->assigned = -1;
+        dyn_array_put(ra->prio_alloc, n);
+    }
+}
+
 static TB_Node* insert_reload(Ctx* ctx, Rogers* ra, RegSplitter* splitter, TB_BasicBlock* bb, TB_Node** defs, TB_Node** bb_defs, int spill, uint64_t W, size_t* insert_pos) {
     TB_Function* f = ctx->f;
     size_t bb_id = bb - ctx->cfg.blocks;
@@ -213,11 +222,18 @@ static TB_Node* insert_reload(Ctx* ctx, Rogers* ra, RegSplitter* splitter, TB_Ba
             if (in->gvn < splitter->old_node_count) {
                 size_t cnt;
                 coalesce_set_array(ctx, ra, &in, &cnt);
-                if (cnt <= 1) { continue; }
+                if (cnt <= 1) {
+                    mark_stretched(ctx, ra, splitter, in);
+                    continue;
+                }
             }
             // We can stretch the initial un-copied form for better results
             if (is_spill_store(in)) {
                 in = in->inputs[1];
+            }
+
+            if (in->gvn < splitter->old_node_count) {
+                mark_stretched(ctx, ra, splitter, in);
             }
 
             if (f->scheduled[in->gvn] != bb) {
@@ -860,7 +876,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
                         if (spill_map_get2(&splitter.spill_map, bb->items[j]) != spill) {
                             if (def == NULL) {
                                 TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%zu: wasn't live in HRP region\n", bb_id, spill));
-                            } else if (!can_remat(ctx, def)) {
+                            } else if (!can_remat(ctx, def) || is_reload(def)) {
                                 size_t t = j;
                                 bb_defs[spill] = insert_spill(ctx, ra, &splitter, bb, def, spill, &t);
                                 j += t <= j;
@@ -934,7 +950,8 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
                                 TB_ASSERT(n->user_count == 0);
                             } else {
                                 // convert copy into reload
-                                if (def->type == TB_MACH_COPY && reg_mask_is_stack(TB_NODE_GET_EXTRA_T(def, TB_NodeMachCopy)->use)) {
+                                if (!is_spill_store(n) && is_reload(def)) {
+                                    mark_stretched(ctx, ra, &splitter, def->inputs[1]);
                                     dst->use = TB_NODE_GET_EXTRA_T(def, TB_NodeMachCopy)->use;
                                     set_input(f, n, def->inputs[1], k);
                                     continue;

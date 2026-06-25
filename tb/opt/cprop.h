@@ -776,9 +776,12 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
     }
 }
 
+static int dbg_time = 0;
 CProp tb_opt_cprop_init(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
     TB_OPTLOG(SCCP, tb_print(f));
+
+dbg_time++;
 
     // disjoint-set for the eqclasses
     CProp cprop;

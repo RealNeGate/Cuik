@@ -156,11 +156,11 @@ static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, ArenaArray
             print_pretty(ctx, n);
         }
 
-        #if BUNDLE_INST_MAX > 1
-        printf(" ;;\n");
-        #else
-        printf("\n");
-        #endif
+        if (BUNDLE_INST_MAX > 1) {
+            printf(" ;;\n");
+        } else {
+            printf("\n");
+        }
     }
 
     bundle_emit(ctx, e, b);
@@ -475,9 +475,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     tb_print_dumb(f);
     #endif
 
-    #if TB_OPTDEBUG_SERVER
-    dbg_startup_server(f->super.module);
-    #endif
+    TB_OPTDEBUG(SERVER)(dbg_startup_server(f->super.module));
 
     if (0) {
         static float dst[256];
@@ -629,6 +627,12 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         set_clear(&visited);
         aarray_clear(walker);
 
+        // reverse
+        size_t last = dyn_array_length(ws->items) - 1;
+        FOR_N(i, 0, dyn_array_length(ws->items) / 2) {
+            SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
+        }
+
         /* SWAP(TB_Arena, f->arena, f->tmp_arena);
         f->node_count = 0;
         f->dead_node_bytes = 0;
@@ -638,12 +642,11 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
         // as we do instruction selection, the graph will have small trees introduced, there's
         // no need to check patterns for anything by the root of the tree.
-        while (worklist_count(ws)) {
-            int start = worklist_count(ws);
-            TB_Node* n = ws->items[start - 1];
+        size_t head = 0;
+        while (head < worklist_count(ws)) {
+            size_t tail = worklist_count(ws);
+            TB_Node* n = ws->items[head++];
             if (n->user_count == 0 && !IS_PROJ(n)) {
-                worklist_pop(ws);
-
                 tb__gvn_remove(f, n);
                 tb_kill_node(f, n);
                 continue;
@@ -716,8 +719,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
             cuikperf_region_start("I", NULL);
             // kill any nodes on the right side of the node, preserve the rest and reprocess them
-            size_t read_head  = start;
-            size_t write_head = start-1;
+            size_t read_head  = tail;
+            size_t write_head = tail;
             while (read_head < worklist_count(ws)) {
                 TB_Node* k = ws->items[read_head];
                 if (k->user_count == 0 && !IS_PROJ(k)) {
@@ -1068,7 +1071,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
             // mark label
-            TB_OPTDEBUG(EMIT)(printf(".bb%d:\n", id));
+            TB_OPTDEBUG(EMIT)(printf("BB%d:\n", id));
 
             TB_Node* prev_n = NULL;
             aarray_for(i, bb->items) {
@@ -1095,13 +1098,16 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         // if n refers to prev then we're dependent, if not then we can't
                         // be, just because there's nothing between them that could make
                         // the connection more indirect.
-                        TB_Node* prev = bundle.arr[bundle.count - 1];
                         FOR_N(i, 0, n->input_count) {
-                            if (n->inputs[i] == prev) {
-                                legal = false;
-                                break;
+                            FOR_N(j, 0, bundle.count) {
+                                TB_Node* prev = bundle.arr[j];
+                                if (n->inputs[i] == prev) {
+                                    legal = false;
+                                    goto exit_loop;
+                                }
                             }
                         }
+                        exit_loop:;
                     }
                 }
 

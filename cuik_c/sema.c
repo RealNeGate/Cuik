@@ -515,7 +515,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
     return 1;
 }
 
-static size_t sema_infer_initializer_array_count(TranslationUnit* tu, InitNode* root_node) {
+static size_t sema_infer_initializer_array_count(TranslationUnit* tu, InitNode* root_node, bool is_char_array) {
     size_t cursor = 0, max = 0;
     for (InitNode* n = root_node->kid; n != NULL; n = n->next) {
         if (n->mode == INIT_MEMBER) {
@@ -526,7 +526,7 @@ static size_t sema_infer_initializer_array_count(TranslationUnit* tu, InitNode* 
             if (cursor > max) max = cursor;
         } else if (n->mode == INIT_NONE) {
             Subexpr* e = get_root_subexpr(n->expr);
-            if (e != NULL && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
+            if (e != NULL && is_char_array && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
                 Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, n->expr));
                 cursor += src ? src->array.count : 1;
             } else {
@@ -923,8 +923,9 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                     type_layout2(NULL, &tu->tokens, cuik_canonical_type(t->array.of));
                 }
 
+                bool is_char_array  = cuik_canonical_type(t->array.of)->kind == KIND_CHAR;
                 int old_array_count = t->array.count;
-                int new_array_count = sema_infer_initializer_array_count(tu, e->init.root);
+                int new_array_count = sema_infer_initializer_array_count(tu, e->init.root, is_char_array);
 
                 // if it's 0, then it's unsized and anything goes
                 if (old_array_count != 0) {

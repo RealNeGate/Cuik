@@ -472,6 +472,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     Lattice* in_ctrl = l->elems[0] = latuni_get(f, n->inputs[0]);
     Lattice* target = latuni_get(f, n->inputs[2]);
     if (in_ctrl != &LIVE_IN_THE_SKY || target == &TOP_IN_THE_SKY) {
+        l->elems[0] = &DEAD_IN_THE_SKY;
         FOR_N(i, 1, c->proj_count) {
             l->elems[i] = &TOP_IN_THE_SKY;
         }

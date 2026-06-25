@@ -495,7 +495,6 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
         }
         state->sealed = true;
     }
-    state->walked_once = true;
 
     #if TB_OPTDEBUG_MEMORY
     if (f->enable_log) {
@@ -748,6 +747,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
         }
         curr = next;
     }
+    state->walked_once = true;
 
     IF_OPT(MEMORY) {
         printf("  FINAL  [ ");

@@ -444,7 +444,12 @@ for k,v in pairs(targets) do
         arch_features= v.arch_features
         arch_isel()
 
-        local path = string.format("tb/%s/%s_gen.h", k, k)
+        local proper_name = k
+        if proper_name == "x86" then -- HACK!!!
+            proper_name = "x64"
+        end
+
+        local path = string.format("tb/%s/%s_gen.h", proper_name, proper_name)
         f = io.open(path, "w")
         f:write(table.concat(lines, "\n"))
         f:close()
