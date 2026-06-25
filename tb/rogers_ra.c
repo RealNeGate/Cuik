@@ -168,7 +168,7 @@ static double rogers_get_spill_cost(Ctx* restrict ctx, Rogers* restrict ra, VReg
 
 static void rogers_print_vreg(Ctx* restrict ctx, Rogers* restrict ra, VReg* vreg) {
     double cost = rogers_get_spill_cost(ctx, ra, vreg);
-    printf("# V%-4"PRIdPTR" cost=%.2f area=%lu bias=%.2f ", vreg - ctx->vregs, cost, vreg->area, vreg->spill_bias);
+    printf("# V%-4"PRIdPTR" cost=%.2f area=%"PRIu64" bias=%.2f ", vreg - ctx->vregs, cost, vreg->area, vreg->spill_bias);
     tb__print_regmask(&OUT_STREAM_DEFAULT, vreg->mask);
     printf("\n");
 }
@@ -1301,7 +1301,7 @@ static SplitDecision choose_best_spill(Ctx* restrict ctx, Rogers* restrict ra, T
             best_gvn = gvn;
         } else {
             if (score == INFINITY) {
-                TB_OPTDEBUG(REGALLOC)(printf("#     %%%u is a bad pick! %f %lu\n", gvn, score, vreg->area));
+                TB_OPTDEBUG(REGALLOC)(printf("#     %%%u is a bad pick! %f %"PRIu64"\n", gvn, score, vreg->area));
             } else {
                 TB_OPTDEBUG(REGALLOC)(printf("#     %%%u is a bad pick! %f\n", gvn, score));
             }

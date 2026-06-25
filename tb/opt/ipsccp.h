@@ -362,9 +362,7 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
                 *f->cprop = tb_opt_cprop_init(f);
             }
 
-            f->enable_log = true;
             tb_opt_cprop_analyze(f, f->cprop, true);
-            f->enable_log = false;
             f->worklist = NULL;
 
             Lattice* new_type = ipsccp_return_type(f, true);

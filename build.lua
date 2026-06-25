@@ -194,12 +194,17 @@ else
     end
 end
 
+local nasm_fmt = "elf64"
+if is_windows then
+    nasm_fmt = "win64"
+end
+
 rules({
     { name = "cc",   command = cc.." $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
     { name = "cc2",  command = "cuik $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
     { name = "ld",   command = ld.." $in $flags$out",                  description = "LINK $out" },
     { name = "ld2",  command = "cuik -link $in $flags -out:$out",          description = "LINK $out" },
-    { name = "nasm", command = "nasm $in -f elf64 -o $out",                description = "NASM $out" },
+    { name = "nasm", command = "nasm $in -f "..nasm_fmt.." -o $out",                description = "NASM $out" },
     { name = "run",  command = "$cmd",                                     description = "$cmd"      },
     { name = "meta", command = arg[-1].." $script $out $in",               description = "META $out" }
 })
@@ -263,6 +268,7 @@ else
     end
 end
 
+local to_mod = {}
 local function walk(name)
     if visited[name] then
         return
@@ -284,6 +290,7 @@ local function walk(name)
     -- process self
     for i=1,#m.srcs do
         table.insert(srcs, m.srcs[i])
+        to_mod[m.srcs[i]] = name
     end
 end
 
@@ -328,6 +335,8 @@ for i,f in ipairs(srcs) do
     local extra = ""
     if f == "cuik_pp/lexer.c" then
         extra = " | cuik_pp/dfa.h"
+    elseif to_mod[f] == "tb" then
+        extra = " | tb/tb_gen_private.h include/tb_gen_public.h"
     end
 
     table.insert(lines, string.format("build %s: cc %s%s", out, f, extra))

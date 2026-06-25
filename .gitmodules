@@ -3,4 +3,4 @@
 	url = https://github.com/microsoft/mimalloc
 [submodule "NBHM"]
 	path = NBHM
-	url = git@github.com:RealNeGate/NBHM.git
+	url = https://github.com/RealNeGate/NBHM

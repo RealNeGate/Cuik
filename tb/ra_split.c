@@ -313,21 +313,21 @@ static void dump_split_state(TB_Node** defs, int bb_id, int num_spills, uint64_t
 
 // Index where we next start or end an HRP region
 static int nearest_hrp_event(Ctx* ctx, Rogers* ra, int bb_id, int j) {
-    int near = INT_MAX;
+    int nearest = INT_MAX;
     FOR_N(class, 0, ctx->num_classes) {
         int start = ra->hrp[bb_id].start[class];
         int end   = ra->hrp[bb_id].end[class];
 
-        if (start >= j && near > start) {
-            near = start;
+        if (start >= j && nearest > start) {
+            nearest = start;
         }
 
-        if (start >= 0 && end >= j && near > end) {
-            near = end;
+        if (start >= 0 && end >= j && nearest > end) {
+            nearest = end;
         }
     }
 
-    return near;
+    return nearest;
 }
 
 static uint64_t update_phi_edges(Ctx* ctx, Rogers* ra, RegSplitter* splitter, uint64_t W, TB_Node** defs, TB_Node** phis, int bb_id, int pred_id, uint64_t all_spills, int pred_path, bool backedge) {
@@ -589,7 +589,7 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
             uint32_t vreg_id = splits[i].target;
             double cost = rogers_get_spill_cost(ctx, ra, &ctx->vregs[vreg_id]);
 
-            printf("  V%-5u %f %lu", vreg_id, cost, ctx->vregs[vreg_id].area);
+            printf("  V%-5u %f %"PRIu64, vreg_id, cost, ctx->vregs[vreg_id].area);
             if ((spill_aggro >> i) & 1) {
                 printf(" (SPILL AGGRO)");
             }
