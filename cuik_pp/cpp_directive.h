@@ -78,7 +78,7 @@ static DirectiveResult cpp__warning(Cuik_CPP* restrict ctx, CPPStackSlot* restri
 
 static DirectiveResult cpp__error(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot) {
     SourceRange r = get_pp_tokens_until_newline(ctx, slot);
-    diag_warn(&ctx->tokens, r, "TODO");
+    diag_err(&ctx->tokens, r, "TODO");
     return DIRECTIVE_SUCCESS;
 }
 

@@ -252,6 +252,12 @@ void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
 }
 
 static void linker_job_find_lib(TPool* pool, void** args) {
+    if (!linker_thread_init) {
+        linker_thread_init = true;
+        tb_arena_create(&linker_perm_arena, "LinkerPerm");
+        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
+    }
+
     TB_Linker* l = args[0];
     char* str = args[1];
     uint64_t t = (uint64_t) args[2];
@@ -906,9 +912,11 @@ void tb_linker_export_pieces(TB_Linker* l) {
             dyn_array_for(j, sections[i]->pieces) {
                 TB_LinkerSectionPiece* p = sections[i]->pieces[j];
                 if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind != PIECE_BSS) {
+                    cuikperf_region_start("submit", NULL);
                     void* args[2] = { l, p };
                     tpool_add_task2(l->jobs.pool, tb_linker_export_piece, 2, args);
                     c++;
+                    cuikperf_region_end();
                 }
             }
 
@@ -920,6 +928,7 @@ void tb_linker_export_pieces(TB_Linker* l) {
         futex_wait_eq(&l->jobs.done, l->jobs.count);
         #endif
     } else {
+        cuikperf_region_start("export pieces", NULL);
         dyn_array_for(i, sections) {
             dyn_array_for(j, sections[i]->pieces) {
                 TB_LinkerSectionPiece* p = sections[i]->pieces[j];
@@ -929,6 +938,7 @@ void tb_linker_export_pieces(TB_Linker* l) {
                 }
             }
         }
+        cuikperf_region_end();
     }
 }
 

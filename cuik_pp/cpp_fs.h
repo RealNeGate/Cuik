@@ -26,7 +26,7 @@ static InternalFile* find_internal_file(const char* name) {
 bool cuikpp_locate_file(void* user_data, const Cuik_Path* restrict input, Cuik_Path* output, bool case_insensitive) {
     /* InternalFile* f = cuik__ifiles_root;
     for (; f != NULL; f = f->next) {
-        printf("FILE %s\n%s\n", f->name, f->data);
+    printf("FILE %s\n%s\n", f->name, f->data);
     }
     __debugbreak(); */
 
@@ -39,7 +39,10 @@ bool cuikpp_locate_file(void* user_data, const Cuik_Path* restrict input, Cuik_P
             return false;
         }
     } else {
-        cuikfs_canonicalize(output, input->data, case_insensitive);
+        if (!cuikfs_canonicalize(output, input->data, case_insensitive)) {
+            return false;
+        }
+
         cuikperf_region_start("exists", output->data);
         bool f = cuikfs_exists(output->data);
         cuikperf_region_end();
