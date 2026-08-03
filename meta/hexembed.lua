@@ -6,7 +6,7 @@ out:write[[
 
 typedef struct InternalFile InternalFile;
 struct InternalFile {
-    InternalFile* next;
+    const InternalFile* next;
     const char* name;
     size_t size;
     char data[];
@@ -27,7 +27,7 @@ for i=2,#arg do
         extra = string.format(", .next = &cuik__ifiles%d", i - 3)
     end
 
-    out:write(string.format("InternalFile cuik__ifiles%d = { .name = \"%s\", .size = %d%s, .data = {\n", i - 2, f, #buf, extra))
+    out:write(string.format("const InternalFile cuik__ifiles%d = { .name = \"%s\", .size = %d%s, .data = {\n", i - 2, f, #buf, extra))
     local i = 1
     while i <= #buf do
         local j = math.min(i + 16, #buf)
@@ -44,6 +44,6 @@ end
 
 if #arg >= 2 then
     local n = #arg - 2
-    out:write("InternalFile* cuik__ifiles_root = &cuik__ifiles"..n..";\n")
+    out:write("const InternalFile* cuik__ifiles_root = &cuik__ifiles"..n..";\n")
 end
 out:close()

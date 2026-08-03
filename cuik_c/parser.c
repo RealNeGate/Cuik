@@ -66,7 +66,7 @@ static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s
 //      /* do parse work */
 //  }
 #define LOCAL_SCOPE \
-for (int i = (cuik_scope_open(parser->symbols), cuik_scope_open(parser->tags), 0); i != 1; i = 1, cuik_scope_close(parser->tags), cuik_scope_close(parser->symbols))
+    for (int i = (cuik_scope_open(parser->symbols), cuik_scope_open(parser->tags), 0); i != 1; i = 1, cuik_scope_close(parser->tags), cuik_scope_close(parser->symbols))
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
@@ -381,7 +381,9 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
                 if (current_bit_offset + bit_width > bits_in_region) {
                     current_bit_offset = 0;
 
-                    offset = align_up(offset + member_size, member_align);
+                    // advance past last word
+                    offset = align_up(offset + last_member_size, member_align);
+                    member->offset = is_union ? 0 : offset;
                 }
 
                 member->bit_offset = current_bit_offset;

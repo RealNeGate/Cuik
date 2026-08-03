@@ -158,9 +158,9 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_QualType qsrc, Cuik_Qu
 
     // Compare qualifiers
     /*if (cuik_get_quals(qsrc) != cuik_get_quals(qdst)) {
-        // TODO(NeGate): fix up the qualifier printing in the diag_err
-        diag_err(&tu->tokens, src_e->loc, "could not implicitly convert type %!T into %!T (qualifier mismatch)", src, dst);
-        return false;
+    // TODO(NeGate): fix up the qualifier printing in the diag_err
+    diag_err(&tu->tokens, src_e->loc, "could not implicitly convert type %!T into %!T (qualifier mismatch)", src, dst);
+    return false;
     }*/
 
     // implictly convert functions & arrays into pointers
@@ -302,8 +302,8 @@ static InitSearchResult get_next_member_in_type(Cuik_Type* type, int target, int
 
             int base = *base_index;
             InitSearchResult search = get_next_member_in_type(
-                type, target, base_index, offset + member->offset, stop_at_struct
-            );
+                                                              type, target, base_index, offset + member->offset, stop_at_struct
+                                                              );
 
             if (search.member != NULL) {
                 if (type->kind == KIND_UNION) search.next_index = base + compute_initializer_bounds(type);
@@ -373,6 +373,10 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             InitSearchResult search = get_next_member_in_type(parent, *cursor - 1, &index, 0, node->kids_count > 0);
             assert(search.member != NULL);
 
+            node->bit_offset  = search.member->bit_offset;
+            node->bit_width   = search.member->bit_width;
+            node->is_bitfield = search.member->is_bitfield;
+
             type = cuik_canonical_type(search.member->type);
             relative_offset = search.offset;
             *cursor = search.next_index;
@@ -439,8 +443,8 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             }
         } else {
             /*if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-              diag_err(&tu->tokens, e->loc, "Cannot write initializer for struct/union without surrounding brackets");
-              return node + 1;
+            diag_err(&tu->tokens, e->loc, "Cannot write initializer for struct/union without surrounding brackets");
+            return node + 1;
             }*/
             assert(node->expr);
 
@@ -956,8 +960,8 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
 
                 int arg_count = e->call.param_count;
                 Cuik_Type* ty = sema_builtin(
-                    tu, _, tu->target->builtin_func_map[search].v, arg_count + 1, args
-                );
+                                             tu, _, tu->target->builtin_func_map[search].v, arg_count + 1, args
+                                             );
 
                 return cuik_uncanonical_type(ty);
             } else if (target->op == EXPR_CONSTRUCTOR) {
@@ -1362,10 +1366,10 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
         case EXPR_CMPLT:
         case EXPR_CMPLE: {
             Cuik_QualType type = cuik_uncanonical_type(get_common_type(
-                    &tu->types,
-                    cuik_canonical_type(GET_TYPE(0)),
-                    cuik_canonical_type(GET_TYPE(1))
-                ));
+                                                                       &tu->types,
+                                                                       cuik_canonical_type(GET_TYPE(0)),
+                                                                       cuik_canonical_type(GET_TYPE(1))
+                                                                       ));
 
             SET_CAST(0, type);
             SET_CAST(1, type);

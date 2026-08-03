@@ -14,8 +14,8 @@
 #include <tb.h>
 #endif
 
-#define NBHS_REALLOC cuik_realloc
-#include <nbhs.h>
+#define NBHM_IS_SET
+#include <nbhm.h>
 
 #if 0 // CONFIG_HAS_TB
 #include "../tb/tb_internal.h"

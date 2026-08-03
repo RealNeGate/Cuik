@@ -52,6 +52,8 @@ function process_test(i)
     local args     = ""
     if x[i] == "nbody.c" then
         args = "100000"
+    elseif x[i] == "whetstone.c" then
+        args = ""
     end
 
     -- Generate golden test results, if these fail then we skip the test later

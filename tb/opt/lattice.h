@@ -100,8 +100,9 @@ static bool latticehs_cmp(const void* a, const void* b) {
     }
 }
 
-#define NBHS_FN(n) latticehs_ ## n
-#include <nbhs.h>
+#define NBHM_IS_SET
+#define NBHM_FN(n) latticehs_ ## n
+#include <nbhm.h>
 
 static Lattice* lattice_intern(TB_Function* f, Lattice l) {
     assert(l.tag != LATTICE_TUPLE);
@@ -121,31 +122,36 @@ static Lattice* lattice_intern(TB_Function* f, Lattice l) {
     return interned;
 }
 
+static void latticehs_raw_insert(TB_Module* m, Lattice* l) {
+    Lattice* interned = latticehs_intern(&m->lattice_elements, l);
+    assert(interned == l);
+}
+
 void tb__lattice_init(TB_Module* m) {
     m->lattice_elements = nbhs_alloc(256);
 
-    latticehs_raw_insert(&m->lattice_elements, &BOT_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &TOP_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &LIVE_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &DEAD_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &NULL_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &XNULL_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &FLT32_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &FLT64_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &NAN32_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &NAN64_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &XNAN32_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &XNAN64_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &MEM_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &ANYPTR_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &ALLPTR_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &FALSE_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &TRUE_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &BOOL_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &I8_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &I16_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &I32_IN_THE_SKY);
-    latticehs_raw_insert(&m->lattice_elements, &I64_IN_THE_SKY);
+    latticehs_raw_insert(m, &BOT_IN_THE_SKY);
+    latticehs_raw_insert(m, &TOP_IN_THE_SKY);
+    latticehs_raw_insert(m, &LIVE_IN_THE_SKY);
+    latticehs_raw_insert(m, &DEAD_IN_THE_SKY);
+    latticehs_raw_insert(m, &NULL_IN_THE_SKY);
+    latticehs_raw_insert(m, &XNULL_IN_THE_SKY);
+    latticehs_raw_insert(m, &FLT32_IN_THE_SKY);
+    latticehs_raw_insert(m, &FLT64_IN_THE_SKY);
+    latticehs_raw_insert(m, &NAN32_IN_THE_SKY);
+    latticehs_raw_insert(m, &NAN64_IN_THE_SKY);
+    latticehs_raw_insert(m, &XNAN32_IN_THE_SKY);
+    latticehs_raw_insert(m, &XNAN64_IN_THE_SKY);
+    latticehs_raw_insert(m, &MEM_IN_THE_SKY);
+    latticehs_raw_insert(m, &ANYPTR_IN_THE_SKY);
+    latticehs_raw_insert(m, &ALLPTR_IN_THE_SKY);
+    latticehs_raw_insert(m, &FALSE_IN_THE_SKY);
+    latticehs_raw_insert(m, &TRUE_IN_THE_SKY);
+    latticehs_raw_insert(m, &BOOL_IN_THE_SKY);
+    latticehs_raw_insert(m, &I8_IN_THE_SKY);
+    latticehs_raw_insert(m, &I16_IN_THE_SKY);
+    latticehs_raw_insert(m, &I32_IN_THE_SKY);
+    latticehs_raw_insert(m, &I64_IN_THE_SKY);
 }
 
 static bool lattice_is_const(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
@@ -609,4 +615,3 @@ static Lattice* lattice_join_spec(TB_Function* f, Lattice* a, Lattice* b) {
 static bool lattice_at_least(TB_Function* f, Lattice* a, Lattice* b) {
     return lattice_meet(f, a, b) == b;
 }
-

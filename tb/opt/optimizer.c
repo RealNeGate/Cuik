@@ -371,20 +371,20 @@ static Lattice* value_ptr_vals(TB_Function* f, TB_Node* n) {
 }
 
 /* static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
-    TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
-    TB_DataType dt = n->dt;
-    TB_ASSERT(TB_IS_INTEGER_TYPE(dt));
+TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
+TB_DataType dt = n->dt;
+TB_ASSERT(TB_IS_INTEGER_TYPE(dt));
 
-    LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
-    FOR_N(i, 1, n->input_count) {
-        TB_LookupEntry* e = &l->entries[i];
-        a.min = TB_MIN(a.min, l->entries[i].val);
-        a.max = TB_MAX(a.max, l->entries[i].val);
-        a.known_zeros &=  l->entries[i].val;
-        a.known_ones  &= ~l->entries[i].val;
-    }
+LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
+FOR_N(i, 1, n->input_count) {
+TB_LookupEntry* e = &l->entries[i];
+a.min = TB_MIN(a.min, l->entries[i].val);
+a.max = TB_MAX(a.max, l->entries[i].val);
+a.known_zeros &=  l->entries[i].val;
+a.known_ones  &= ~l->entries[i].val;
+}
 
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = a });
+return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = a });
 } */
 
 static Lattice* value_region(TB_Function* f, TB_Node* n) {
@@ -517,10 +517,10 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
         }
     } else if (r->type == TB_NATURAL_LOOP) {
         /* if (TB_IS_FLOAT_TYPE(n->dt) && (n->inputs[2]->type == TB_FADD || n->inputs[2]->type == TB_FSUB)) {
-            Lattice* init = latuni_get(f, n->inputs[1]);
-            Lattice* step = latuni_get(f, n->inputs[2]->inputs[2]);
+        Lattice* init = latuni_get(f, n->inputs[1]);
+        Lattice* step = latuni_get(f, n->inputs[2]->inputs[2]);
 
-            __debugbreak();
+        __debugbreak();
         } */
     }
 
@@ -554,10 +554,10 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
             if (new_l._int.widen >= INT_WIDEN_LIMIT) {
                 int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
                 return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
-                            .min         =  lattice_int_min(bits),
-                            .max         =  lattice_int_max(bits),
-                            .widen       =  INT_WIDEN_LIMIT
-                        } });
+                                      .min         =  lattice_int_min(bits),
+                                      .max         =  lattice_int_max(bits),
+                                      .widen       =  INT_WIDEN_LIMIT
+                                      } });
             }
 
             return lattice_intern(f, new_l);
@@ -955,7 +955,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                 } else if (IS_PROJ(use_n) || use_n->type == TB_SYMBOL_TABLE) {
                     TB_Node* replacement = use_n->dt.type == TB_TAG_CONTROL
                         ? dead
-                        : make_poison(f, use_n->dt);
+                    : make_poison(f, use_n->dt);
 
                     subsume_node(f, use_n, replacement);
                     mark_node(f, replacement);
@@ -1424,7 +1424,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     }
 
     /* if (0 && strcmp(f->super.name, "foo") == 0) {
-        f->enable_log = true;
+    f->enable_log = true;
     } */
 
     #if TB_OPTDEBUG_STATS
@@ -1449,10 +1449,10 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         // just leads to getting to the important bits first in practice (RPO would be better but
         // more work to perform)
         /*CUIK_TIMED_BLOCK("reversing") {
-            size_t last = dyn_array_length(ws->items) - 1;
-            FOR_N(i, 0, dyn_array_length(ws->items) / 2) {
-                SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
-            }
+        size_t last = dyn_array_length(ws->items) - 1;
+        FOR_N(i, 0, dyn_array_length(ws->items) / 2) {
+        SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
+        }
         }*/
 
         #if TB_OPTDEBUG_STATS
@@ -1543,7 +1543,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_Worklist tmp_ws = { 0 };
             worklist_alloc(&tmp_ws, f->node_count);
 
-            TB_OPTLOG(PEEP, tb_print(f));
+            TB_OPTDEBUG(LOOP)(tb_print(f));
 
             ////////////////////////////////
             // 1. Loop finding

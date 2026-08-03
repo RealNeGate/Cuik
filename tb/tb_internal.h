@@ -58,8 +58,8 @@
 #include <hash_map.h>
 #include <new_hash_map.h>
 
-#define NBHS_REALLOC cuik_realloc
-#include <nbhs.h>
+#define EBR_REALLOC(ptr, size) cuik_realloc(ptr, size)
+#include <nbhm.h>
 
 #include <perf.h>
 #include <log.h>
@@ -116,16 +116,16 @@
 
 #if defined(_WIN32) && !defined(__GNUC__)
 #define tb_panic(...)                     \
-do {                                      \
-    printf(__VA_ARGS__);                  \
-    __fastfail(FAST_FAIL_FATAL_APP_EXIT); \
-} while (0)
+    do {                                      \
+        printf(__VA_ARGS__);                  \
+        __fastfail(FAST_FAIL_FATAL_APP_EXIT); \
+    } while (0)
 #else
 #define tb_panic(...)                     \
-do {                                      \
-    printf(__VA_ARGS__);                  \
-    abort();                              \
-} while (0)
+    do {                                      \
+        printf(__VA_ARGS__);                  \
+        abort();                              \
+    } while (0)
 #endif
 
 #ifndef COUNTOF

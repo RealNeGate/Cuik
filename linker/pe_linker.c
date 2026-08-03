@@ -690,10 +690,10 @@ void pe_append_object(TPool* pool, void** args) {
             // weak aux
             uint32_t* weak_sym = src_symbol->extra;
             TB_ObjectSymbol* restrict alt_sym = bsearch(
-                &(TB_ObjectSymbol){ .ordinal = *weak_sym },
-                syms, sym_count, sizeof(TB_ObjectSymbol),
-                symbol_cmp
-            );
+                                                        &(TB_ObjectSymbol){ .ordinal = *weak_sym },
+                                                        syms, sym_count, sizeof(TB_ObjectSymbol),
+                                                        symbol_cmp
+                                                        );
 
             tb_linker_symbol_weak(l, src_symbol->user_data, alt_sym->user_data);
         }
@@ -999,8 +999,8 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
     size_t import_entry_count = 0;
 
     DynArray(ImportTable*) sorted_imports = dyn_array_create(ImportTable*, 32);
-    nbhs_for(e, &l->imports) {
-        ImportTable* imp = *e;
+    NBHS_FOR(e, &l->imports) {
+        ImportTable* imp = e.k;
         DynArray(TB_LinkerSymbol*) tbl = imp->thunks;
 
         // prune dead thunks
@@ -1286,17 +1286,17 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     tb_linker_complete_appends(l);
 
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
-        dyn_array_for(i, info->merges) {
-            NL_Slice to_name = { info->merges[i].to.length, info->merges[i].to.data };
-            ptrdiff_t to = nl_map_get(l->sections, to_name);
-            if (to < 0) continue;
+    dyn_array_for(i, info->merges) {
+    NL_Slice to_name = { info->merges[i].to.length, info->merges[i].to.data };
+    ptrdiff_t to = nl_map_get(l->sections, to_name);
+    if (to < 0) continue;
 
-            NL_Slice from_name = { info->merges[i].from.length, info->merges[i].from.data };
-            ptrdiff_t from = nl_map_get(l->sections, from_name);
-            if (from < 0) continue;
+    NL_Slice from_name = { info->merges[i].from.length, info->merges[i].from.data };
+    ptrdiff_t from = nl_map_get(l->sections, from_name);
+    if (from < 0) continue;
 
-            tb__merge_sections(l, l->sections[from].v, l->sections[to].v);
-        }
+    tb__merge_sections(l, l->sections[from].v, l->sections[to].v);
+    }
     }*/
 
     TB_LinkerSection* rdata = tb_linker_find_section(l, ".rdata");
@@ -1316,10 +1316,10 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     }
 
     /* CUIK_TIMED_BLOCK("Merge ops") {
-        tb_linker_merge_sections(l, tb_linker_find_section(l, ".00cfg"), rdata);
-        tb_linker_merge_sections(l, tb_linker_find_section(l, ".idata"), rdata);
-        tb_linker_merge_sections(l, tb_linker_find_section(l, ".xdata"), rdata);
-        tb_linker_merge_sections(l, tb_linker_find_section(l, ".CRT"), rdata);
+    tb_linker_merge_sections(l, tb_linker_find_section(l, ".00cfg"), rdata);
+    tb_linker_merge_sections(l, tb_linker_find_section(l, ".idata"), rdata);
+    tb_linker_merge_sections(l, tb_linker_find_section(l, ".xdata"), rdata);
+    tb_linker_merge_sections(l, tb_linker_find_section(l, ".CRT"), rdata);
     } */
 
     if (!tb_linker_layout(l)) {
@@ -1627,8 +1627,8 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     CUIK_TIMED_BLOCK("pdb output") {
         // Collect all modules
         DynArray(TB_LinkerObject*) sorted_objs = dyn_array_create(TB_LinkerObject*, 8);
-        nbhs_for(e, &l->objects) {
-            TB_LinkerObject* obj = *e;
+        NBHS_FOR(e, &l->objects) {
+            TB_LinkerObject* obj = e.k;
             if (obj->live && obj->name.data[obj->name.length - 1] != '/') {
                 if (obj->name.length < 4 || memcmp(&obj->name.data[obj->name.length - 4], ".dll", 4) != 0) {
                     dyn_array_put(sorted_objs, obj);

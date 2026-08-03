@@ -76,6 +76,8 @@ void P0(void);
 void P3(double X, double Y, double *Z);
 #define USAGE	"usage: whetdc [-c] [loops]\n"
 
+#define PRINTOUT
+
 /*
 COMMON T,T1,T2,E1(4),J,K,L
 */
@@ -367,6 +369,8 @@ main(int argc, char *argv[])
     C--------------------------------------------------------------------
     */
     printf("\n");
+
+    #if 0
     if (finisec-startsec <= 0) {
         printf("Insufficient duration- Increase the LOOP count\n");
         return(1);
@@ -380,6 +384,7 @@ main(int argc, char *argv[])
         printf("C Converted Double Precision Whetstones: %.1f MIPS\n", KIPS/1000.0);
     else
         printf("C Converted Double Precision Whetstones: %.1f KIPS\n", KIPS);
+    #endif
 
     if (continuous)
         goto LCONT;

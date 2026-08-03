@@ -408,7 +408,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 return (ValDesc){ LVALUE, .n = tb_builder_symbol(g, stmt->backing.s) };
             } else {
                 /* if (stmt->backing.n == NULL) {
-                    stmt->backing.n = tb_builder_label_make2(g, tb_builder_label_get(g), true);
+                stmt->backing.n = tb_builder_label_make2(g, tb_builder_label_get(g), true);
                 } */
                 return (ValDesc){ LVALUE, .mem_var = stmt->decl.local_ordinal, .n = stmt->backing.n };
             }
@@ -1174,7 +1174,9 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                 }
 
                 tb_global_set_storage(tu->ir_mod, section, g, type->size, type->align, max_tb_objects);
-                gen_global_initializer(tu, g, type, s->decl.initial, 0);
+
+                InitBuilder builder = { tu, tu->ir_mod, g };
+                gen_global_initializer(&builder, type, s->decl.initial, 0, NULL);
 
                 if (attrs.is_tls) {
                     tb_module_set_tls_index(tu->ir_mod, sizeof("_tls_index")-1, "_tls_index");
@@ -1630,19 +1632,19 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
             TB_GraphBuilder* g = tb_builder_enter_from_dbg(func, section, dbg_type, NULL);
 
             /* {
-                TB_Node* a = tb_builder_uint(g, TB_TYPE_I32, 69);
+            TB_Node* a = tb_builder_uint(g, TB_TYPE_I32, 69);
 
-                // potentially faulting op
-                TB_Symbol* s = tb_extern_create(tu->ir_mod, -1, "poll_site", TB_EXTERNAL_SO_LOCAL);
-                TB_Node* n = tb_builder_load(g, 0, true, TB_TYPE_I32, tb_builder_symbol(g, s), 4, false);
+            // potentially faulting op
+            TB_Symbol* s = tb_extern_create(tu->ir_mod, -1, "poll_site", TB_EXTERNAL_SO_LOCAL);
+            TB_Node* n = tb_builder_load(g, 0, true, TB_TYPE_I32, tb_builder_symbol(g, s), 4, false);
 
-                TB_Node* paths[2];
-                tb_builder_safepoint(g, 0, n, NULL, 1, &a, paths);
-                {
-                    tb_builder_label_set(g, paths[1]);
-                    tb_builder_trap(g, 0);
-                }
-                tb_builder_label_set(g, paths[0]);
+            TB_Node* paths[2];
+            tb_builder_safepoint(g, 0, n, NULL, 1, &a, paths);
+            {
+            tb_builder_label_set(g, paths[1]);
+            tb_builder_trap(g, 0);
+            }
+            tb_builder_label_set(g, paths[0]);
             } */
 
             muh_tmp_arena = tb_function_get_arena(func, 1);
@@ -1733,7 +1735,9 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         }
 
         tb_global_set_storage(tu->ir_mod, section, (TB_Global*) s->backing.s, type->size, type->align, max_tb_objects);
-        gen_global_initializer(tu, (TB_Global*) s->backing.s, type, s->decl.initial, 0);
+
+        InitBuilder builder = { tu, tu->ir_mod, (TB_Global*) s->backing.s };
+        gen_global_initializer(&builder, type, s->decl.initial, 0, NULL);
         return s->backing.s;
     }
 

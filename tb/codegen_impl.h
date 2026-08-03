@@ -114,35 +114,35 @@ static void dump_pretty_sched(Ctx* restrict ctx) {
 }
 
 /*static void dbg_submit_sched_event(Ctx* restrict ctx, const char* desc, ...) {
-    #if TB_OPTDEBUG_SERVER
-    if (dbg_server == NULL) {
-        return;
-    }
+#if TB_OPTDEBUG_SERVER
+if (dbg_server == NULL) {
+return;
+}
 
-    // if we're acting as a debug server, submit the latest copy of the
-    // IR to the list of events. The viewer will organize the timeline
-    // on it's end
-    int t = f->dbg_server_t++;
+// if we're acting as a debug server, submit the latest copy of the
+// IR to the list of events. The viewer will organize the timeline
+// on it's end
+int t = f->dbg_server_t++;
 
-    BufferOutStream s = bos_make();
-    s.header.quoted = true;
-    s_writef(&s.header, "{ \"type\":\"OPT\", \"name\":\"%s\", \"time\":%d, \"desc\":\"", f->super.name, t);
+BufferOutStream s = bos_make();
+s.header.quoted = true;
+s_writef(&s.header, "{ \"type\":\"OPT\", \"name\":\"%s\", \"time\":%d, \"desc\":\"", f->super.name, t);
 
-    va_list ap;
-    va_start(ap, desc);
-    s.header.writef(&s.header, desc, ap);
-    va_end(ap);
+va_list ap;
+va_start(ap, desc);
+s.header.writef(&s.header, desc, ap);
+va_end(ap);
 
-    s_writef(&s.header, "\", \"content\":\"");
-    tb_print_to_stream(f, &s.header);
-    s_writef(&s.header, "\" }");
+s_writef(&s.header, "\", \"content\":\"");
+tb_print_to_stream(f, &s.header);
+s_writef(&s.header, "\" }");
 
-    // printf("%.*s\n", (int) s.cnt, s.data);
+// printf("%.*s\n", (int) s.cnt, s.data);
 
-    write_bytes(dbg_client, s.data, s.cnt);
-    sb_poll_server(dbg_server, 0);
-    cuik_free(s.data);
-    #endif
+write_bytes(dbg_client, s.data, s.cnt);
+sb_poll_server(dbg_server, 0);
+cuik_free(s.data);
+#endif
 }*/
 
 static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, ArenaArray(TB_Safepoint*)* safepoints, Bundle* b) {
@@ -296,7 +296,7 @@ static void construct_prologue_epilogue(Ctx* restrict ctx, TB_Function* f) {
                 if (saves[j] == 'c' &&
                     // if we're using the frame ptr, it should be treated as "no save"
                     (!use_frame_ptr || cc->fp_class != i || cc->fp_reg != j)
-                ) {
+                    ) {
                     RegMask* rm = intern_regmask(ctx, i, false, 1ull << j);
                     TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, dt, 1, sizeof(TB_NodeMachProj));
                     TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = proj_count++, .def = rm);

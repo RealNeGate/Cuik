@@ -149,20 +149,64 @@ TB_ModuleSectionHandle get_variable_storage(TB_Module* m, const Attribs* attrs, 
     if (attrs->is_tls) {
         return tb_module_get_tls(m);
     } else if (is_const) {
-        return tb_module_get_rdata(m);
+        return tb_module_get_data(m);
     } else {
         return tb_module_get_data(m);
     }
 }
 
-static void eval_global_initializer(TranslationUnit* tu, TB_Global* g, InitNode* n, int offset);
-static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type* type, Cuik_Expr* e, size_t offset) {
+typedef struct {
+    TranslationUnit* tu;
+    TB_Module* mod;
+    TB_Global* global;
+
+    // Basically where does the cached
+    // region fit in the global-relative
+    // space.
+    size_t base, size;
+    uint8_t* cached;
+} InitBuilder;
+
+static void init_builder_region(InitBuilder* b, size_t offset, size_t size) {
+    b->cached = tb_global_add_region(b->mod, b->global, offset, size);
+    b->base   = offset;
+    b->size   = size;
+
+    memset(b->cached, 0, size);
+}
+
+// offset is global-relative
+static void init_builder_add(InitBuilder* b, void* src, size_t offset, size_t size) {
+    assert((offset - b->base) < b->size);
+    memcpy(&b->cached[offset - b->base], src, size);
+}
+
+static uint8_t* init_builder_add2(InitBuilder* b, size_t offset, size_t size) {
+    assert((offset - b->base) < b->size);
+    return &b->cached[offset - b->base];
+}
+
+static uint64_t init_builder_hash(InitBuilder* b, uint64_t hash) {
+    return ((uint64_t) b->tu->local_ordinal << 32ull) | hash;
+}
+
+static void eval_global_initializer(InitBuilder* b, InitNode* n, int offset);
+static void gen_global_initializer(InitBuilder* b, Cuik_Type* type, Cuik_Expr* e, size_t offset, InitNode* n) {
     assert(type != NULL);
     size_t type_size = type->size;
 
     // defaults to zeros because that's how TB initializers work
     if (e == NULL) {
         return;
+    }
+
+    // only really skip if we're an array of structs
+    InitBuilder tmp;
+    if (b->cached == NULL) {
+        tmp = *b;
+        b = &tmp;
+
+        init_builder_region(&tmp, offset, type_size);
     }
 
     // string literals
@@ -172,25 +216,21 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
         if (type->kind == KIND_PTR) {
             uint32_t hash = tb__murmur3_32(s->str, len);
 
-            TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-            ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
-            tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
+            TB_Global* dummy = tb_global_create(b->mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+            ((TB_Symbol*) dummy)->ordinal = init_builder_hash(b, hash);
+            tb_global_set_storage(b->mod, tb_module_get_rdata(b->mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
 
-            char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
+            char* dst = tb_global_add_region(b->mod, dummy, 0, len);
             memcpy(dst, s->str, len);
 
-            tb_global_add_symbol_reloc(tu->ir_mod, g, offset, (TB_Symbol*) dummy);
+            tb_global_add_symbol_reloc(b->mod, b->global, offset, (TB_Symbol*) dummy);
         } else {
-            char* dst = tb_global_add_region(tu->ir_mod, g, offset, type->size);
-            memcpy(dst, s->str, len);
+            init_builder_add(b, s->str, offset, len);
         }
         return;
-    }
-
-    // try to emit global initializer
-    if (s->op == EXPR_INITIALIZER) {
+    } else if (s->op == EXPR_INITIALIZER) {
         Subexpr* s = get_root_subexpr(e);
-        eval_global_initializer(tu, g, s->init.root, offset);
+        eval_global_initializer(b, s->init.root, offset);
         return;
     }
 
@@ -204,24 +244,23 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
             Stmt* stmt = value.s.base;
             assert((stmt->op == STMT_GLOBAL_DECL || stmt->op == STMT_FUNC_DECL) && "could not resolve as constant initializer");
 
-            tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
+            tb_global_add_symbol_reloc(b->mod, b->global, offset, stmt->backing.s);
             int_form = value.s.offset;
         } else if (value.tag == CUIK_CONST_STR) {
             size_t len = atoms_len(value.str);
             if (type->kind == KIND_PTR) {
                 uint32_t hash = tb__murmur3_32(value.str, len);
 
-                TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-                ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
-                tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
+                TB_Global* dummy = tb_global_create(b->mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+                ((TB_Symbol*) dummy)->ordinal = init_builder_hash(b, hash);
+                tb_global_set_storage(b->mod, tb_module_get_rdata(b->mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
 
-                char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
+                char* dst = tb_global_add_region(b->mod, dummy, 0, len);
                 memcpy(dst, value.str, len);
 
-                tb_global_add_symbol_reloc(tu->ir_mod, g, offset, (TB_Symbol*) dummy);
+                tb_global_add_symbol_reloc(b->mod, b->global, offset, (TB_Symbol*) dummy);
             } else {
-                char* dst = tb_global_add_region(tu->ir_mod, g, offset, type->size);
-                memcpy(dst, value.str, len);
+                init_builder_add(b, s->str, offset, len);
             }
         } else if (value.tag == CUIK_CONST_INT) {
             int_form = value.i;
@@ -242,8 +281,20 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
     }
 
     if (int_form != 0) {
-        uint8_t* region = tb_global_add_region(tu->ir_mod, g, offset, type_size);
-        if (TARGET_NEEDS_BYTESWAP(tu->target)) {
+        assert(type->size <= 8);
+        uint8_t* region = init_builder_add2(b, offset, type->size);
+
+        // bitfield get
+        if (n && n->is_bitfield) {
+            uint64_t oldval = 0;
+            memcpy(&oldval, region, type->size);
+            assert(!TARGET_NEEDS_BYTESWAP(b->tu->target) && "TODO");
+
+            uint64_t newval_mask = (UINT64_MAX >> (64 - n->bit_width)) << (uint64_t) n->bit_offset;
+            int_form = (oldval & ~newval_mask) | ((int_form << n->bit_offset) & newval_mask);
+        }
+
+        if (TARGET_NEEDS_BYTESWAP(b->tu->target)) {
             // reverse copy
             uint8_t* src = (uint8_t*) &int_form;
             size_t top = type_size - 1;
@@ -257,14 +308,14 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
     }
 }
 
-static void eval_global_initializer(TranslationUnit* tu, TB_Global* g, InitNode* n, int offset) {
+static void eval_global_initializer(InitBuilder* b, InitNode* n, int offset) {
     if (n->kid != NULL) {
         for (InitNode* k = n->kid; k != NULL; k = k->next) {
-            eval_global_initializer(tu, g, k, offset);
+            eval_global_initializer(b, k, offset);
         }
     } else {
         Cuik_Type* child_type = cuik_canonical_type(n->type);
-        gen_global_initializer(tu, g, child_type, n->expr, offset + n->offset);
+        gen_global_initializer(b, child_type, n->expr, offset + n->offset, n);
     }
 }
 
@@ -313,3 +364,4 @@ void cuikcg_allocate_ir(TranslationUnit* tu, TB_Module* m, bool debug) {
         }
     }
 }
+

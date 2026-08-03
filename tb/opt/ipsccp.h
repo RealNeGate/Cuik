@@ -248,8 +248,8 @@ void push_ipsccp_job(TB_Module* m, TB_Function* f) {
 }
 
 static void dump_ipsccp(TB_Module* m) {
-    nbhs_for(entry, &m->symbols) {
-        TB_Symbol* s = *entry;
+    NBHS_FOR(entry, &m->symbols) {
+        TB_Symbol* s = entry.k;
         if (s->tag == TB_SYMBOL_FUNCTION) {
             TB_Function* f = (TB_Function*) s;
             Lattice* args = f->ipsccp_args ? f->ipsccp_args : &TOP_IN_THE_SKY;
@@ -275,8 +275,8 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
     if (pool) {
         #if CUIK_ALLOW_THREADS
         // any entry-point functions will be pushed
-        nbhs_for(entry, &m->symbols) {
-            TB_Symbol* s = *entry;
+        NBHS_FOR(entry, &m->symbols) {
+            TB_Symbol* s = entry.k;
             if (s->tag == TB_SYMBOL_FUNCTION && is_function_root((TB_Function*) s)) {
                 TB_Function* f = (TB_Function*) s;
 
@@ -296,8 +296,8 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
 
         // Transform phase
         //   we can apply the rewrites now, in parallel
-        nbhs_for(entry, &m->symbols) {
-            TB_Symbol* s = *entry;
+        NBHS_FOR(entry, &m->symbols) {
+            TB_Symbol* s = entry.k;
             if (s->tag == TB_SYMBOL_FUNCTION) {
                 TB_Function* f = (TB_Function*) s;
                 Lattice* args = f->ipsccp_args ? f->ipsccp_args : &TOP_IN_THE_SKY;
@@ -327,8 +327,8 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
         }
 
         // any entry-point functions will be pushed
-        nbhs_for(entry, &m->symbols) {
-            TB_Symbol* s = *entry;
+        NBHS_FOR(entry, &m->symbols) {
+            TB_Symbol* s = entry.k;
             if (s->tag == TB_SYMBOL_FUNCTION && is_function_root((TB_Function*) s)) {
                 TB_Function* f = (TB_Function*) s;
 
@@ -393,8 +393,8 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
         m->during_ipsccp = false;
 
         // Transform phase
-        nbhs_for(entry, &m->symbols) {
-            TB_Symbol* s = *entry;
+        NBHS_FOR(entry, &m->symbols) {
+            TB_Symbol* s = entry.k;
             if (s->tag == TB_SYMBOL_FUNCTION) {
                 TB_Function* f = (TB_Function*) s;
                 Lattice* args = f->ipsccp_args ? f->ipsccp_args : &TOP_IN_THE_SKY;

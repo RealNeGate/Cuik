@@ -261,11 +261,16 @@ if is_windows then
     end
 else
     cflags  = cflags.." -D_GNU_SOURCE"
-    ldflags = " -lc -lm -g -o "
+    ldflags = " -lc -lm -g "
+    if options.asan then
+        ldflags = ldflags.." -fsanitize=address"
+    end
+
     if options.shared then
         cflags = cflags.." -fPIC"
         ldflags = ldflags.." -shared"
     end
+    ldflags = ldflags.." -o "
 end
 
 local to_mod = {}

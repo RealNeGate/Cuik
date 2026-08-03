@@ -369,8 +369,8 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
 
     // Run function-local opts and
     CUIK_TIMED_BLOCK("initial optimize round") {
-        nbhs_for(entry, &m->symbols) {
-            TB_Symbol* s = *entry;
+        NBHS_FOR(entry, &m->symbols) {
+            TB_Symbol* s = entry.k;
             if (s->tag == TB_SYMBOL_FUNCTION) {
                 total_counter++;
             }
@@ -379,8 +379,8 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
         if (pool) {
             #if CUIK_ALLOW_THREADS
             Futex tracker[2] = { 0 };
-            nbhs_for(entry, &m->symbols) {
-                TB_Symbol* s = *entry;
+            NBHS_FOR(entry, &m->symbols) {
+                TB_Symbol* s = entry.k;
                 if (s->tag == TB_SYMBOL_FUNCTION) {
                     ((TB_Function*) s)->uid = scc.fn_count++;
 
@@ -400,8 +400,8 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
             abort(); // Unreachable
             #endif
         } else {
-            nbhs_for(entry, &m->symbols) {
-                TB_Symbol* s = *entry;
+            NBHS_FOR(entry, &m->symbols) {
+                TB_Symbol* s = entry.k;
                 if (s->tag == TB_SYMBOL_FUNCTION) {
                     ((TB_Function*) s)->uid = scc.fn_count++;
 
@@ -436,8 +436,8 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
         scc.nodes    = nl_table_arena_alloc(scc.arena, scc.fn_count);
 
         // build strongly connected components
-        nbhs_for(entry, &m->symbols) {
-            TB_Symbol* s = *entry;
+        NBHS_FOR(entry, &m->symbols) {
+            TB_Symbol* s = entry.k;
             if (s->tag == TB_SYMBOL_FUNCTION && is_function_root((TB_Function*) s) && nl_table_get(&scc.nodes, s) == NULL) {
                 scc_walk(&scc, &ipo, (TB_Function*) s, &ws, 0);
             }

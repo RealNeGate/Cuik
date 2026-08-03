@@ -1,4 +1,6 @@
 
+uint64_t negate__div128(uint64_t numhi, uint64_t numlo, uint64_t den, uint64_t* out_rem);
+
 // im afraid of signed overflow UB
 static int64_t sadd(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a + (uint64_t)b) & mask; }
 static int64_t ssub(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a - (uint64_t)b) & mask; }
@@ -648,11 +650,11 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
 
             // if the range doesn't flip itself around we're safe
             /*if (b->_int.min == b->_int.max) {
-                int64_t mmin = a->_int.min & b->_int.min;
-                int64_t mmax = a->_int.max & b->_int.min;
-                if (mmin < mmax) {
-                    min = mmin, max = mmax;
-                }
+            int64_t mmin = a->_int.min & b->_int.min;
+            int64_t mmax = a->_int.max & b->_int.min;
+            if (mmin < mmax) {
+            min = mmin, max = mmax;
+            }
             }*/
             break;
         }

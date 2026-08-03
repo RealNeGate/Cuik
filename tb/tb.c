@@ -40,8 +40,9 @@ static bool symbolhs_cmp(const void* a, const void* b) {
     return aa->name_length == bb->name_length && memcmp(aa->name, bb->name, aa->name_length) == 0;
 }
 
-#define NBHS_FN(n) symbolhs_ ## n
-#include <nbhs.h>
+#define NBHM_IS_SET
+#define NBHM_FN(n) symbolhs_ ## n
+#include <nbhm.h>
 
 ICodeGen tb_codegen_families[TB_ARCH_MAX];
 

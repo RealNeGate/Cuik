@@ -468,19 +468,19 @@ static float edge_prob(TB_Node* n) {
 }
 
 /* static uint32_t node_flags(TB_Node* n) {
-    if (n->type == TB_x86_jcc) {
-        return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_IF | NODE_MEMORY_IN;
-    } else if (n->type == TB_x86_jmp_MULTI) {
-        return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL;
-    } else if (n->type == x86_call) {
-        return NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT | NODE_EFFECT;
-    }
+if (n->type == TB_x86_jcc) {
+return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_IF | NODE_MEMORY_IN;
+} else if (n->type == TB_x86_jmp_MULTI) {
+return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL;
+} else if (n->type == x86_call) {
+return NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT | NODE_EFFECT;
+}
 
-    uint32_t flags = n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_PINNED) : NODE_MEMORY_IN;
-    if (n->type == x86_cmp || n->type == x86_test) {
-        flags |= NODE_ALWAYS_SINK;
-    }
-    return flags;
+uint32_t flags = n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_PINNED) : NODE_MEMORY_IN;
+if (n->type == x86_cmp || n->type == x86_test) {
+flags |= NODE_ALWAYS_SINK;
+}
+return flags;
 }*/
 
 static void print_extra(OutStream* s, TB_Node* n) {
@@ -708,7 +708,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
 
             if (n->type == TB_x86_movzx8 || n->type == TB_x86_movzx16 ||
                 n->type == TB_x86_movsx8 || n->type == TB_x86_movsx16 || n->type == TB_x86_movsx32
-            ) {
+                ) {
                 printf("  %s_%d ", name, bytes);
             } else if (n->type == TB_x86_cmovcc) {
                 printf("  %s%s_%d ", name, COND_NAMES[op->cond], bytes);
@@ -1004,7 +1004,7 @@ static bool node_remat(TB_Node* n) {
     }
 
     /* if (n->type == TB_x86_movsx8 || n->type == TB_x86_movzx8 || n->type == TB_x86_movzx16 || n->type == TB_x86_movzx16 || n->type == TB_x86_movsx32) {
-        return true;
+    return true;
     } */
 
     return n->type == TB_x86_lea || n->type == TB_x86_cmp || n->type == TB_x86_test || n->type == TB_x86_ucomi || n->type == TB_x86_bt;
@@ -1137,7 +1137,7 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
 
         size_t base = 3;
         /* if (op->mode != MODE_REG && (op->flags & OP_INDEXED)) {
-            base += 1;
+        base += 1;
         } */
 
         int param_count = n->input_count - base;
@@ -1208,7 +1208,7 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
                 if (saves[j] == 'C' &&
                     // if we're using the frame ptr, it should be treated as "no save"
                     (!use_frame_ptr || cc->fp_class != i || cc->fp_reg != j)
-                ) {
+                    ) {
                     clobbers |= 1ull << j;
                 }
             }
@@ -1571,7 +1571,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                         if (saves[j] == 'c' &&
                             // if we're using the frame ptr, it should be treated as "no save"
                             (!use_frame_ptr || cc->fp_class != i || cc->fp_reg != j)
-                        ) {
+                            ) {
                             ins[k++] = intern_regmask(ctx, i, false, 1ull << j);
                         }
                     }
@@ -1593,14 +1593,14 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[1] = &TB_REG_EMPTY;
 
                 /*if (op->mode == MODE_REG) {
-                    TB_ASSERT(n->inputs[2]->type == TB_MACH_SYMBOL);
-                    ins[2] = &TB_REG_EMPTY;
+                TB_ASSERT(n->inputs[2]->type == TB_MACH_SYMBOL);
+                ins[2] = &TB_REG_EMPTY;
                 } else if (op->flags & OP_INDEXED) {
-                    ins[2] = ctx->normie_mask[REG_CLASS_GPR];
-                    ins[3] = ctx->normie_mask[REG_CLASS_GPR];
-                    base += 1;
+                ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+                ins[3] = ctx->normie_mask[REG_CLASS_GPR];
+                base += 1;
                 } else {
-                    ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+                ins[2] = ctx->normie_mask[REG_CLASS_GPR];
                 }*/
 
                 size_t base = 3;
@@ -1999,14 +1999,14 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                     __(op, dt, &dst, &src);
                 }
             } else {
-                TB_OPTDEBUG(REGALLOC2)(EMIT1(e, 0x90));
+                // TB_OPTDEBUG(REGALLOC2)(EMIT1(e, 0x90));
             }
 
             // PTR2 -> PTR1
             if (
                 n->dt.type == TB_TAG_PTR && n->dt.elem_or_addrspace == 1 &&
                 n->inputs[1]->dt.type == TB_TAG_PTR && n->inputs[1]->dt.elem_or_addrspace == 2
-            ) {
+                ) {
                 COMMENT("LVB %s, %s", GPR_NAMES[dst.reg], GPR_NAMES[src.reg]);
 
                 Stub_LVB* stub = add_code_stub(ctx, 0, sizeof(Stub_LVB));

@@ -102,8 +102,8 @@ struct VReg {
     // BRIGGS: when coalesced this number will go up
     int uses;
 
-    int  was_spilled : 2;
-    bool was_reload  : 1;
+    uint8_t was_spilled : 2;
+    uint8_t was_reload  : 1;
 };
 
 typedef struct Ctx Ctx;

@@ -361,7 +361,7 @@
     // 1/8 -> 32/64
     pat (SIGN_EXT dt=$dt ___ $src)
     where "($dt.type == TB_TAG_I16 || $dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
-    => (x86_movsx8 dt=$dt ___ ___ $src extra_dt="$src->dt")
+    => (x86_movsx8 dt=$dt ___ ___ $src extra_dt="$dt")
 
     // 1/8 -> 16/32/64
     pat (ZERO_EXT dt=$dt ___ $src)

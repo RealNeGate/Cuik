@@ -15,8 +15,9 @@ static bool atomhs_cmp(const void* a, const void* b) {
     return atoms_len(aa) == atoms_len(bb) && memcmp(aa, bb, atoms_len(aa)) == 0;
 }
 
-#define NBHS_FN(n) atomhs_ ## n
-#include <nbhs.h>
+#define NBHM_IS_SET
+#define NBHM_FN(n) atomhs_ ## n
+#include <nbhm.h>
 
 static NBHS atoms_table;
 static thread_local bool atoms_init;

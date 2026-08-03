@@ -14,6 +14,8 @@
 #define cuik_free(ptr)           mi_free(ptr)
 #define cuik_realloc(ptr, size)  mi_realloc(ptr, size)
 #define cuik_strdup(x)           mi_strdup(x)
+
+#define EBR_REALLOC(ptr, size) cuik_realloc(ptr, size)
 #else
 #define cuik_malloc(size)        malloc(size)
 #define cuik_calloc(count, size) calloc(count, size)
@@ -41,13 +43,13 @@
 #endif
 
 #define FOR_N(it, start, end) \
-for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
+    for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
 
 #define FOR_REV_N(it, start, end) \
-for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
+    for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 
 #define FOR_BIT(it, start, bits) \
-for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bits_ & 1)
+    for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bits_ & 1)
 
 #define STR2(x) #x
 #define STR(x) STR2(x)
@@ -93,11 +95,11 @@ inline static void mtx_destroy(mtx_t* m) {}
 #endif
 
 #define SWAP(T, a, b) \
-do {                  \
-    T temp = a;       \
-    a = b;            \
-    b = temp;         \
-} while (0)
+    do {                  \
+        T temp = a;       \
+        a = b;            \
+        b = temp;         \
+    } while (0)
 
 void  cuik_init_terminal(void);
 

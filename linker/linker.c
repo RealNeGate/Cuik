@@ -33,11 +33,13 @@ static bool strhs_cmp(const void* a, const void* b) {
     return strcmp(a, b) == 0;
 }
 
-#define NBHS_FN(n) strhs_ ## n
-#include <nbhs.h>
+#define NBHM_IS_SET
+#define NBHM_FN(n) strhs_ ## n
+#include <nbhm.h>
 
-#define NBHS_FN(n) namehs_ ## n
-#include <nbhs.h>
+#define NBHM_IS_SET
+#define NBHM_FN(n) namehs_ ## n
+#include <nbhm.h>
 
 thread_local bool linker_thread_init;
 thread_local TB_Arena linker_tmp_arena;
@@ -141,8 +143,8 @@ void tb_linker_print_map(TB_Linker* l) {
     }
 
     DynArray(TB_LinkerSymbol*) symbols = NULL;
-    nbhs_for(e, &l->symbols) {
-        TB_LinkerSymbol* sym = tb_linker_symbol_find(*e);
+    NBHS_FOR(e, &l->symbols) {
+        TB_LinkerSymbol* sym = tb_linker_symbol_find(e.k);
         if ((sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_IMPORT) && (sym->flags & TB_LINKER_SYMBOL_USED)) {
             dyn_array_put(symbols, sym);
         }
@@ -967,9 +969,9 @@ static int compare_linker_pieces(const void* a, const void* b) {
 
 bool tb_linker_layout(TB_Linker* l) {
     namehs_resize_barrier(&l->unresolved_symbols);
-    if (nbhs_count(&l->unresolved_symbols) > 0) {
-        nbhs_for(e, &l->unresolved_symbols) {
-            TB_Slice* sym_name = *e;
+    if (nbhs_UNSAFE_count(&l->unresolved_symbols) > 0) {
+        NBHS_FOR(e, &l->unresolved_symbols) {
+            TB_Slice* sym_name = e.k;
             printf("\x1b[31merror\x1b[0m: unresolved external: %.*s\n", (int) sym_name->length, sym_name->data);
 
             #if 0
@@ -1018,8 +1020,8 @@ bool tb_linker_layout(TB_Linker* l) {
     DynArray(TB_LinkerSection*) sections = NULL;
     CUIK_TIMED_BLOCK("sort sections") {
         size_t num = 0;
-        nbhs_for(e, &l->sections) {
-            TB_LinkerSection* s = *e;
+        NBHS_FOR(e, &l->sections) {
+            TB_LinkerSection* s = e.k;
             if (s->generic_flags & TB_LINKER_SECTION_DISCARD) {
                 continue;
             }
@@ -1140,14 +1142,14 @@ bool tb_linker_layout(TB_Linker* l) {
             size_t mask = (1u << first_align_log2) - 1;
             size_t next = (offset + mask) & ~mask;
             if (j > 0 && offset != next) {
-                // add padding to the end of the section
-                TB_LinkerSection* prev = segments[i]->sections[j - 1];
-                TB_ASSERT(prev->offset + prev->size == offset);
+            // add padding to the end of the section
+            TB_LinkerSection* prev = segments[i]->sections[j - 1];
+            TB_ASSERT(prev->offset + prev->size == offset);
 
-                size_t pad = next - offset;
+            size_t pad = next - offset;
 
-                prev->pieces[dyn_array_length(prev->pieces) - 1]->size += pad;
-                prev->size += pad;
+            prev->pieces[dyn_array_length(prev->pieces) - 1]->size += pad;
+            prev->size += pad;
             }*/
 
             sec->offset = offset;
@@ -1294,8 +1296,8 @@ void tb_linker_mark_live(TB_Linker* l) {
 
     // mark all non-COMDAT pieces as live
     cuikperf_region_start("root scan", NULL);
-    nbhs_for(e, &l->sections) {
-        TB_LinkerSection* s = *e;
+    NBHS_FOR(e, &l->sections) {
+        TB_LinkerSection* s = e.k;
         if (s->generic_flags & TB_LINKER_SECTION_DISCARD) { continue; }
         // we don't consider .debug as roots because codeview is compiled into the PDB
         if (s->name.length == sizeof(".debug")-1 && memcmp(s->name.data, ".debug", s->name.length) == 0) {

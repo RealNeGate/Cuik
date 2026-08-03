@@ -96,8 +96,8 @@ ExportList tb_module_layout_sections(TB_Module* m) {
     DynArray(TB_External*) externals = NULL;
 
     // unpack function data into the streams we actually care for.
-    nbhs_for(entry, &m->symbols) {
-        TB_Symbol* s = *entry;
+    NBHS_FOR(entry, &m->symbols) {
+        TB_Symbol* s = entry.k;
 
         if (s->tag == TB_SYMBOL_EXTERNAL) {
             TB_Symbol* resolved = atomic_load_explicit(&((TB_External*) s)->resolved, memory_order_relaxed);

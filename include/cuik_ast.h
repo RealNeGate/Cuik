@@ -345,6 +345,11 @@ typedef struct InitNode {
     uint32_t offset;
     Cuik_QualType type;
 
+    // bitfield handling
+    int bit_offset;
+    int bit_width;
+    bool is_bitfield;
+
     Cuik_Expr* expr;
     InitNodeDesignator mode;
 
