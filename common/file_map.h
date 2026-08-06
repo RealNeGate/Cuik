@@ -125,6 +125,25 @@ static FileMap open_file_map_read(const char* filepath) {
     return (FileMap){ fd, file_stats.st_size, buffer };
 }
 
+static FileMap open_private(const char* filepath) {
+    int fd = open(filepath, O_RDONLY);
+    if (fd <= 0) {
+        return (FileMap){ 0 };
+    }
+
+    struct stat file_stats;
+    if (fstat(fd, &file_stats) == -1) {
+        return (FileMap){ 0 };
+    }
+
+    void* buffer = mmap(NULL, file_stats.st_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (buffer == MAP_FAILED) {
+        return (FileMap){ 0 };
+    }
+
+    return (FileMap){ fd, file_stats.st_size, buffer };
+}
+
 static void close_file_map(FileMap* file_map) {
     munmap(file_map->data, file_map->size);
     close(file_map->fd);

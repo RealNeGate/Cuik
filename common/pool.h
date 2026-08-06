@@ -5,10 +5,10 @@
 #define TPool_Thread_Local _Thread_local
 #define TPool_Atomic _Atomic
 
-#if defined(__APPLE__) || defined(_WIN32)
-typedef TPool_Atomic int64_t TPool_Futex;
-#else
+#ifdef __APPLE__
 typedef TPool_Atomic int32_t TPool_Futex;
+#else
+typedef TPool_Atomic int64_t TPool_Futex;
 #endif
 
 typedef struct TPool_Thread TPool_Thread;
@@ -26,6 +26,9 @@ struct TPool {
 
     int thread_count;
     TPool_Atomic bool running;
+    TPool_Atomic uint64_t last_broadcast_tick;
+
+    TPool_Atomic uint64_t sleeping_tasks;
 
     TPool_Futex tasks_available;
     TPool_Futex tasks_left;
@@ -37,3 +40,5 @@ void tpool_add_task2(TPool *pool, tpool_task_proc* fn, int arg_count, void** arg
 void tpool_wait(TPool *pool);
 void tpool_destroy(TPool *pool);
 
+void tpool_wait_for_jobs(TPool *pool, TPool_Futex* done, TPool_Futex* count);
+void tpool_wait_for_jobs2(TPool *pool, TPool_Futex* done, int64_t count);

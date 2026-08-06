@@ -331,6 +331,10 @@ void _thread_init(TPool *pool, TPool_Thread *thread, int idx) {
     thread->idx = idx;
 }
 
+uint64_t cuik_time_in_nanos(void);
+void cuikperf_region_start(const char* fmt, const char* extra);
+void cuikperf_region_end(void);
+
 void _tpool_queue_push(TPool_Thread *thread, tpool_task_proc* fn, int val_count, void** val) {
     assert(val_count <= 3);
     ssize_t bot                = atomic_load_explicit(&thread->queue.bottom, memory_order_relaxed);
@@ -352,7 +356,41 @@ void _tpool_queue_push(TPool_Thread *thread, tpool_task_proc* fn, int val_count,
 
     TPOOL_ATOMIC_FUTEX_INC(thread->pool->tasks_left);
     TPOOL_ATOMIC_FUTEX_INC(thread->pool->tasks_available);
-    _tpool_broadcast(&thread->pool->tasks_available);
+
+    #if 1
+    // Only broadcast if there's sleepers, this is probably not the best way to handle ngl
+    uint64_t sleepers = thread->pool->sleeping_tasks;
+    if (sleepers != 0 && atomic_compare_exchange_strong(&thread->pool->sleeping_tasks, &sleepers, 0)) {
+        // rate limit the broadcast to avoid spending too much time in the OS.
+        // We're gonna do one broadcast every 10us for now.
+        uint64_t now_ticks = cuik_time_in_nanos() / 10000;
+        if (thread->pool->last_broadcast_tick != now_ticks) {
+            thread->pool->last_broadcast_tick = now_ticks;
+
+            cuikperf_region_start("BROADCAST", NULL);
+            _tpool_broadcast(&thread->pool->tasks_available);
+            cuikperf_region_end();
+        }
+    }
+    #endif
+}
+
+void tpool_wait_for_jobs(TPool *pool, TPool_Futex* done, TPool_Futex* count) {
+    int64_t old;
+    while (old = *done, old != *count) {
+        _tpool_broadcast(&pool->tasks_available);
+        _tpool_wait(done, old);
+    }
+
+    pool->last_broadcast_tick = 0;
+}
+
+void tpool_wait_for_jobs2(TPool *pool, TPool_Futex* done, int64_t count) {
+    int64_t old;
+    while (old = *done, old != count) {
+        _tpool_broadcast(&pool->tasks_available);
+        _tpool_wait(done, old);
+    }
 }
 
 int _tpool_queue_take(TPool_Thread *thread, TPool_Task *task) {
@@ -476,6 +514,8 @@ int _tpool_worker(void *ptr) {
         // if we've done all our work, and there's nothing to steal, go to sleep
         int32_t state = TPOOL_LOAD(pool->tasks_available);
         if (!pool->running) { break; }
+
+        pool->sleeping_tasks |= 1ull << (tpool_current_thread_idx % 64ull);
         _tpool_wait(&pool->tasks_available, state);
     }
 

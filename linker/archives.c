@@ -1,6 +1,7 @@
 #include "linker.h"
 #include "../tb/objects/lib_parse.h"
 
+#if 0
 void append_archive(TPool* pool, TB_LinkerObject* lib, int slash) {
     log_debug("linking against %.*s (as archive)", (int) (lib->name.length - slash), lib->name.data + slash);
 
@@ -44,16 +45,11 @@ void append_archive(TPool* pool, TB_LinkerObject* lib, int slash) {
                 .tag    = TB_LINKER_SYMBOL_LAZY,
                 .lazy   = { obj_file },
             };
-
-            TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
-            if (new_s != s) {
-                tb_arena_free(&linker_perm_arena, s, sizeof(TB_LinkerSymbol));
-                s = new_s;
-            }
+            s = tb_linker_symbol_insert(l, s, true);
             i += 1, j += len + 1;
         }
     }
 
     __debugbreak();
 }
-
+#endif

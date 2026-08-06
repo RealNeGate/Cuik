@@ -392,10 +392,7 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
             }
 
             // finish up our initial round of function-local optimizations
-            int64_t old;
-            while (old = tracker[0], old != tracker[1]) {
-                futex_wait(&tracker[0], old);
-            }
+            tpool_wait_for_jobs(pool, &tracker[0], &tracker[1]);
             #else
             abort(); // Unreachable
             #endif
@@ -432,8 +429,8 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
 
     CUIK_TIMED_BLOCK("build SCC") {
         TB_ArenaSavepoint sp = tb_arena_save(scc.arena);
-        scc.stk      = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
-        scc.nodes    = nl_table_arena_alloc(scc.arena, scc.fn_count);
+        scc.stk   = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
+        scc.nodes = nl_table_arena_alloc(scc.arena, scc.fn_count);
 
         // build strongly connected components
         NBHS_FOR(entry, &m->symbols) {

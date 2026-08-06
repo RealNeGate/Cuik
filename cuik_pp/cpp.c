@@ -199,6 +199,10 @@ static Token cpp_lexer_read(CPPStackSlot* slot) {
 }
 
 static unsigned char* cpp_lexer_pos(CPPStackSlot* slot) {
+    if (slot->cache_head == slot->cache_tail) {
+        return slot->lexer.current;
+    }
+
     return (unsigned char*) slot->cache[slot->cache_head].content.data;
 }
 

@@ -24,6 +24,16 @@
 typedef void TB_LinkerAppendFn(TPool* pool, void** args);
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 
+typedef enum {
+    // linker objects will first dispatch a bulk load
+    LINKER_CORO_LOAD,
+
+    // when the load completes they'll begin to
+    LINKER_CORO_INFLATE,
+
+    LINKER_CORO_DONE,
+} LinkerCoroStatus;
+
 // basically an object file
 typedef struct TB_LinkerObject TB_LinkerObject;
 struct TB_LinkerObject {
@@ -35,6 +45,13 @@ struct TB_LinkerObject {
 
     TB_LinkerObject* parent;
     TB_LinkerAppendFn* fn;
+
+    //
+    struct {
+        int fd;
+        size_t offset;
+        LinkerCoroStatus status;
+    };
 
     #ifdef CONFIG_HAS_TB
     // if not-NULL, the sections for the are in a TB_Module.
@@ -94,7 +111,6 @@ struct TB_LinkerSectionPiece {
     size_t offset, size, align_log2;
     // for consistent layout (since we're doing so much parallel stuff)
     uint64_t order;
-    TB_LinkerPieceFlags flags;
 
     // mostly for COMDAT associative sections
     TB_LinkerSectionPiece* comdat_parent;
@@ -109,6 +125,8 @@ struct TB_LinkerSectionPiece {
     // points to where the object-file specific relocation data lies
     size_t reloc_count;
     const void* relocs;
+
+    _Atomic(TB_LinkerPieceFlags) flags;
 
     union {
         // kind=PIECE_BUFFER
@@ -192,6 +210,7 @@ typedef enum TB_LinkerSymbolTag {
 typedef enum TB_LinkerSymbolFlags {
     TB_LINKER_SYMBOL_WEAK   = 1,
     TB_LINKER_SYMBOL_USED   = 2,
+    TB_LINKER_SYMBOL_GLOBAL = 4,
 } TB_LinkerSymbolFlags;
 
 typedef enum {
@@ -221,18 +240,15 @@ typedef struct {
 struct TB_LinkerSymbol {
     TB_Slice name;
 
-    // union-find
-    union {
-        _Atomic(TB_LinkerSymbol*) parent;
-        TB_LinkerSymbol* parent2;
+
+    TB_LinkerSymbolTag  tag;
+    TB_LinkerComdatRule comdat;
+
+    struct {
+        _Atomic(TB_LinkerSymbolFlags) flags;
+        _Atomic(TB_LinkerSymbol*) comdat_assoc;
+        _Atomic(TB_LinkerSymbol*) weak_alt;
     };
-
-    TB_LinkerSymbolTag   tag;
-    TB_LinkerSymbolFlags flags;
-    TB_LinkerComdatRule  comdat;
-
-    _Atomic(TB_LinkerSymbol*) comdat_assoc;
-    _Atomic(TB_LinkerSymbol*) weak_alt;
 
     union {
         // for normal symbols
@@ -286,6 +302,16 @@ typedef struct TB_LinkerVtbl {
 
 typedef void(*RelocParser)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
 
+typedef struct {
+    int fd;
+    size_t offset, size;
+    char* data;
+
+    // completion
+    TB_LinkerObject* obj;
+    TB_LinkerAppendFn* fn;
+} FileReadReq;
+
 typedef struct TB_Linker {
     TB_Arch target_arch;
 
@@ -298,7 +324,7 @@ typedef struct TB_Linker {
     TB_LinkerVtbl vtbl;
 
     // namehs
-    NBHS symbols;  // TB_LinkerSymbol*
+    NBHM symbols;  // TB_LinkerSymbol*
     NBHS sections; // TB_LinkerSection*
     NBHS imports;  // ImportTable*
     // tracking the linker objects
@@ -327,6 +353,18 @@ typedef struct TB_Linker {
     size_t output_cap;
     uint8_t* output;
 
+    // TODO(NeGate): get rid of this lock and this shitty version of IO handling
+    struct {
+        mtx_t io_lock;
+        thrd_t io_thread;
+        FileReadReq io_req;
+
+        _Atomic Futex io_running;
+
+        _Alignas(64) Futex io_head;
+        _Alignas(64) Futex io_tail;
+    };
+
     // Windows specific:
     //   on windows, we use DLLs to interact with the OS so
     //   there needs to be a way to load these immediately,
@@ -346,7 +384,7 @@ typedef struct TB_Linker {
         TPool* pool;
 
         Futex done;
-        _Atomic uint64_t count;
+        Futex count;
     } jobs;
 } TB_Linker;
 
@@ -368,15 +406,12 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject*
 size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail);
 void tb_linker_symbol_weak(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerSymbol* alt);
 
-// symbols are technically doing a dumb but concurrent disjoint-set
-void tb_linker_symbol_union(TB_Linker* l, TB_LinkerSymbol* leader, TB_LinkerSymbol* other_guy);
-TB_LinkerSymbol* tb_linker_symbol_find(TB_LinkerSymbol* sym);
-TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym);
-
+TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym, bool owned);
 TB_LinkerSymbol* tb_linker_new_symbol(TB_Linker* l, size_t len, const char* name);
 TB_LinkerSymbol* tb_linker_find_symbol(TB_Linker* l, TB_Slice name);
 TB_LinkerSymbol* tb_linker_find_symbol2(TB_Linker* l, const char* name);
 
+TB_LinkerSymbol* tb_linker_root_symbol(TB_Linker* l, TB_LinkerSymbol* sym);
 TB_LinkerSegment* tb_linker_find_segment(TB_Linker* linker, const char* name);
 
 // Sections
@@ -397,6 +432,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
 bool tb__linker_is_library_new(TB_Linker* l, const char* file_name);
 void tb__linker_module_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
 
+void tb_linker_push_symbol(TB_Linker* l, TB_LinkerSymbol* sym);
 bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p);
 void tb_linker_push_named(TB_Linker* l, const char* name);
 void tb_linker_mark_live(TB_Linker* l);
@@ -409,3 +445,5 @@ bool tb_linker_layout(TB_Linker* l);
 void tb_linker_print_map(TB_Linker* l);
 void tb_linker_complete_appends(TB_Linker* l);
 
+void tb_linker_read_imm(TB_Linker* l, int fd, size_t offset, size_t count, void* data);
+void tb_linker_read_req(TB_Linker* l, int fd, size_t offset, size_t count, void* data);

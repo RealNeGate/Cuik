@@ -111,21 +111,17 @@ static bool msvc_cli(TB_Linker* l, int argc, const char** argv) {
 // pretends to act like link.exe
 int run_link(int argc, const char** argv) {
     cuikperf_start("perf.spall");
+    bool is_msvc = true;
 
     // find toolchain details from Cuik
-    Cuik_Linker cl = { .toolchain = cuik_toolchain_host() };
+    Cuik_Linker cl = { .toolchain = is_msvc ? cuik_toolchain_msvc() : cuik_toolchain_gnu() };
     cl.toolchain.ctx = cl.toolchain.init();
     cuiklink_apply_toolchain_libs(&cl, true);
 
     int status = EXIT_SUCCESS;
-    CUIK_TIMED_BLOCK("driver") {
-        #ifdef _WIN32
-        TB_ExecutableType exe = TB_EXECUTABLE_PE;
-        #elif defined(__linux__)
-        TB_ExecutableType exe = TB_EXECUTABLE_ELF;
-        #else
-        #error "Wtf is this machine?"
-        #endif
+    {
+        cuikperf_region_start("driver", NULL);
+        TB_ExecutableType exe = is_msvc ? TB_EXECUTABLE_PE : TB_EXECUTABLE_ELF;
 
         bool use_threads = false;
         for (int i = 0; i < argc; i++) {
@@ -139,7 +135,7 @@ int run_link(int argc, const char** argv) {
         #if CUIK_ALLOW_THREADS
         TPool pool;
         if (use_threads) {
-            tpool_init(&pool, 6);
+            tpool_init(&pool, 1);
         }
         TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, use_threads ? &pool : NULL);
         #else
@@ -156,12 +152,7 @@ int run_link(int argc, const char** argv) {
 
         link_default_libs = dyn_array_create(char*, 32);
 
-        #ifdef _WIN32
-        bool status = msvc_cli(l, argc, argv);
-        #else
-        bool status = gnu_cli(l, argc, argv);
-        #endif
-
+        bool status = is_msvc ? msvc_cli(l, argc, argv) : gnu_cli(l, argc, argv);
         if (dyn_array_length(link_default_libs) > 0) {
             // finish processing the CLI objects, then handle the CLI defaultlibs, then everything else
             tb_linker_barrier(l);
@@ -186,6 +177,7 @@ int run_link(int argc, const char** argv) {
             cuikperf_region_end();
             status = EXIT_FAILURE;
         }
+        cuikperf_region_end();
 
         #if CUIK_ALLOW_THREADS
         if (use_threads) {

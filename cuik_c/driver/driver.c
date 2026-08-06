@@ -156,7 +156,7 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
-    if (0 && strcmp(name, "main") != 0) {
+    if (0 && strcmp(name, "func_5") != 0) {
         return;
     }
 
@@ -558,7 +558,7 @@ static void step_submit(Cuik_BuildStep* s, TPool* tp, mtx_t* mutex, bool has_sib
 
         if (tp) {
             // once dependencies are complete, we can invoke the step
-            futex_wait_eq(&s->done, dep_count);
+            tpool_wait_for_jobs2(tp, &s->done, dep_count);
         }
 
         // we can't run the step with broken deps, forward the error and early out
@@ -904,7 +904,7 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
         }
 
         // wait for the threads to finish
-        futex_wait_eq(&done, task_count);
+        tpool_wait_for_jobs2(tp, &done, task_count);
         #else
         fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
         abort();

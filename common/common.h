@@ -9,6 +9,7 @@
 #ifdef CONFIG_HAS_MIMALLOC
 #include <mimalloc.h>
 
+#define cuik_aligned_alloc(size, align) mi_aligned_alloc(align, size)
 #define cuik_malloc(size)        mi_malloc(size)
 #define cuik_calloc(count, size) mi_calloc(count, size)
 #define cuik_free(ptr)           mi_free(ptr)

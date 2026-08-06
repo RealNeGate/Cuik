@@ -179,11 +179,7 @@ void elf_append_object(TPool* pool, void** args) {
 
                 // place non-locals into the global symbol table
                 if (bind != TB_ELF64_STB_LOCAL) {
-                    TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
-                    if (new_s != s) {
-                        tb_arena_free(&linker_perm_arena, s, sizeof(TB_LinkerSymbol));
-                        s = new_s;
-                    }
+                    s = tb_linker_symbol_insert(l, s, true);
                 }
                 symbol_map[i] = s;
             }
@@ -245,15 +241,12 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
 
     if (l->jobs.pool != NULL) {
-        // finish up parsing all the object file tasks
-        int32_t old;
-        while (old = l->jobs.done, old != l->jobs.count) {
-            futex_wait(&l->jobs.done, old);
-        }
+        tpool_wait_for_jobs(l->jobs.pool, &l->jobs.done, &l->jobs.count);
     }
 
     CUIK_TIMED_BLOCK("resize barrier") {
-        namehs_resize_barrier(&l->symbols);
+        symhs_resize_barrier(&l->symbols);
+
         namehs_resize_barrier(&l->sections);
         namehs_resize_barrier(&l->imports);
     }
@@ -318,7 +311,7 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
     tb_linker_print_map(l);
 
     uint64_t entrypoint = 0;
-    TB_LinkerSymbol* entry_sym = tb_linker_symbol_find(tb_linker_find_symbol2(l, l->entrypoint));
+    TB_LinkerSymbol* entry_sym = tb_linker_find_symbol2(l, l->entrypoint);
     if (entry_sym == NULL) {
         printf("tblink: could not find entrypoint! %s\n", l->entrypoint);
         cuikperf_region_end();

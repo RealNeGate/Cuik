@@ -287,10 +287,7 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
             }
         }
 
-        int64_t old;
-        while (old = m->ipsccp_tracker[0], old != m->ipsccp_tracker[1]) {
-            futex_wait(&m->ipsccp_tracker[0], old);
-        }
+        tpool_wait_for_jobs(pool, &m->ipsccp_tracker[0], &m->ipsccp_tracker[1]);
         m->during_ipsccp = false;
         m->ipsccp_tracker[0] = m->ipsccp_tracker[1] = 0;
 
@@ -312,10 +309,7 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
             }
         }
 
-        while (old = m->ipsccp_tracker[0], old != m->ipsccp_tracker[1]) {
-            futex_wait(&m->ipsccp_tracker[0], old);
-        }
-
+        tpool_wait_for_jobs(pool, &m->ipsccp_tracker[0], &m->ipsccp_tracker[1]);
         // dump_ipsccp(m);
         #else
         abort(); // Unreachable

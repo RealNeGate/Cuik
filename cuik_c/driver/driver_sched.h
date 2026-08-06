@@ -62,7 +62,7 @@ void cuiksched_per_function(TPool* tp, CompilationUnit* cu, TB_Module* mod, void
             count++;
         }
 
-        futex_wait_eq(&done, count);
+        tpool_wait_for_jobs2(tp, &done, count);
         #else
         abort(); // Unreachable
         #endif
