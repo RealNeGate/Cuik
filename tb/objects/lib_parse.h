@@ -49,7 +49,7 @@ static long long tb__parse_decimal_int(size_t n, const char* str) {
 }
 
 bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser) {
-    *out_parser = (TB_ArchiveFileParser){ file };
+    *out_parser = (TB_ArchiveFileParser){ 0 };
 
     if (memcmp(&file.data[0], "!<arch>\n", 8) != 0) {
         // TODO(NeGate): maybe we should make a custom error stream...
@@ -75,6 +75,9 @@ bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser) 
         return false;
     }
     size_t second_content_length = tb__parse_decimal_int(sizeof(second->size), second->size);
+
+    out_parser->second_base = file_offset + sizeof(COFF_ArchiveMemberHeader);
+    out_parser->second = (TB_Slice){ &file.data[out_parser->second_base], second_content_length };
 
     // Extract number of symbols
     if (second_content_length >= 8) {
@@ -107,20 +110,18 @@ bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser) 
 }
 
 bool tb_archive_member_is_short(TB_ArchiveFileParser* restrict parser, size_t i) {
-    TB_Slice file = parser->file;
-    TB_Slice strtbl = parser->strtbl;
+    TB_Slice second = parser->second;
 
-    COFF_ArchiveMemberHeader* restrict sym = (COFF_ArchiveMemberHeader*) &file.data[parser->members[i]];
+    assert((parser->members[i] - parser->second_base) + sizeof(COFF_ArchiveMemberHeader) < second.length);
+    COFF_ArchiveMemberHeader* sym = (COFF_ArchiveMemberHeader*) &second.data[parser->members[i] - parser->second_base];
     uint32_t short_form_header = *(uint32_t*)sym->contents;
 
     return (short_form_header == 0xFFFF0000);
 }
 
-TB_ArchiveEntry tb_archive_member_get(TB_ArchiveFileParser* restrict parser, size_t i) {
-    TB_Slice file = parser->file;
+TB_ArchiveEntry tb_archive_member_get(TB_ArchiveFileParser* restrict parser, void* sym_header) {
     TB_Slice strtbl = parser->strtbl;
-
-    COFF_ArchiveMemberHeader* restrict sym = (COFF_ArchiveMemberHeader*) &file.data[parser->members[i]];
+    COFF_ArchiveMemberHeader* sym = sym_header;
     size_t len = tb__parse_decimal_int(sizeof(sym->size), sym->size);
 
     TB_Slice sym_name = { (uint8_t*) sym->name, strchr(sym->name, ' ') - sym->name };

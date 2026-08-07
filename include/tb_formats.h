@@ -120,7 +120,9 @@ typedef struct {
 } TB_ArchiveEntry;
 
 typedef struct {
-    TB_Slice file;
+    TB_Slice second;
+    size_t second_base;
+
     size_t pos;
 
     size_t member_count;

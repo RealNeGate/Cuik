@@ -14,7 +14,6 @@
 #include <tb.h>
 #endif
 
-#define NBHM_IS_SET
 #include <nbhm.h>
 
 #if 0 // CONFIG_HAS_TB
@@ -24,33 +23,36 @@
 typedef void TB_LinkerAppendFn(TPool* pool, void** args);
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 
-typedef enum {
-    // linker objects will first dispatch a bulk load
-    LINKER_CORO_LOAD,
-
-    // when the load completes they'll begin to
-    LINKER_CORO_INFLATE,
-
-    LINKER_CORO_DONE,
-} LinkerCoroStatus;
-
-// basically an object file
 typedef struct TB_LinkerObject TB_LinkerObject;
+typedef struct TB_LinkerArchive TB_LinkerArchive;
+
+// basically an object file or a library
 struct TB_LinkerObject {
     TB_Slice name;
-
     TB_Linker* linker;
-    TB_Slice content;
     uint64_t time;
 
     TB_LinkerObject* parent;
     TB_LinkerAppendFn* fn;
 
-    //
     struct {
         int fd;
         size_t offset;
-        LinkerCoroStatus status;
+        size_t size;
+
+        int stage;
+
+        // when opening linker inputs we need to peek at the first 4B and then
+        // do a bunch of other work so in practice we just load the first 4K and
+        // hope you need it (you usually do i think?)
+        //
+        // we could recycle these pages with a cheap freelist...
+        uint8_t* prefetch_page;
+
+        uint8_t* file_bottom;
+
+        size_t symbol_table_pos;
+        uint8_t* symbol_table;
     };
 
     #ifdef CONFIG_HAS_TB
@@ -58,15 +60,21 @@ struct TB_LinkerObject {
     TB_Module* module;
     #endif
 
-    // matters if we're doing lazy loading
-    _Atomic bool loaded;
-
     // Some section piece was marked that is contained by this object
     _Atomic bool live;
+
+    // Keep track of how many reads we need to complete before advancing, usually
+    // the answer is like 1 or 2.
+    _Atomic int io_rem;
 
     // Windows-specific debug stuff
     TB_LinkerSectionPiece* debug_s;
     TB_LinkerSectionPiece* debug_t;
+};
+
+struct TB_LinkerArchive {
+    TB_LinkerObject header;
+    TB_ArchiveFileParser parser;
 };
 
 typedef enum {
@@ -98,6 +106,8 @@ struct TB_LinkerSectionPiece {
         PIECE_BSS,
         // Write from memory
         PIECE_BUFFER,
+        // Range within a file
+        PIECE_FILE,
         // Write TB_ModuleSection
         PIECE_MODULE_SECTION,
         // Write the TB module's pdata section
@@ -129,6 +139,13 @@ struct TB_LinkerSectionPiece {
     _Atomic(TB_LinkerPieceFlags) flags;
 
     union {
+        // kind=PIECE_FILE
+        struct {
+            uint32_t file_offset;
+            uint32_t file_size;
+            int fd;
+        };
+
         // kind=PIECE_BUFFER
         struct {
             size_t buffer_size;
@@ -240,7 +257,6 @@ typedef struct {
 struct TB_LinkerSymbol {
     TB_Slice name;
 
-
     TB_LinkerSymbolTag  tag;
     TB_LinkerComdatRule comdat;
 
@@ -261,7 +277,8 @@ struct TB_LinkerSymbol {
         uint32_t imagebase;
 
         struct {
-            TB_LinkerObject* obj;
+            TB_LinkerArchive* lib;
+            uint32_t offset;
         } lazy;
 
         // for IR module symbols
@@ -292,7 +309,7 @@ typedef struct {
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
-    FileMap (*find_lib)(TB_Linker* l, const char* file_name, char* out_path);
+    int  (*find_lib)(TB_Linker* l, const char* file_name, char* out_path, size_t* out_size);
     void (*append_module)(TPool* pool, void** args);
     void (*append_object)(TPool* pool, void** args);
     void (*append_library)(TPool* pool, void** args);
@@ -302,17 +319,8 @@ typedef struct TB_LinkerVtbl {
 
 typedef void(*RelocParser)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
 
-typedef struct {
-    int fd;
-    size_t offset, size;
-    char* data;
-
-    // completion
-    TB_LinkerObject* obj;
-    TB_LinkerAppendFn* fn;
-} FileReadReq;
-
-typedef struct TB_Linker {
+typedef struct TB_Linker TB_Linker;
+struct TB_Linker {
     TB_Arch target_arch;
 
     const char* entrypoint;
@@ -344,7 +352,7 @@ typedef struct TB_Linker {
     // During symbol inflation, it'll represent which TB_LinkerObject* are waiting to be parsed.
     // During Mark-Live, we track which TB_LinkerSectionPiece* have not been resolved yet.
     DynArray(void*) worklist;
-    bool defer_jobs;
+    _Atomic bool defer_jobs;
 
     size_t trampoline_pos;  // relative to the .text section
     TB_Emitter trampolines; // these are for calling imported functions
@@ -352,18 +360,6 @@ typedef struct TB_Linker {
     // Exporter info:
     size_t output_cap;
     uint8_t* output;
-
-    // TODO(NeGate): get rid of this lock and this shitty version of IO handling
-    struct {
-        mtx_t io_lock;
-        thrd_t io_thread;
-        FileReadReq io_req;
-
-        _Atomic Futex io_running;
-
-        _Alignas(64) Futex io_head;
-        _Alignas(64) Futex io_tail;
-    };
 
     // Windows specific:
     //   on windows, we use DLLs to interact with the OS so
@@ -386,8 +382,9 @@ typedef struct TB_Linker {
         Futex done;
         Futex count;
     } jobs;
-} TB_Linker;
+};
 
+extern thread_local int linker_thread_id;
 extern thread_local bool linker_thread_init;
 extern thread_local TB_Arena linker_tmp_arena;
 extern thread_local TB_Arena linker_perm_arena;
@@ -401,7 +398,7 @@ void tb_linker_associate(TB_Linker* l, TB_LinkerSectionPiece* a, TB_LinkerSectio
 size_t tb__get_symbol_pos(TB_Symbol* s);
 
 TB_LinkerSymbol* tb_linker_import_symbol(TB_Linker* l, TB_Slice name);
-void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject* obj);
+void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym);
 
 size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail);
 void tb_linker_symbol_weak(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerSymbol* alt);
@@ -445,5 +442,8 @@ bool tb_linker_layout(TB_Linker* l);
 void tb_linker_print_map(TB_Linker* l);
 void tb_linker_complete_appends(TB_Linker* l);
 
-void tb_linker_read_imm(TB_Linker* l, int fd, size_t offset, size_t count, void* data);
-void tb_linker_read_req(TB_Linker* l, int fd, size_t offset, size_t count, void* data);
+void tb_linker_read_imm(int fd, size_t offset, size_t count, void* data);
+uint8_t* tb_linker_read_req(TB_Linker* l, int fd, size_t offset, size_t count, TB_LinkerObject* obj);
+void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn);
+
+void tb_linker_worker_init(TB_Linker* l);

@@ -18,17 +18,39 @@ bool tb_coff_parse_init(TB_COFF_Parser* restrict parser) {
     if (file.length < string_table_pos) return false;
 
     parser->symbol_count = header->symbol_count;
-    parser->symbol_table = header->symbol_table;
+    parser->symbol_table_pos = header->symbol_table;
     parser->section_count = header->section_count;
+    parser->symbol_table = (TB_Slice){
+        .data   = &file.data[header->symbol_table],
+        .length = header->symbol_count * sizeof(COFF_Symbol)
+    };
     parser->string_table = (TB_Slice){
-        .length = file.length - string_table_pos,
-        .data   = &file.data[string_table_pos]
+        .data   = &file.data[string_table_pos],
+        .length = file.length - string_table_pos
     };
 
     return true;
 }
 
-bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSection* restrict out_sec) {
+TB_Slice tb_coff_section_name(TB_COFF_Parser* parser, COFF_SectionHeader* sec) {
+    // Parse string table name stuff
+    if (sec->name[0] == '/') {
+        // string table access
+        int offset = parse_decimal_int(7, &sec->name[1]);
+        if (offset >= parser->string_table.length) {
+            return (TB_Slice){ 0 };
+        }
+
+        const uint8_t* data = &parser->string_table.data[offset];
+        return (TB_Slice){ data, ideally_fast_strlen((const char*) data) };
+    } else {
+        // normal inplace string
+        size_t len = ideally_fast_strlen(sec->name);
+        return (TB_Slice){ (uint8_t*) sec->name, len };
+    }
+}
+
+bool tb_coff_parse_section(TB_COFF_Parser* parser, size_t i, TB_ObjectSection* restrict out_sec) {
     TB_Slice file = parser->file;
     size_t section_offset = sizeof(COFF_FileHeader) + (i * sizeof(COFF_SectionHeader));
 
@@ -115,62 +137,14 @@ TB_ObjectSymbolType classify_symbol_type(uint16_t st_class) {
     }
 }
 
-size_t tb_coff_skim_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym) {
-    TB_Slice file = parser->file;
-    size_t symbol_offset = parser->symbol_table + (i * sizeof(COFF_Symbol));
-
-    if (file.length < symbol_offset + sizeof(COFF_Symbol)) {
-        return 0;
-    }
-
-    COFF_Symbol* sym = (COFF_Symbol*) &file.data[symbol_offset];
-    *out_sym = (TB_ObjectSymbol) {
-        .ordinal = i,
-        .type = sym->storage_class == 2 ? TB_OBJECT_SYMBOL_EXTERN : TB_OBJECT_SYMBOL_UNKNOWN,
-        .section_num = sym->section_number,
-        .value = sym->value
-    };
-
-    // Parse string table name stuff
-    if (sym->long_name[0] == 0) {
-        // string table access (read a cstring)
-        // TODO(NeGate): bounds check this
-        const uint8_t* data = &parser->string_table.data[sym->long_name[1]];
-        out_sym->name = (TB_Slice){ data, ideally_fast_strlen((const char*) data) };
-    } else {
-        out_sym->name.data = sym->short_name;
-
-        // normal inplace string
-        uint64_t name;
-        memcpy(&name, sym->short_name, 8);
-
-        static const uint64_t mask = (~(uint64_t)0) / 255 * (uint64_t)(0);
-        uint64_t x = name ^ mask;
-        x = ((x - 0x0101010101010101ull) & ~x & 0x8080808080808080ull);
-        if (x) {
-            out_sym->name.length = ((__builtin_ffsll(x) / 8) - 1);
-        } else {
-            out_sym->name.length = 8;
-        }
-    }
-
-    // TODO(NeGate): Process aux symbols
-    if (sym->aux_symbols_count) {
-        out_sym->extra = &sym[1];
-    }
-
-    return sym->aux_symbols_count + 1;
-}
-
 size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym) {
     TB_Slice file = parser->file;
-    size_t symbol_offset = parser->symbol_table + (i * sizeof(COFF_Symbol));
-
-    if (file.length < symbol_offset + sizeof(COFF_Symbol)) {
+    size_t symbol_offset = i * sizeof(COFF_Symbol);
+    if (symbol_offset + sizeof(COFF_Symbol) >= parser->symbol_table.length) {
         return 0;
     }
 
-    COFF_Symbol* sym = (COFF_Symbol*) &file.data[symbol_offset];
+    COFF_Symbol* sym = (COFF_Symbol*) &parser->symbol_table.data[symbol_offset];
     *out_sym = (TB_ObjectSymbol) {
         .ordinal = i,
         .type = classify_symbol_type(sym->storage_class),
@@ -204,8 +178,6 @@ size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_Object
     // TODO(NeGate): Process aux symbols
     if (sym->aux_symbols_count) {
         out_sym->extra = &sym[1];
-
-        // FOR_N(j, 0, sym->aux_symbols_count) {}
     }
 
     return sym->aux_symbols_count + 1;

@@ -1,3 +1,4 @@
+#if 0
 #include "linker.h"
 #include <tb_elf.h>
 
@@ -65,7 +66,8 @@ void elf_append_library(TPool* pool, void** args) {
     if (ar_file.length >= 4 && memcmp(ar_file.data, (uint8_t[4]){ 0x7F, 'E', 'L', 'F' }, 4) == 0) {
         __debugbreak();
     } else if (ar_file.length >= 8 && memcmp(ar_file.data, "!<arch>\n", 8) == 0) {
-        append_archive(pool, lib, slash);
+        // append_archive(pool, lib, slash);
+        assert(0 && "TODO");
     } else {
         elf_append_script(pool, lib, slash);
     }
@@ -433,10 +435,12 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
 
 TB_LinkerVtbl tb__linker_elf = {
     .init           = elf_init,
-    .find_lib       = elf_find_lib,
+    // .find_lib       = elf_find_lib,
     .append_object  = elf_append_object,
     .append_library = elf_append_library,
     .parse_reloc    = elf_parse_reloc,
     .export         = elf_export
 };
+#endif
 
+TB_LinkerVtbl tb__linker_elf;

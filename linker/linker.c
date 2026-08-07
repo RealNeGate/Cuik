@@ -36,6 +36,21 @@ static bool symhs_cmp(const void* a, const void* b) {
     return aa->length == bb->length && memcmp(aa->data, bb->data, aa->length) == 0;
 }
 
+static uint32_t objhs_hash(const void* a) {
+    const TB_LinkerObject* obj = a;
+
+    uint32_t h = 0;
+    h = tb__murmur3_mix(h, obj->fd);
+    h = tb__murmur3_mix(h, obj->offset);
+    return tb__murmur3_finalize(h, 8);
+}
+
+static bool objhs_cmp(const void* a, const void* b) {
+    const TB_LinkerObject* aa = a;
+    const TB_LinkerObject* bb = b;
+    return aa->fd == bb->fd && aa->offset == bb->offset;
+}
+
 static uint32_t strhs_hash(const void* a) {
     uint32_t h = 0x811C9DC5;
     const char* str = a;
@@ -60,6 +75,10 @@ static bool strhs_cmp(const void* a, const void* b) {
 #define NBHM_FN(n) symhs_ ## n
 #include <nbhm.h>
 
+#define NBHM_IS_SET
+#define NBHM_FN(n) objhs_ ## n
+#include <nbhm.h>
+
 thread_local bool linker_thread_init;
 thread_local TB_Arena linker_tmp_arena;
 thread_local TB_Arena linker_perm_arena;
@@ -82,73 +101,42 @@ TB_API TB_ExecutableType tb_system_executable_format(TB_System s) {
 ////////////////////////////////
 static void append(TB_Linker* l, TB_LinkerObject* obj, TB_LinkerAppendFn* fn);
 
-static void* muh_hs_alloc(size_t size) {
-    void* ptr = cuik_malloc(size);
-    memset(ptr, 0, size);
-    return ptr;
-}
-
-static void muh_hs_free(void* ptr, size_t size) {
-    cuik_free(ptr);
-}
-
-void tb_linker_read_imm(TB_Linker* l, int fd, size_t offset, size_t count, void* data) {
+void tb_linker_read_imm(int fd, size_t offset, size_t size, void* data) {
     cuikperf_region_start("pread", NULL);
     pread(fd, data, size, offset);
     cuikperf_region_end();
 }
 
-void tb_linker_read_req(TB_Linker* l, int fd, size_t offset, size_t count, void* data) {
-    // wait for space
-    uint64_t t = l->io_tail, h;
-    while (h = l->io_head, h == t) {
-        futex_wait(&l->io_head, t);
-    }
+uint8_t* tb_linker_read_req(TB_Linker* l, int fd, size_t offset, size_t size, TB_LinkerObject* obj) {
+    assert(obj->fn != NULL);
 
-    mtx_lock(&l->io_lock);
-    l->io_req = (FileReadReq){ fd, offset, count, data };
-    mtx_unlock(&l->io_lock);
-
-    l->io_tail++;
-    futex_signal(&l->io_tail);
-}
-
-static void linker_io_worker(TPool* pool, void** args) {
-    TB_Linker* l = args[0];
-
-    cuikperf_region_start("I/O", NULL);
-    while (l->io_running == 1) {
-        // wait for new requests
-        uint64_t t, h = l->io_head;
-        while (t = l->io_tail, h == t) {
-            futex_wait(&l->io_tail, t);
-            if (l->io_running == 0) {
-                goto done;
-            }
-        }
-
-        // grab request
-        mtx_lock(&l->io_lock);
-        FileReadReq req = l->io_req;
-        mtx_unlock(&l->io_lock);
-
-        // wait for reads to finish
-        cuikperf_region_start("pread", NULL);
-        pread(req.fd, req.data, req.size, req.offset);
-        cuikperf_region_end();
-
-        l->io_head++;
-        futex_signal(&l->io_head);
-
-        // queue up the next task
-        l->jobs.count += 1;
-        tpool_add_task(l->jobs.pool, req.fn, req.obj);
-    }
-    done:
+    cuikperf_region_start("mmap", NULL);
+    uint8_t* buf = cuik__valloc(size);
     cuikperf_region_end();
 
-    l->io_running = 2;
-    futex_signal(&l->io_running);
+    log_debug("read_req(%zu, %zu, %p)", offset, size, buf);
+
+    cuikperf_region_start("read_req", NULL);
+    tpool_io_read(l->jobs.pool, fd, offset, size, buf, obj->fn, obj, NULL, NULL, &obj->io_rem);
+    cuikperf_region_end();
+    return buf;
+}
+
+void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn) {
+    assert(fn != NULL);
+    log_debug("read_req(%zu, %zu, %p)", offset, size, buffer);
+
+    cuikperf_region_start("read_req", NULL);
+    tpool_io_read(l->jobs.pool, fd, offset, size, buffer, fn, l, buffer, ((char*) buffer) + size, NULL);
+    cuikperf_region_end();
+}
+
+void tb_linker_worker_init(TB_Linker* l) {
+    if (!linker_thread_init) {
+        linker_thread_init = true;
+        tb_arena_create(&linker_perm_arena, "LinkerPerm");
+        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
+    }
 }
 
 TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
@@ -165,16 +153,15 @@ TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
     l->objects  = nbhs_alloc(256);
     l->unresolved_symbols = nbhs_alloc(16);
 
+    CUIK_TIMED_BLOCK("I/O thread prep") {
+        tpool_io_prep_all(l->jobs.pool);
+    }
+
     switch (exe) {
         case TB_EXECUTABLE_PE: l->vtbl = tb__linker_pe; break;
         case TB_EXECUTABLE_ELF: l->vtbl = tb__linker_elf; break;
         default: break;
     }
-
-    // create I/O thread
-    l->io_running = 1;
-    mtx_init(&l->io_lock, mtx_plain);
-    // tpool_add_task(l->jobs.pool, linker_io_worker, l);
 
     l->vtbl.init(l);
     return l;
@@ -267,11 +254,7 @@ void tb_linker_print_map(TB_Linker* l) {
 }
 
 bool tb__linker_is_library_new(TB_Linker* l, const char* file_name) {
-    if (!linker_thread_init) {
-        linker_thread_init = true;
-        tb_arena_create(&linker_perm_arena, "LinkerPerm");
-        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
-    }
+    tb_linker_worker_init(l);
 
     size_t len = strlen(file_name);
     char* str = tb_arena_alloc(&linker_perm_arena, len + 1);
@@ -284,6 +267,7 @@ bool tb__linker_is_library_new(TB_Linker* l, const char* file_name) {
 }
 
 static void append(TB_Linker* l, TB_LinkerObject* obj, TB_LinkerAppendFn* fn) {
+    obj->fn = fn;
     if (l->jobs.pool != NULL && !l->defer_jobs) {
         #if CUIK_ALLOW_THREADS
         l->jobs.count += 1;
@@ -292,38 +276,43 @@ static void append(TB_Linker* l, TB_LinkerObject* obj, TB_LinkerAppendFn* fn) {
         abort(); // Unreachable
         #endif
     } else {
-        obj->fn = fn;
         dyn_array_put(l->worklist, obj);
     }
 }
 
 void tb_linker_append_object(TB_Linker* l, const char* file_name) {
-    if (!linker_thread_init) {
-        linker_thread_init = true;
-        tb_arena_create(&linker_perm_arena, "LinkerPerm");
-        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
-    }
+    tb_linker_worker_init(l);
 
     CUIK_TIMED_BLOCK("append_obj") {
-        FileMap fm = open_file_map_read(file_name);
-        TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
-        *obj_file = (TB_LinkerObject){
-            { (const uint8_t*) file_name, strlen(file_name) },
-            l,
-            { fm.data, fm.size },
-            atomic_fetch_add(&l->time, 0x100000000),
+        size_t size;
+        int fd = open_file(file_name, &size);
+        if (fd < 0) {
+            printf("tblink: could not find file: %s\n", file_name);
+            cuikperf_region_end();
+            return;
+        }
+
+        TB_LinkerObject* obj = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
+        *obj = (TB_LinkerObject){
+            .name   = { (const uint8_t*) file_name, strlen(file_name) },
+            .linker = l,
+            .time   = atomic_fetch_add(&l->time, 0x100000000),
+            .fn     = l->vtbl.append_object,
+            .fd     = fd,
+            .size   = size,
         };
-        append(l, obj_file, l->vtbl.append_object);
+
+        // Push to a pool thread so it can create read requests
+        l->jobs.count += 1;
+
+        obj->io_rem = 1;
+        obj->prefetch_page = tb_linker_read_req(l, obj->fd, 0, 4096, obj);
     }
 }
 
 void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
     #ifdef CONFIG_HAS_TB
-    if (!linker_thread_init) {
-        linker_thread_init = true;
-        tb_arena_create(&linker_perm_arena, "LinkerPerm");
-        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
-    }
+    tb_linker_worker_init(l);
 
     size_t newlen = sizeof("Module")-1;
     char* newstr = linker_newstr(newlen, "Module");
@@ -335,6 +324,7 @@ void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
         .module = m,
         atomic_fetch_add(&l->time, 0x100000000),
     };
+
     append(l, lib_file, l->vtbl.append_module);
     #else
     assert(0 && "Not supported");
@@ -342,32 +332,32 @@ void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
 }
 
 static void linker_job_find_lib(TPool* pool, void** args) {
-    if (!linker_thread_init) {
-        linker_thread_init = true;
-        tb_arena_create(&linker_perm_arena, "LinkerPerm");
-        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
-    }
-
     TB_Linker* l = args[0];
     char* str = args[1];
     uint64_t t = (uint64_t) args[2];
 
     cuikperf_region_start("find lib", str);
+    tb_linker_worker_init(l);
+
     char resolved_path[FILENAME_MAX];
-    FileMap fm = l->vtbl.find_lib(l, str, resolved_path);
-    if (fm.data != NULL) {
+
+    size_t size;
+    int fd = l->vtbl.find_lib(l, str, resolved_path, &size);
+    if (fd >= 0) {
         log_info("Loading library: %s", resolved_path);
         size_t newlen = strlen(resolved_path);
         char* newstr = linker_newstr(newlen, resolved_path);
 
-        TB_LinkerObject* lib_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
-        *lib_file = (TB_LinkerObject){
-            { (const uint8_t*) newstr, newlen },
-            l,
-            { fm.data, fm.size },
-            t,
-        };
-        append(l, lib_file, l->vtbl.append_library);
+        TB_LinkerArchive* lib_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerArchive));
+        *lib_file = (TB_LinkerArchive){ {
+                .name   = { (const uint8_t*) newstr, newlen },
+                .linker = l,
+                .time   = t,
+                .fd     = fd,
+                .size   = size
+            } };
+
+        append(l, &lib_file->header, l->vtbl.append_library);
     }
 
     if (l->jobs.pool != NULL) {
@@ -378,11 +368,7 @@ static void linker_job_find_lib(TPool* pool, void** args) {
 }
 
 void tb_linker_append_library(TB_Linker* l, const char* file_name) {
-    if (!linker_thread_init) {
-        linker_thread_init = true;
-        tb_arena_create(&linker_perm_arena, "LinkerPerm");
-        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
-    }
+    tb_linker_worker_init(l);
 
     size_t len = strlen(file_name);
     char* str = tb_arena_alloc(&linker_perm_arena, len + 1);
@@ -426,7 +412,6 @@ void tb_linker_barrier(TB_Linker* l) {
     cuikperf_region_start("barrier", NULL);
     if (l->jobs.pool != NULL) {
         #if CUIK_ALLOW_THREADS
-        // process all items on the worklist
         while (dyn_array_length(l->worklist)) {
             TB_LinkerObject* obj = dyn_array_pop(l->worklist);
 
@@ -488,11 +473,6 @@ void tb_linker_complete_appends(TB_Linker* l) {
         l->defer_jobs = false;
     } while (repeat);
     cuikperf_region_end();
-
-    l->io_running = 0;
-    l->io_tail = UINT64_MAX;
-    futex_signal(&l->io_tail);
-    futex_wait_eq(&l->io_running, 2);
 }
 
 void tb_linker_destroy(TB_Linker* l) {
@@ -695,22 +675,6 @@ void tb_linker_symbol_weak(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerSymbol* 
     } while (sym != next);
 }
 
-void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject* obj) {
-    bool expected = false;
-    if (atomic_compare_exchange_strong(&obj->loaded, &expected, true)) {
-        size_t slash = 0;
-        FOR_REV_N(i, 0, obj->name.length) {
-            if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
-                slash = i + 1;
-                break;
-            }
-        }
-
-        log_debug("Loaded %.*s for %.*s", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
-        append(l, obj, l->vtbl.append_object);
-    }
-}
-
 static const char* tag_name(int tag) {
     switch (tag) {
         case TB_LINKER_SYMBOL_UNKNOWN: return "unknown";
@@ -728,8 +692,8 @@ static bool tb_linker_symbol_merge(TB_Linker* l, TB_LinkerSymbol* a, TB_LinkerSy
         // pick the smaller ordinal
         return a->import.ordinal < b->import.ordinal;
     } else if (a->tag == TB_LINKER_SYMBOL_LAZY && b->tag == TB_LINKER_SYMBOL_LAZY) {
-        // we assume the earlier lazy symbol is the one we use
-        return a->lazy.obj->time > b->lazy.obj->time;
+        // just take the earlier symbol, this might count as a duplicate sym error ngl
+        return false;
     } else if (a->tag == TB_LINKER_SYMBOL_LAZY || b->tag == TB_LINKER_SYMBOL_LAZY) {
         // If the symbol is already defined, don't load the lazy one.
         //
@@ -742,11 +706,11 @@ static bool tb_linker_symbol_merge(TB_Linker* l, TB_LinkerSymbol* a, TB_LinkerSy
         } else {
             // Whichever symbol is lazy gets resolved
             if (b->tag == TB_LINKER_SYMBOL_LAZY) {
-                tb_linker_lazy_resolve(l, b, b->lazy.obj);
+                tb_linker_lazy_resolve(l, b);
                 return true;
             } else {
                 assert(a->tag == TB_LINKER_SYMBOL_LAZY);
-                tb_linker_lazy_resolve(l, a, a->lazy.obj);
+                tb_linker_lazy_resolve(l, a);
                 return false;
             }
         }
@@ -787,6 +751,46 @@ static bool tb_linker_symbol_merge(TB_Linker* l, TB_LinkerSymbol* a, TB_LinkerSy
         }
         return false;
     }
+}
+
+void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym) {
+    TB_LinkerArchive* lib = sym->lazy.lib;
+    uint32_t offset = sym->lazy.offset;
+
+    __builtin_debugtrap();
+
+    // create object file, we don't know the name
+    // of it just yet but that'll be filled in soon.
+    TB_LinkerObject* obj = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
+    *obj = (TB_LinkerObject){
+        .linker = l,
+        .time   = lib->header.time + offset,
+        .parent = &lib->header,
+        .fd = lib->header.fd, .offset = offset,
+        .fn = l->vtbl.append_object,
+    };
+
+    TB_LinkerObject* k = objhs_intern(&l->objects, obj);
+    if (k != obj) {
+        tb_arena_free(&linker_perm_arena, k, sizeof(TB_LinkerObject));
+        return;
+    }
+
+    log_warn("TODO: Load object file at %d:%zu\n", lib->header.fd, offset);
+
+    // obj->io_rem = 1;
+    // obj->prefetch_page = tb_linker_read_req(l, lib->header.fd, offset, 4096, obj);
+
+    #if 0
+    size_t slash = 0;
+    FOR_REV_N(i, 0, obj->name.length) {
+        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
+            slash = i + 1;
+            break;
+        }
+    }
+    log_debug("Loaded %.*s for %.*s", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
+    #endif
 }
 
 // if owned is true, the sym can be deleted if it's not inserted
@@ -909,14 +913,10 @@ void tb_linker_export_piece(TPool* pool, void** args) {
     cuikperf_region_start("export", NULL);
 
     TB_Linker* l = args[0];
+    tb_linker_worker_init(l);
+
     uint8_t* file = l->output;
     TB_LinkerSectionPiece* p = args[1];
-
-    if (!linker_thread_init) {
-        linker_thread_init = true;
-        tb_arena_create(&linker_perm_arena, "LinkerPerm");
-        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
-    }
 
     assert((p->flags & TB_LINKER_PIECE_LIVE) || p->kind == PIECE_BSS);
 
@@ -1395,15 +1395,9 @@ static void tb_linker_mark_piece(TPool* pool, void** args) {
     cuikperf_region_start("visit", NULL);
 
     TB_Linker* l = args[0];
-    uint8_t* file = l->output;
+    tb_linker_worker_init(l);
+
     TB_LinkerSectionPiece* p = args[1];
-
-    if (!linker_thread_init) {
-        linker_thread_init = true;
-        tb_arena_create(&linker_perm_arena, "LinkerPerm");
-        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
-    }
-
     if (p->obj) {
         atomic_store_explicit(&p->obj->live, true, memory_order_relaxed);
     }

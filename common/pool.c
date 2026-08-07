@@ -22,6 +22,9 @@
 //
 // https://github.com/colrdavidson/workpool/blob/main/pool.h
 #include "pool.h"
+#include "common.h"
+#include "futex.h"
+#include <stdatomic.h>
 
 #if CUIK_ALLOW_THREADS
 #include <threads.h>
@@ -34,249 +37,34 @@
 // cross-platform thread wrappers, because microsoft couldn't be arsed to take 5 seconds and
 // do this and save all the junior devs and codebases everywhere from this pile of nonsense.
 #if defined(__linux__) || defined(__APPLE__)
-
-#include <stdatomic.h>
 #include <unistd.h>
 #include <errno.h>
-
-typedef pthread_t TPool_ThreadHandle;
-
-#define tpool_thread_start(t) pthread_create(&(t)->thread, NULL, )
-#define tpool_thread_end(t)   pthread_join((t)->thread, NULL)
-
 #elif defined(_WIN32)
-
 #include <windows.h>
 #include <process.h>
-
 typedef ptrdiff_t ssize_t;
 #endif
-
-#include <stdatomic.h>
 
 #define TPOOL_LOAD(val) atomic_load(&val)
 #define TPOOL_CAS(addr, expected, desired) atomic_compare_exchange_weak(addr, &expected, desired)
 #define TPOOL_ATOMIC_FUTEX_INC(val) (atomic_fetch_add_explicit(&val, 1, memory_order_acquire))
 #define TPOOL_ATOMIC_FUTEX_DEC(val) (atomic_fetch_sub_explicit(&val, 1, memory_order_acquire))
-#define __debugbreak() __builtin_trap()
+#define __debugbreak() __builtin_debugtrap()
 
-// cross-platform futex, because we can't just have nice things. All the popular platforms have them under the hood,
-// but giving them to users? NO! Users are too stupid to have nice things, save them for the fedora-wearing elite.
-#if defined(__linux__)
-
-#include <linux/futex.h>
-#include <sys/syscall.h>
-
-void _tpool_signal(TPool_Futex *addr) {
-    int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0);
-    if (ret == -1) {
-        perror("Futex wake");
-        __debugbreak();
-    }
-}
-
-void _tpool_broadcast(TPool_Futex *addr) {
-    int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, INT32_MAX, NULL, NULL, 0);
-    if (ret == -1) {
-        perror("Futex wake");
-        __debugbreak();
-    }
-}
-
-void _tpool_wait(TPool_Futex *addr, TPool_Futex val) {
-    for (;;) {
-        int ret = syscall(SYS_futex, addr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, val, NULL, NULL, 0);
-        if (ret == -1) {
-            if (errno != EAGAIN) {
-                perror("Futex wait");
-                __debugbreak();
-            } else {
-                return;
-            }
-        } else if (ret == 0) {
-            if (*addr != val) {
-                return;
-            }
-        }
-    }
-}
-
-#elif defined(__APPLE__)
-
-#define UL_COMPARE_AND_WAIT	0x00000001
-#define ULF_WAKE_ALL        0x00000100
-#define ULF_NO_ERRNO        0x01000000
-
-/* timeout is specified in microseconds */
-int __ulock_wait(uint32_t operation, void *addr, uint64_t value, uint32_t timeout);
-int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
-
-void _tpool_signal(TPool_Futex *addr) {
-    for (;;) {
-        int ret = __ulock_wake(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO, addr, 0);
-        if (ret >= 0) {
-            return;
-        }
-        ret = -ret;
-        if (ret == EINTR || ret == EFAULT) {
-            continue;
-        }
-        if (ret == ENOENT) {
-            return;
-        }
-        printf("futex wake fail?\n");
-        __debugbreak();
-    }
-}
-
-void _tpool_broadcast(TPool_Futex *addr) {
-    for (;;) {
-        int ret = __ulock_wake(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO | ULF_WAKE_ALL, addr, 0);
-        if (ret >= 0) {
-            return;
-        }
-        ret = -ret;
-        if (ret == EINTR || ret == EFAULT) {
-            continue;
-        }
-        if (ret == ENOENT) {
-            return;
-        }
-        printf("futex wake fail?\n");
-        __debugbreak();
-    }
-}
-
-void _tpool_wait(TPool_Futex *addr, TPool_Futex val) {
-    for (;;) {
-        int ret = __ulock_wait(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO, addr, val, 0);
-        if (ret >= 0) {
-            if (*addr != val) {
-                return;
-            }
-            continue;
-        }
-        ret = -ret;
-        if (ret == EINTR || ret == EFAULT) {
-            continue;
-        }
-        if (ret == ENOENT) {
-            return;
-        }
-
-        printf("futex wait fail?\n");
-        __debugbreak();
-    }
-}
-
-#elif defined(_WIN32)
-void _tpool_signal(TPool_Futex *addr) {
-    WakeByAddressSingle((void *)addr);
-}
-
-void _tpool_broadcast(TPool_Futex *addr) {
-    WakeByAddressAll((void *)addr);
-}
-
-void _tpool_wait(TPool_Futex *addr, TPool_Futex val) {
-    for (;;) {
-        int ret = WaitOnAddress(addr, (void *)&val, sizeof(val), INFINITE);
-        if (*addr != val) break;
-    }
-}
-
-#elif defined(__FreeBSD__)
-
-#include <sys/types.h>
-#include <sys/umtx.h>
-
-void _tpool_signal(TPool_Futex *addr) {
-    _umtx_op(addr, UMTX_OP_WAKE, 1, 0, 0);
-}
-
-void _tpool_broadcast(TPool_Futex *addr) {
-    _umtx_op(addr, UMTX_OP_WAKE, INT32_MAX, 0, 0);
-}
-
-void _tpool_wait(TPool_Futex *addr, TPool_Futex val) {
-    for (;;) {
-        int ret = _umtx_op(addr, UMTX_OP_WAIT_UINT, val, 0, NULL);
-        if (ret == 0) {
-            if (errno == ETIMEDOUT || errno == EINTR) {
-                continue;
-            }
-
-            perror("Futex wait");
-            __debugbreak();
-        } else if (ret == 0) {
-            if (*addr != val) {
-                return;
-            }
-        }
-    }
-}
-
-#elif defined(__OpenBSD__)
-
-#include <sys/futex.h>
-
-void _tpool_signal(TPool_Futex *addr) {
-    for (;;) {
-        int ret = futex(addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL);
-        if (ret == -1) {
-            if (errno == ETIMEDOUT || errno == EINTR) {
-                continue;
-            }
-
-            perror("Futex wake");
-            __debugbreak();
-        } else if (ret == 1) {
-            return;
-        }
-    }
-}
-
-void _tpool_broadcast(TPool_Futex *addr) {
-    for (;;) {
-        int ret = futex(addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, INT32_MAX, NULL, NULL);
-        if (ret == -1) {
-            if (errno == ETIMEDOUT || errno == EINTR) {
-                continue;
-            }
-
-            perror("Futex wake");
-            __debugbreak();
-        } else if (ret > 0) {
-            return;
-        }
-    }
-}
-
-void _tpool_wait(TPool_Futex *addr, TPool_Futex val) {
-    for (;;) {
-        int ret = futex(addr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, val, NULL, NULL);
-        if (ret == -1) {
-            if (*addr != val) {
-                return;
-            }
-
-            if (errno == ETIMEDOUT || errno == EINTR) {
-                continue;
-            }
-
-            perror("Futex wait");
-            __debugbreak();
-        }
-    }
-}
-
-#endif
-
-TPool_Thread_Local int tpool_current_thread_idx;
+TPool_Thread_Local bool tpool_is_pool_thread = false;
+TPool_Thread_Local int tpool_current_thread_idx = -1;
 
 #define GRAB_SUCCESS 0
 #define GRAB_EMPTY   1
 #define GRAB_FAILED  2
+
+// SPSC
+typedef struct {
+    _Alignas(64) bool is_sleep;
+    _Alignas(64) Futex io_head;
+    _Alignas(64) Futex io_tail;
+    _Alignas(64) TPool_ReadReq entries[64];
+} TPool_SPSC;
 
 typedef struct {
     TPool_Atomic ssize_t size;
@@ -290,12 +78,30 @@ typedef struct {
     TPool_Atomic(TPool_RingBuffer *) ring;
 } TPool_Queue;
 
+typedef struct {
+    _Alignas(64) bool is_sleep;
+    _Alignas(64) Futex io_head;
+    _Alignas(64) Futex io_tail;
+    _Alignas(64) TPool_ReadReq entries[64];
+} TPool_IOQueue;
+
 typedef struct TPool_Thread {
     thrd_t thread;
     int idx;
 
     TPool_Queue queue;
     struct TPool *pool;
+
+    // A pair thread is used to submit async I/O requests to, it's
+    // only created whenever that happens because I really only need
+    // it for the TB linker
+    _Atomic bool has_pair;
+    thrd_t pair_thread;
+
+    TPool_IOQueue* io_submit;
+    // These are where completed I/O tasks go, other threads could
+    // steal from here.
+    TPool_Queue io_complete;
 } TPool_Thread;
 
 TPool_RingBuffer *tpool_ring_make(ssize_t size) {
@@ -335,84 +141,89 @@ uint64_t cuik_time_in_nanos(void);
 void cuikperf_region_start(const char* fmt, const char* extra);
 void cuikperf_region_end(void);
 
-void _tpool_queue_push(TPool_Thread *thread, tpool_task_proc* fn, int val_count, void** val) {
+void _tpool_queue_push(TPool *pool, TPool_Queue *queue, tpool_task_proc* fn, int val_count, void** val) {
     assert(val_count <= 3);
-    ssize_t bot                = atomic_load_explicit(&thread->queue.bottom, memory_order_relaxed);
-    ssize_t top                = atomic_load_explicit(&thread->queue.top,    memory_order_acquire);
-    TPool_RingBuffer *cur_ring = atomic_load_explicit(&thread->queue.ring,   memory_order_relaxed);
+    ssize_t bot                = atomic_load_explicit(&queue->bottom, memory_order_relaxed);
+    ssize_t top                = atomic_load_explicit(&queue->top,    memory_order_acquire);
+    TPool_RingBuffer *cur_ring = atomic_load_explicit(&queue->ring,   memory_order_relaxed);
 
     ssize_t size = bot - top;
     if (size > (cur_ring->size - 1)) {
         // Queue is full
-        thread->queue.ring = tpool_ring_grow(thread->queue.ring, bot, top);
-        cur_ring = atomic_load_explicit(&thread->queue.ring, memory_order_relaxed);
+        queue->ring = tpool_ring_grow(queue->ring, bot, top);
+        cur_ring = atomic_load_explicit(&queue->ring, memory_order_relaxed);
     }
 
     cur_ring->buffer[bot % cur_ring->size].do_work = fn;
     memcpy(&cur_ring->buffer[bot % cur_ring->size].args, val, val_count * sizeof(void*));
 
     atomic_thread_fence(memory_order_release);
-    atomic_store_explicit(&thread->queue.bottom, bot + 1, memory_order_relaxed);
+    atomic_store_explicit(&queue->bottom, bot + 1, memory_order_relaxed);
 
-    TPOOL_ATOMIC_FUTEX_INC(thread->pool->tasks_left);
-    TPOOL_ATOMIC_FUTEX_INC(thread->pool->tasks_available);
+    TPOOL_ATOMIC_FUTEX_INC(pool->tasks_left);
+    TPOOL_ATOMIC_FUTEX_INC(pool->tasks_available);
 
     #if 1
     // Only broadcast if there's sleepers, this is probably not the best way to handle ngl
-    uint64_t sleepers = thread->pool->sleeping_tasks;
-    if (sleepers != 0 && atomic_compare_exchange_strong(&thread->pool->sleeping_tasks, &sleepers, 0)) {
+    uint64_t sleepers = pool->sleeping_tasks;
+    if (sleepers != 0 && atomic_compare_exchange_strong(&pool->sleeping_tasks, &sleepers, 0)) {
+        #if 0
         // rate limit the broadcast to avoid spending too much time in the OS.
         // We're gonna do one broadcast every 10us for now.
         uint64_t now_ticks = cuik_time_in_nanos() / 10000;
-        if (thread->pool->last_broadcast_tick != now_ticks) {
-            thread->pool->last_broadcast_tick = now_ticks;
+        if (pool->last_broadcast_tick != now_ticks) {
+            pool->last_broadcast_tick = now_ticks;
 
             cuikperf_region_start("BROADCAST", NULL);
-            _tpool_broadcast(&thread->pool->tasks_available);
+            futex_broadcast(&pool->tasks_available);
             cuikperf_region_end();
         }
+        #endif
+
+        cuikperf_region_start("BROADCAST", NULL);
+        futex_broadcast(&pool->tasks_available);
+        cuikperf_region_end();
     }
     #endif
 }
 
-void tpool_wait_for_jobs(TPool *pool, TPool_Futex* done, TPool_Futex* count) {
+void tpool_wait_for_jobs(TPool *pool, Futex* done, Futex* count) {
     int64_t old;
     while (old = *done, old != *count) {
-        _tpool_broadcast(&pool->tasks_available);
-        _tpool_wait(done, old);
+        futex_broadcast(&pool->tasks_available);
+        futex_wait(done, old);
     }
 
     pool->last_broadcast_tick = 0;
 }
 
-void tpool_wait_for_jobs2(TPool *pool, TPool_Futex* done, int64_t count) {
+void tpool_wait_for_jobs2(TPool *pool, Futex* done, int64_t count) {
     int64_t old;
     while (old = *done, old != count) {
-        _tpool_broadcast(&pool->tasks_available);
-        _tpool_wait(done, old);
+        futex_broadcast(&pool->tasks_available);
+        futex_wait(done, old);
     }
 }
 
-int _tpool_queue_take(TPool_Thread *thread, TPool_Task *task) {
-    ssize_t bot = atomic_load_explicit(&thread->queue.bottom, memory_order_relaxed) - 1;
-    TPool_RingBuffer *cur_ring = atomic_load_explicit(&thread->queue.ring, memory_order_relaxed);
-    atomic_store_explicit(&thread->queue.bottom, bot, memory_order_relaxed);
+static int _tpool_queue_take(TPool_Queue *queue, TPool_Task *task) {
+    ssize_t bot = atomic_load_explicit(&queue->bottom, memory_order_relaxed) - 1;
+    TPool_RingBuffer *cur_ring = atomic_load_explicit(&queue->ring, memory_order_relaxed);
+    atomic_store_explicit(&queue->bottom, bot, memory_order_relaxed);
     atomic_thread_fence(memory_order_seq_cst);
 
-    ssize_t top = atomic_load_explicit(&thread->queue.top, memory_order_relaxed);
+    ssize_t top = atomic_load_explicit(&queue->top, memory_order_relaxed);
     if (top <= bot) {
         // Queue is not empty
-
         *task = cur_ring->buffer[bot % cur_ring->size];
         if (top == bot) {
             // Only one entry left in queue
-            if (!atomic_compare_exchange_strong_explicit(&thread->queue.top, &top, top + 1, memory_order_seq_cst, memory_order_relaxed)) {
+            if (!atomic_compare_exchange_strong_explicit(&queue->top, &top, top + 1, memory_order_seq_cst, memory_order_relaxed)) {
                 // Race failed
-                atomic_store_explicit(&thread->queue.bottom, bot + 1, memory_order_relaxed);
+                atomic_store_explicit(&queue->bottom, bot + 1, memory_order_relaxed);
                 return GRAB_EMPTY;
             }
 
-            atomic_store_explicit(&thread->queue.bottom, bot + 1, memory_order_relaxed);
+            atomic_store_explicit(&queue->bottom, bot + 1, memory_order_relaxed);
             return GRAB_SUCCESS;
         }
 
@@ -420,23 +231,23 @@ int _tpool_queue_take(TPool_Thread *thread, TPool_Task *task) {
         return GRAB_SUCCESS;
     } else {
         // Queue is empty
-        atomic_store_explicit(&thread->queue.bottom, bot + 1, memory_order_relaxed);
+        atomic_store_explicit(&queue->bottom, bot + 1, memory_order_relaxed);
         return GRAB_EMPTY;
     }
 }
 
-int _tpool_queue_steal(TPool_Thread *thread, TPool_Task *task) {
-    ssize_t top = atomic_load_explicit(&thread->queue.top, memory_order_acquire);
+static int _tpool_queue_steal(TPool_Queue *queue, TPool_Task *task) {
+    ssize_t top = atomic_load_explicit(&queue->top, memory_order_acquire);
     atomic_thread_fence(memory_order_seq_cst);
-    ssize_t bot = atomic_load_explicit(&thread->queue.bottom, memory_order_acquire);
+    ssize_t bot = atomic_load_explicit(&queue->bottom, memory_order_acquire);
 
     int ret = GRAB_EMPTY;
     if (top < bot) {
         // Queue is not empty
-        TPool_RingBuffer *cur_ring = atomic_load_explicit(&thread->queue.ring, memory_order_consume);
+        TPool_RingBuffer *cur_ring = atomic_load_explicit(&queue->ring, memory_order_consume);
         *task = cur_ring->buffer[top % cur_ring->size];
 
-        if (!atomic_compare_exchange_strong_explicit(&thread->queue.top, &top, top + 1, memory_order_seq_cst, memory_order_relaxed)) {
+        if (!atomic_compare_exchange_strong_explicit(&queue->top, &top, top + 1, memory_order_seq_cst, memory_order_relaxed)) {
             // Race failed
             ret = GRAB_FAILED;
         } else {
@@ -451,10 +262,60 @@ void cuikperf_thread_stop(void);
 void cuikperf_region_start(const char* label, const char* extra);
 void cuikperf_region_end(void);
 
+int _tpool_io_worker(void *ptr) {
+    TPool_Thread* current_thread = (TPool_Thread*) ptr;
+    TPool_IOQueue* queue = current_thread->io_submit;
+    tpool_current_thread_idx = current_thread->idx;
+    TPool *pool = current_thread->pool;
+
+    cuikperf_thread_start();
+    cuikperf_region_start("I/O", NULL);
+    while (pool->running) {
+        // wait for new requests
+        uint64_t t, h = queue->io_head;
+        while (t = queue->io_tail, h == t) {
+            queue->is_sleep = true;
+            cuikperf_region_end();
+            futex_wait(&queue->io_tail, t);
+            cuikperf_region_start("I/O", NULL);
+            if (pool->running == 0) {
+                goto done;
+            }
+        }
+
+        // just in case there was some racing on the futex
+        queue->is_sleep = false;
+        TPool_ReadReq req = queue->entries[h];
+
+        // wait for reads to finish
+        cuikperf_region_start("pread", NULL);
+        pread(req.fd, (void*) req.data, req.size, req.offset);
+        cuikperf_region_end();
+
+        queue->io_head = (queue->io_head + 1) % 64;
+        futex_signal(&queue->io_head);
+
+        if (req.io_rem == NULL) {
+            _tpool_queue_push(pool, &current_thread->io_complete, req.do_work, 2, req.args);
+        } else {
+            // tell real workers to run the completion task now
+            int rem = atomic_fetch_sub(req.io_rem, 1);
+            if (rem == 1) {
+                _tpool_queue_push(pool, &current_thread->io_complete, req.do_work, 2, req.args);
+            }
+        }
+    }
+    done:
+    cuikperf_region_end();
+    cuikperf_thread_stop();
+    return 0;
+}
+
 int _tpool_worker(void *ptr) {
     TPool_Task task;
     TPool_Thread *current_thread = (TPool_Thread *)ptr;
     tpool_current_thread_idx = current_thread->idx;
+    tpool_is_pool_thread = true;
     TPool *pool = current_thread->pool;
 
     cuikperf_thread_start();
@@ -471,44 +332,62 @@ int _tpool_worker(void *ptr) {
 
         // If we've got tasks to process, work through them
         size_t finished_tasks = 0;
-        while (!_tpool_queue_take(current_thread, &task)) {
+        while (!_tpool_queue_take(&current_thread->queue, &task)) {
             task.do_work(pool, task.args);
             TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
 
             finished_tasks += 1;
         }
-        if (finished_tasks > 0 && !TPOOL_LOAD(pool->tasks_left)) {
-            _tpool_signal(&pool->tasks_left);
+
+        while (!_tpool_queue_take(&current_thread->io_complete, &task)) {
+            task.do_work(pool, task.args);
+            TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
+            finished_tasks += 1;
         }
 
-        // If there's still work somewhere and we don't have it, steal it
+        if (finished_tasks > 0 && !TPOOL_LOAD(pool->tasks_left)) {
+            futex_signal(&pool->tasks_left);
+        }
+
+        // If there's still work somewhere and we don't have it, steal it.
         if (TPOOL_LOAD(pool->tasks_left)) {
-            int idx = current_thread->idx;
-            for (int i = 0; i < pool->thread_count; i++) {
-                if (!TPOOL_LOAD(pool->tasks_left)) {
-                    break;
-                }
+            bool dirty;
+            do {
+                dirty = false;
 
-                idx = (idx + 1) % pool->thread_count;
-                TPool_Thread *thread = &pool->threads[idx];
+                int idx = current_thread->idx;
+                for (int i = 0; i < pool->thread_count; i++) {
+                    if (!TPOOL_LOAD(pool->tasks_left)) {
+                        break;
+                    }
 
-                TPool_Task task;
-                int ret = _tpool_queue_steal(thread, &task);
-                if (ret == GRAB_FAILED) {
+                    idx = (idx + 1) % pool->thread_count;
+                    TPool_Thread *thread = &pool->threads[idx];
+
+                    TPool_Task task;
+                    int ret = _tpool_queue_steal(&thread->queue, &task);
+                    dirty |= (ret == GRAB_FAILED);
+
+                    if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
+                        ret = _tpool_queue_steal(&thread->io_complete, &task);
+                        dirty |= (ret == GRAB_FAILED);
+                    }
+
+                    // fail twice? we'll try to find another thread, it might
+                    // make sense to prioritize certain thread scan orderings
+                    if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
+                        continue;
+                    }
+
+                    task.do_work(pool, task.args);
+                    TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
+
+                    if (!TPOOL_LOAD(pool->tasks_left)) {
+                        futex_signal(&pool->tasks_left);
+                    }
                     goto work_start;
-                } else if (ret == GRAB_EMPTY) {
-                    continue;
                 }
-
-                task.do_work(pool, task.args);
-                TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
-
-                if (!TPOOL_LOAD(pool->tasks_left)) {
-                    _tpool_signal(&pool->tasks_left);
-                }
-
-                goto work_start;
-            }
+            } while (dirty);
         }
 
         // if we've done all our work, and there's nothing to steal, go to sleep
@@ -516,7 +395,7 @@ int _tpool_worker(void *ptr) {
         if (!pool->running) { break; }
 
         pool->sleeping_tasks |= 1ull << (tpool_current_thread_idx % 64ull);
-        _tpool_wait(&pool->tasks_available, state);
+        futex_wait(&pool->tasks_available, state);
     }
 
     #ifdef CUIK_USE_SPALL_AUTO
@@ -527,14 +406,58 @@ int _tpool_worker(void *ptr) {
     return 0;
 }
 
+static void tpool_init_io(TPool* pool, TPool_Thread* thread) {
+    // lazy init of I/O thread
+    if (!thread->has_pair && atomic_compare_exchange_strong(&thread->has_pair, &(bool){ false }, true)) {
+        thread->io_submit = cuik_aligned_alloc(sizeof(TPool_IOQueue), alignof(TPool_IOQueue));
+        thread->io_complete = tpool_queue_make(64);
+
+        memset(thread->io_submit, 0, sizeof(TPool_IOQueue));
+        thrd_create(&thread->pair_thread, _tpool_io_worker, thread);
+    }
+}
+
+void tpool_io_prep(TPool* pool) {
+    assert(tpool_is_pool_thread);
+    tpool_init_io(pool, &pool->threads[tpool_current_thread_idx]);
+}
+
+void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, tpool_task_proc* fn, void* arg0, void* arg1, void* arg2, _Atomic(int)* io_rem) {
+    tpool_io_prep(pool);
+
+    TPool_Thread* thread = &pool->threads[tpool_current_thread_idx];
+    TPool_IOQueue* queue = thread->io_submit;
+
+    uint64_t t = queue->io_tail;
+    uint64_t next_t = (t + 1) % 64;
+
+    // wait for the queue to empty up
+    while (next_t == queue->io_head) {
+        futex_wait(&queue->io_head, next_t);
+    }
+
+    queue->entries[t] = (TPool_ReadReq){ fd, offset, size, data, io_rem, fn, { arg0, arg1, arg2 } };
+    atomic_thread_fence(memory_order_release);
+    queue->io_tail = next_t;
+
+    TPOOL_ATOMIC_FUTEX_INC(pool->tasks_left);
+    TPOOL_ATOMIC_FUTEX_INC(pool->tasks_available);
+
+    // Only wake if it was asleep, ideally avoid syscalls
+    if (queue->is_sleep == true) {
+        queue->is_sleep = false;
+        futex_signal(&queue->io_tail);
+    }
+}
+
 void tpool_add_task(TPool *pool, tpool_task_proc* fn, void* val) {
     TPool_Thread *current_thread = &pool->threads[tpool_current_thread_idx];
-    _tpool_queue_push(current_thread, fn, 1, &val);
+    _tpool_queue_push(pool, &current_thread->queue, fn, 1, &val);
 }
 
 void tpool_add_task2(TPool *pool, tpool_task_proc* fn, int arg_count, void** args) {
     TPool_Thread *current_thread = &pool->threads[tpool_current_thread_idx];
-    _tpool_queue_push(current_thread, fn, arg_count, args);
+    _tpool_queue_push(pool, &current_thread->queue, fn, arg_count, args);
 }
 
 void tpool_wait(TPool *pool) {
@@ -542,24 +465,27 @@ void tpool_wait(TPool *pool) {
     TPool_Thread *current_thread = &pool->threads[tpool_current_thread_idx];
 
     while (TPOOL_LOAD(pool->tasks_left)) {
-
         // if we've got tasks on our queue, run them
-        while (!_tpool_queue_take(current_thread, &task)) {
+        while (!_tpool_queue_take(&current_thread->queue, &task)) {
             task.do_work(pool, task.args);
             TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
         }
 
+        while (!_tpool_queue_take(&current_thread->io_complete, &task)) {
+            task.do_work(pool, task.args);
+            TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
+        }
 
         // is this mem-barriered enough?
         // This *must* be executed in this order, so the futex wakes immediately
         // if rem_tasks has changed since we checked last, otherwise the program
         // will permanently sleep
-        TPool_Futex rem_tasks = TPOOL_LOAD(pool->tasks_left);
+        Futex rem_tasks = TPOOL_LOAD(pool->tasks_left);
         if (!rem_tasks) {
             break;
         }
 
-        _tpool_wait(&pool->tasks_left, rem_tasks);
+        futex_wait(&pool->tasks_left, rem_tasks);
     }
 
 }
@@ -567,26 +493,44 @@ void tpool_wait(TPool *pool) {
 void tpool_init(TPool *pool, int child_thread_count) {
     int thread_count = child_thread_count + 1;
     pool->thread_count = thread_count;
-    pool->threads = cuik_malloc(sizeof(TPool_Thread) * pool->thread_count);
+    pool->threads = cuik_calloc(pool->thread_count, sizeof(TPool_Thread));
 
     pool->running = true;
 
     // setup the main thread
     _thread_init(pool, &pool->threads[0], 0);
     tpool_current_thread_idx = 0;
+    tpool_is_pool_thread = true;
 
     for (int i = 1; i < pool->thread_count; i++) {
         _thread_init(pool, &pool->threads[i], i);
         thrd_create(&pool->threads[i].thread, _tpool_worker, &pool->threads[i]);
+    }
+
+    tpool_io_prep_all(pool);
+}
+
+void tpool_io_prep_all(TPool *pool) {
+    for (int i = 0; i < pool->thread_count; i++) {
+        tpool_init_io(pool, &pool->threads[i]);
     }
 }
 
 void tpool_destroy(TPool *pool) {
     pool->running = false;
     for (int i = 1; i < pool->thread_count; i++) {
+        if (pool->threads[i].has_pair) {
+            pool->threads[i].io_submit->io_tail = -1;
+            futex_signal(&pool->threads[i].io_submit->io_tail);
+        }
+    }
+    for (int i = 1; i < pool->thread_count; i++) {
         TPOOL_ATOMIC_FUTEX_INC(pool->tasks_available);
-        _tpool_broadcast(&pool->tasks_available);
+        futex_broadcast(&pool->tasks_available);
         thrd_join(pool->threads[i].thread, NULL);
+        if (pool->threads[i].has_pair) {
+            thrd_join(pool->threads[i].pair_thread, NULL);
+        }
     }
     for (int i = 0; i < pool->thread_count; i++) {
         tpool_queue_delete(&pool->threads[i].queue);

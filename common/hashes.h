@@ -1,6 +1,20 @@
 #pragma once
 #include <common.h>
 
+static uint32_t tb__murmur3_mix(uint32_t h, uint32_t k) {
+    k *= 0xcc9e2d51;
+    k = ((k << 15) | (k >> 17))*0x1b873593;
+    h = (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
+    return h;
+}
+
+static uint32_t tb__murmur3_finalize(uint32_t h, uint32_t len) {
+    // finalization mix, including key length
+    h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
+    h = (h ^ (h >> 13))*0xc2b2ae35;
+    return (h ^ (h >> 16));
+}
+
 // murmur3 32-bit without UB unaligned accesses
 // https://github.com/demetri/scribbles/blob/master/hashing/ub_aware_hash_functions.c
 static uint32_t tb__murmur3_32(const void* key, size_t len) {

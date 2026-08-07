@@ -89,9 +89,10 @@ typedef struct TB_COFF_Parser {
 
     // results
     size_t section_count;
-    size_t symbol_table, symbol_count;
+    size_t symbol_count, symbol_table_pos;
 
     // private
+    TB_Slice symbol_table;
     TB_Slice string_table;
 } TB_COFF_Parser;
 
@@ -148,10 +149,10 @@ typedef struct COFF_ImageReloc {
 bool tb_coff_parse_init(TB_COFF_Parser* restrict parser);
 bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSection* out_sec);
 
+TB_Slice tb_coff_section_name(TB_COFF_Parser* parser, COFF_SectionHeader* sec);
+
 TB_ObjectReloc tb_coff_parse_reloc(const COFF_ImageReloc* relocs, size_t i);
 
 // how many symbols does this one symbol take up (basically 1 + aux symbols).
 // returns 0 if error.
 size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym);
-// will consider all non-externals as "unknown"
-size_t tb_coff_skim_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym);
