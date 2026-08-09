@@ -140,7 +140,7 @@ TB_ObjectSymbolType classify_symbol_type(uint16_t st_class) {
 size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym) {
     TB_Slice file = parser->file;
     size_t symbol_offset = i * sizeof(COFF_Symbol);
-    if (symbol_offset + sizeof(COFF_Symbol) >= parser->symbol_table.length) {
+    if (symbol_offset + sizeof(COFF_Symbol) > parser->symbol_table.length) {
         return 0;
     }
 

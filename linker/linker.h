@@ -20,6 +20,11 @@
 #include "../tb/tb_internal.h"
 #endif
 
+enum {
+    // 60 (archive member header) + 20 (COFF header), rounded to the next pow2
+    PREFETCH_BLOCK_SIZE = 256
+};
+
 typedef void TB_LinkerAppendFn(TPool* pool, void** args);
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 
@@ -33,7 +38,10 @@ struct TB_LinkerObject {
     uint64_t time;
 
     TB_LinkerObject* parent;
-    TB_LinkerAppendFn* fn;
+
+    // returns true if we're able to process the input file without extra read requests
+    bool (*fetch)(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset);
+    void (*process)(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset);
 
     struct {
         int fd;
@@ -42,11 +50,8 @@ struct TB_LinkerObject {
 
         int stage;
 
-        // when opening linker inputs we need to peek at the first 4B and then
-        // do a bunch of other work so in practice we just load the first 4K and
-        // hope you need it (you usually do i think?)
-        //
-        // we could recycle these pages with a cheap freelist...
+        // this is the first peek, so we can get a look at the magic numbers and
+        // the rest of the header.
         uint8_t* prefetch_page;
 
         uint8_t* file_bottom;
@@ -74,7 +79,24 @@ struct TB_LinkerObject {
 
 struct TB_LinkerArchive {
     TB_LinkerObject header;
-    TB_ArchiveFileParser parser;
+
+    // offset to the first byte in the archive member (skipping the header)
+    size_t second_base;
+    size_t longnames_base;
+
+    size_t second_size;
+    size_t longnames_size;
+
+    char* second_longnames;
+
+    uint32_t symbol_count;
+    uint32_t member_count;
+
+    uint16_t* symbols;
+    uint32_t* members;
+    char* symbol_strtab;
+
+    TB_Slice longnames;
 };
 
 typedef enum {
@@ -134,6 +156,9 @@ struct TB_LinkerSectionPiece {
 
     // points to where the object-file specific relocation data lies
     size_t reloc_count;
+    size_t reloc_size;
+    size_t reloc_pos;
+
     const void* relocs;
 
     _Atomic(TB_LinkerPieceFlags) flags;
@@ -310,9 +335,7 @@ typedef struct {
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
     int  (*find_lib)(TB_Linker* l, const char* file_name, char* out_path, size_t* out_size);
-    void (*append_module)(TPool* pool, void** args);
-    void (*append_object)(TPool* pool, void** args);
-    void (*append_library)(TPool* pool, void** args);
+    void (*add_input)(TPool* pool, void** args);
     void (*parse_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
     bool (*export)(TB_Linker* l, const char* file_name);
 } TB_LinkerVtbl;
@@ -376,11 +399,12 @@ struct TB_Linker {
     DynArray(TB_LinkerCmd) alternate_names;
     DynArray(TB_LinkerCmd) merges;
 
-    _Alignas(64) struct {
+    struct {
         TPool* pool;
 
-        Futex done;
-        Futex count;
+        _Alignas(64) Futex done;
+        _Alignas(64) Futex count;
+        // _Alignas(64) uint64_t count_cache;
     } jobs;
 };
 
@@ -434,6 +458,11 @@ bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p);
 void tb_linker_push_named(TB_Linker* l, const char* name);
 void tb_linker_mark_live(TB_Linker* l);
 
+void tb_linker_job_tail(TB_Linker* l, tpool_task_proc* fn, int count, void** args);
+void tb_linker_job_submit_1(TB_Linker* l, tpool_task_proc* fn, void* arg);
+void tb_linker_job_submit_N(TB_Linker* l, tpool_task_proc* fn, int count, void** args);
+void tb_linker_job_done(TB_Linker* l);
+
 // General linker job
 void tb_linker_export_pieces(TB_Linker* l);
 
@@ -443,7 +472,9 @@ void tb_linker_print_map(TB_Linker* l);
 void tb_linker_complete_appends(TB_Linker* l);
 
 void tb_linker_read_imm(int fd, size_t offset, size_t count, void* data);
-uint8_t* tb_linker_read_req(TB_Linker* l, int fd, size_t offset, size_t count, TB_LinkerObject* obj);
+void tb_linker_read_req(TB_Linker* l, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj);
 void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn);
 
 void tb_linker_worker_init(TB_Linker* l);
+void* tb_linker_moar_mem(size_t size);
+

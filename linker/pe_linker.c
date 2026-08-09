@@ -103,8 +103,7 @@ typedef struct {
 
 typedef struct {
     TB_Linker* linker;
-    TB_LinkerObject* lib;
-    TB_ArchiveFileParser* parser;
+    TB_LinkerArchive* lib;
     size_t symbol_i;
     size_t string_i;
     size_t count;
@@ -123,13 +122,6 @@ const static uint8_t dos_stub[] = {
     0x74,0x20,0x62,0x65,0x20,0x72,0x75,0x6e,0x20,0x69,0x6e,0x20,0x44,0x4f,0x53,0x20,
     0x6d,0x6f,0x64,0x65,0x2e,0x24,0x00,0x00
 };
-
-static int symbol_cmp(const void* a, const void* b) {
-    const TB_ObjectSymbol* sym_a = (const TB_ObjectSymbol*)a;
-    const TB_ObjectSymbol* sym_b = (const TB_ObjectSymbol*)b;
-
-    return sym_a->ordinal - sym_b->ordinal;
-}
 
 static int compare_symbols(const void* a, const void* b) {
     TB_LinkerSymbol* sym_a = *(TB_LinkerSymbol**)a;
@@ -188,7 +180,6 @@ static TB_LinkerSymbol* insert_global_symbol(TB_Linker* l, TB_LinkerSymbol* s, b
     if (s != NULL && !is_static) {
         s = tb_linker_symbol_insert(l, s, true);
     }
-
     return s;
 }
 
@@ -202,14 +193,97 @@ typedef struct {
     COFF_AuxSectionSymbol* aux;
 } PendingCOMDAT;
 
-static void linker_job_done(TB_Linker* l) {
-    if (l->jobs.pool != NULL) {
-        l->jobs.done += 1;
-        futex_signal(&l->jobs.done);
-    }
-}
-
 #include "pe_link_obj.c"
+#include "pe_link_imp.c"
+#include "pe_link_lib.c"
+
+static const char* STAGE_NAMES[] = {
+    "fetch_input", "parse_input"
+};
+
+void pe_add_input(TPool* pool, void** args) {
+    TB_LinkerObject* obj = args[0];
+    TB_Linker* l = obj->linker;
+    tb_linker_worker_init(l);
+
+    // if this object isn't at the base of the FD then it's an archive's object.
+    // this means we'll need to parse the "archive file header".
+    TB_Slice content = { obj->prefetch_page, PREFETCH_BLOCK_SIZE };
+    size_t file_header_offset = obj->offset;
+    if (obj->offset > 0) {
+        TB_LinkerArchive* lib = (TB_LinkerArchive*) obj->parent;
+        COFF_ArchiveMemberHeader* sym = (COFF_ArchiveMemberHeader*) obj->prefetch_page;
+
+        // only extract the name & size the first time around
+        if (obj->stage == 0) {
+            obj->size = tb__parse_decimal_int(sizeof(sym->size), sym->size);
+            obj->name = (TB_Slice){ (uint8_t*) sym->name, strchr(sym->name, ' ') - sym->name };
+            if (obj->name.data[0] == '/') {
+                // name is actually just an index into the long names table
+                size_t num = tb__parse_decimal_int(obj->name.length - 1, (char*) obj->name.data + 1);
+
+                // TODO(NeGate): better error checking for bad files
+                assert(num < lib->longnames.length);
+                obj->name = (TB_Slice){
+                    &lib->longnames.data[num],
+                    strlen((const char*) &lib->longnames.data[num])
+                };
+            }
+        }
+        file_header_offset += sizeof(COFF_ArchiveMemberHeader);
+
+        // skip header now
+        content.data   += sizeof(COFF_ArchiveMemberHeader);
+        content.length -= sizeof(COFF_ArchiveMemberHeader);
+    }
+
+    size_t slash = 0;
+    FOR_REV_N(i, 0, obj->name.length) {
+        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
+            slash = i + 1;
+            break;
+        }
+    }
+    // printf("STEP '%.*s' (%d)\n", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->stage);
+
+    cuikperf_region_start2(STAGE_NAMES[obj->stage], obj->name.length - slash, (const char*) obj->name.data + slash);
+    if (obj->stage == 0) {
+        log_debug("Fetching input '%.*s' (%ld)", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->offset);
+
+        // Classify file from magic numbers
+        if (memcmp(content.data, "\0\0\xFF\xFF", 4) == 0) {
+            // Import
+            obj->fetch   = fetch_imp_file;
+            obj->process = process_imp_file;
+        } else if (memcmp(content.data, "!<arch>\n", 8) == 0) {
+            // Library
+            obj->fetch   = fetch_lib_file;
+            obj->process = process_lib_file;
+        } else if ((content.data[0] == 0 && content.data[0] == 0) ||
+                   (content.data[0] == 0x64 && (content.data[1] == 0x86 || content.data[1] == 0xAA))
+                   ) {
+            // Object
+            obj->fetch   = fetch_obj_file;
+            obj->process = process_obj_file;
+        } else {
+            assert(0 && "TODO");
+        }
+
+        // issue a variety of read requests, when this function is called again
+        // we'll be doing the processing stage.
+        obj->stage = 1;
+
+        if (!obj->fetch(l, obj, content, file_header_offset)) {
+            cuikperf_region_end();
+            return;
+        }
+    }
+
+    log_debug("Loading input '%.*s' (%#llx)", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->time);
+    obj->process(l, obj, content, file_header_offset);
+    tb_linker_job_done(l);
+    cuikperf_region_end();
+}
 
 void pe_append_module(TPool* pool, void** args) {
     TB_LinkerObject* obj = args[0];
@@ -369,286 +443,8 @@ void pe_append_module(TPool* pool, void** args) {
         }
     }
 
-    if (l->jobs.pool != NULL) {
-        l->jobs.done += 1;
-        futex_signal(&l->jobs.done);
-    }
-
     cuikperf_region_end();
-}
-
-#if 0
-static void lazy_import_task(TPool* pool, void** args) {
-    cuikperf_region_start("lazy parse", NULL);
-    LazyImportTask* task = args[0];
-    tb_linker_worker_init(task->linker);
-
-    TB_ArchiveFileParser* parser = task->parser;
-    TB_LinkerObject* lib = task->lib;
-    TB_Linker* l = task->linker;
-    uint64_t t = lib->time;
-
-    char* strtab = parser->symbol_strtab;
-    size_t j = task->string_i;
-    FOR_N(i, task->symbol_i, task->symbol_i + task->count) {
-        uint16_t offset_index = parser->symbols[i] - 1;
-
-        const char* name = &strtab[j];
-        size_t len = ideally_fast_strlen(name);
-
-        j += len + 1;
-        if (tb_archive_member_is_short(parser, offset_index)) {
-            continue;
-        }
-
-        TB_ArchiveEntry e = tb_archive_member_get(parser, offset_index);
-        assert(e.content.length);
-
-        // We don't *really* care about this info beyond nicer errors (use an arena tho)
-        TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
-        *obj_file = (TB_LinkerObject){ e.name, l, e.content, t + offset_index*65536, lib };
-
-        TB_LinkerObject* k = namehs_intern(&l->objects, obj_file);
-        if (k != obj_file) {
-            tb_arena_free(&linker_perm_arena, k, sizeof(TB_LinkerObject));
-            obj_file = k;
-        }
-
-        // printf("%s : %u : %#x (%.*s)\n", name, offset_index, parser->members[offset_index], (int) e.name.length, e.name.data);
-        TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
-        *s = (TB_LinkerSymbol){
-            .name   = { (const uint8_t*) name, len },
-            .tag    = TB_LINKER_SYMBOL_LAZY,
-            .lazy   = { obj_file },
-        };
-        s = tb_linker_symbol_insert(l, s, true);
-    }
-
-    if (l->jobs.pool != NULL) {
-        l->jobs.done += 1;
-        futex_signal(&l->jobs.done);
-    }
-    cuikperf_region_end();
-}
-#endif
-
-void pe_append_library(TPool* pool, void** args) {
-    TB_LinkerArchive* lib = args[0];
-    TB_Linker* l = lib->header.linker;
-    tb_linker_worker_init(l);
-
-    if (lib->header.stage == 0) {
-        int fd = lib->header.fd;
-        size_t file_offset = 8; // magic number was already checked
-        COFF_ArchiveMemberHeader first, second, longnames;
-
-        // Process first member
-        tb_linker_read_imm(fd, file_offset, sizeof(COFF_ArchiveMemberHeader), &first);
-        if (memcmp(first.name, (char[16]) { "/               " }, 16) != 0) {
-            fprintf(stderr, "TB archive parser: first archive member name is invalid\n");
-            return;
-        }
-        size_t first_content_length = tb__parse_decimal_int(sizeof(first.size), first.size);
-        file_offset += sizeof(COFF_ArchiveMemberHeader) + first_content_length;
-        file_offset = (file_offset + 1u) & ~1u;
-
-        // Process second member
-        tb_linker_read_imm(fd, file_offset, sizeof(COFF_ArchiveMemberHeader), &second);
-        if (memcmp(second.name, (char[16]) { "/               " }, 16) != 0) {
-            fprintf(stderr, "TB archive parser: second archive member name is invalid\n");
-            return;
-        }
-        size_t second_content_base   = file_offset + sizeof(COFF_ArchiveMemberHeader);
-        size_t second_content_length = tb__parse_decimal_int(sizeof(second.size), second.size);
-
-        // Advance
-        file_offset += sizeof(COFF_ArchiveMemberHeader) + second_content_length;
-        file_offset = (file_offset + 1u) & ~1u;
-
-        // Process long name member
-        tb_linker_read_imm(fd, file_offset, sizeof(COFF_ArchiveMemberHeader), &longnames);
-        if (memcmp(longnames.name, (char[16]) { "//              " }, 16) == 0) {
-            size_t longname_content_length = tb__parse_decimal_int(sizeof(second.size), second.size);
-            TB_Slice strtbl = (TB_Slice){ longnames.contents, longname_content_length };
-
-            // Advance
-            file_offset += sizeof(COFF_ArchiveMemberHeader) + longname_content_length;
-            file_offset = (file_offset + 1u) & ~1u;
-        }
-
-        // Read the archive up until the end of the longnames
-        lib->header.io_rem = 1;
-        lib->header.prefetch_page = tb_linker_read_req(l, fd, 0, file_offset, &lib->header);
-        lib->header.stage = 1;
-        return;
-    }
-
-    size_t slash = 0;
-    FOR_REV_N(i, 0, lib->header.name.length) {
-        if (lib->header.name.data[i] == '/' || lib->header.name.data[i] == '\\') {
-            slash = i + 1;
-            break;
-        }
-    }
-
-    cuikperf_region_start2("library", lib->header.name.length - slash, (const char*) lib->header.name.data + slash);
-    log_debug("linking against %.*s %#llx", (int) lib->header.name.length, lib->header.name.data, lib->header.time);
-
-    TB_ArchiveFileParser ar_parser = { 0 };
-    TB_Slice content = { lib->header.prefetch_page, lib->header.size };
-    if (!tb_archive_parse(content, &ar_parser)) {
-        return;
-    }
-
-    #if 0
-    uint64_t t = lib->time;
-    char* strtab = ar_parser.symbol_strtab;
-    size_t i = 0, j = 0;
-    while (i < ar_parser.symbol_count) {
-        uint16_t offset_index = ar_parser.symbols[i] - 1;
-
-        const char* name = &strtab[j];
-        size_t len = ideally_fast_strlen(name);
-
-        printf("READ %zu %hu %u %s\n", i, offset_index, ar_parser.members[offset_index], name);
-        i += 1, j += len + 1;
-    }
-    printf("\n\n\n");
-    #endif
-
-    CUIK_TIMED_BLOCK("lazy") {
-        uint64_t t = lib->header.time;
-        char* strtab = ar_parser.symbol_strtab;
-
-        size_t i = 0, j = 0;
-        while (i < ar_parser.symbol_count) {
-            uint16_t offset_index = ar_parser.symbols[i] - 1;
-
-            const char* name = &strtab[j];
-            size_t len = ideally_fast_strlen(name);
-
-            TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
-            *s = (TB_LinkerSymbol){
-                .name   = { (const uint8_t*) name, len },
-                .tag    = TB_LINKER_SYMBOL_LAZY,
-                .lazy   = { lib, ar_parser.members[i] },
-            };
-            s = tb_linker_symbol_insert(l, s, true);
-            i += 1, j += len + 1;
-        }
-    }
-
-    #if 0
-    // we get a lot of imports to the same table in the same LIB (think of
-    // kernel32.lib being completely kernel32.dll imports), because of this
-    // we keep the lock open across archive entry iteration for like 1000
-    // ops, it's manual lock elision.
-    //
-    // it might make sense to parallelize this job too.
-    CUIK_TIMED_BLOCK("imports") {
-        int imp_ticker = 0;
-        ImportTable* imp_cache = NULL;
-        FOR_N(i, 0, ar_parser.member_count) {
-            if (!tb_archive_member_is_short(&ar_parser, i)) {
-                // unlock just in case we have a big sequence or long names
-                if (imp_cache) {
-                    mtx_unlock(&imp_cache->lock);
-                    cuikperf_region_end();
-                    imp_ticker = 0;
-                    imp_cache = NULL;
-                }
-                continue;
-            }
-            TB_ArchiveEntry e = tb_archive_member_get(&ar_parser, i);
-
-            if (imp_cache) {
-                imp_ticker -= 1;
-                if (imp_ticker == 0) {
-                    mtx_unlock(&imp_cache->lock);
-                    cuikperf_region_end();
-                    imp_cache = NULL;
-                }
-            }
-
-            // import from DLL:
-            //   we don't lock up to insert a new import table but we
-            //   do to fill it up, this is probably fine since the filling
-            //   process is most likely done by one thread while multiple
-            //   threads might be poking multiple separate import tables.
-            ImportTable* imp = NULL;
-            if (imp_cache == NULL || imp_cache->libpath.length != e.name.length || memcmp(imp_cache->libpath.data, e.name.data, e.name.length) != 0) {
-                if (imp_cache != NULL) {
-                    mtx_unlock(&imp_cache->lock);
-                    cuikperf_region_end();
-                }
-
-                imp = tb_arena_alloc(&linker_perm_arena, sizeof(ImportTable));
-                *imp = (ImportTable){ .libpath = e.name };
-                mtx_init(&imp->lock, mtx_plain);
-
-                ImportTable* old = namehs_intern(&l->imports, imp);
-                if (old != imp) {
-                    tb_arena_free(&linker_perm_arena, imp, sizeof(ImportTable));
-                    imp = old;
-                }
-
-                // insert thunk
-                cuikperf_region_start("IMP_LOCK", NULL);
-                mtx_lock(&imp->lock);
-                imp_cache = imp;
-                imp_ticker = 2000;
-
-                if (imp->thunks == NULL) {
-                    imp->thunks = dyn_array_create(TB_LinkerSymbol*, 4096);
-                }
-            } else {
-                imp = imp_cache;
-            }
-
-            // printf("Import: %.*s (%d)\n", (int) e.import_name.length, e.import_name.data, e.ordinal);
-
-            cuikperf_region_start2("archive", e.import_name.length, (const char*) e.import_name.data);
-            // make __imp_ form which refers to raw address
-            size_t newlen = e.import_name.length + sizeof("__imp_") - 1;
-            uint8_t* newstr = tb_arena_alloc(&linker_perm_arena, newlen);
-            memcpy(newstr, "__imp_", sizeof("__imp_"));
-            memcpy(newstr + sizeof("__imp_") - 1, e.import_name.data, e.import_name.length);
-            newstr[newlen] = 0;
-
-            TB_LinkerSymbol* import_sym = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
-            *import_sym = (TB_LinkerSymbol){
-                .name   = { newstr, newlen },
-                .tag    = TB_LINKER_SYMBOL_IMPORT,
-                .import = { .table = imp, .ordinal = e.ordinal }
-            };
-
-            TB_LinkerSymbol* new_sym = tb_linker_symbol_insert(l, import_sym, true);
-            if (new_sym == import_sym) {
-                // first time we're importing this symbol, swag
-                import_sym = new_sym;
-
-                // make the thunk-like symbol
-                TB_LinkerSymbol* sym = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
-                *sym = (TB_LinkerSymbol){
-                    .name   = e.import_name,
-                    .tag    = TB_LINKER_SYMBOL_THUNK,
-                    .thunk  = import_sym
-                };
-                tb_linker_symbol_insert(l, sym, true);
-                dyn_array_put(imp->thunks, import_sym);
-            }
-            cuikperf_region_end();
-        }
-
-        if (imp_cache) {
-            mtx_unlock(&imp_cache->lock);
-            cuikperf_region_end();
-        }
-    }
-    #endif
-
-    linker_job_done(l);
-    cuikperf_region_end();
+    tb_linker_job_done(l);
 }
 
 static void pe_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc) {
@@ -983,10 +779,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         namehs_resize_barrier(&l->objects);
     }
 
-    if (1) {
-        return false;
-    }
-
     // this will resolve the sections, GC any pieces which aren't used and
     // resolve symbols.
     CUIK_TIMED_BLOCK("Resolve & GC") {
@@ -1003,6 +795,11 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     } */
 
     if (!tb_linker_layout(l)) {
+        cuikperf_region_end();
+        return false;
+    }
+
+    if (1) {
         cuikperf_region_end();
         return false;
     }
@@ -1486,11 +1283,9 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 #undef WRITE
 
 TB_LinkerVtbl tb__linker_pe = {
-    .init           = pe_init,
-    .find_lib       = pe_find_lib,
-    .append_module  = pe_append_module,
-    .append_object  = pe_append_object,
-    .append_library = pe_append_library,
-    .parse_reloc    = pe_parse_reloc,
-    .export         = pe_export
+    .init        = pe_init,
+    .find_lib    = pe_find_lib,
+    .add_input   = pe_add_input,
+    .parse_reloc = pe_parse_reloc,
+    .export      = pe_export
 };

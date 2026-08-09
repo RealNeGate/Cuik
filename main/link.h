@@ -113,6 +113,11 @@ int run_link(int argc, const char** argv) {
     cuikperf_start("perf.spall");
     bool is_msvc = true;
 
+    /*for (int i = 1; i < argc; i++) {
+    printf(" %s", argv[i]);
+    }
+    printf("\n");*/
+
     // find toolchain details from Cuik
     Cuik_Linker cl = { .toolchain = is_msvc ? cuik_toolchain_msvc() : cuik_toolchain_gnu() };
     cl.toolchain.ctx = cl.toolchain.init();
@@ -135,7 +140,7 @@ int run_link(int argc, const char** argv) {
         #if CUIK_ALLOW_THREADS
         TPool pool;
         if (use_threads) {
-            tpool_init(&pool, 4);
+            tpool_init(&pool, 6);
         }
         TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, use_threads ? &pool : NULL);
         #else

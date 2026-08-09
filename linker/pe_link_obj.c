@@ -1,60 +1,41 @@
 
-static const char* OBJ_STAGE_NAMES[] = {
-    "fetch_obj", "parse_obj"
-};
-
 static void pe_linker_parse_directives(TPool* pool, void** args);
+static bool pe_linker_parse_import(TB_Linker* l, TB_Slice content);
 
-// Since the section count is limited to 96, grabbing the first 4K block
-// will grab all of them (this is true even with the archive member header).
-void pe_append_object(TPool* pool, void** args) {
-    TB_LinkerObject* obj = args[0];
-    TB_Linker* l = obj->linker;
+static int obj_symbol_cmp(const void* a, const void* b) {
+    const TB_ObjectSymbol* sym_a = (const TB_ObjectSymbol*)a;
+    const TB_ObjectSymbol* sym_b = (const TB_ObjectSymbol*)b;
 
-    tb_linker_worker_init(l);
+    return sym_a->ordinal - sym_b->ordinal;
+}
 
-    // if this object isn't at the base of the FD then it's an archive's object.
-    // this means we'll need to parse the "archive file header".
-    TB_Slice content = { obj->prefetch_page, obj->size };
-    size_t file_header_offset = obj->offset;
-    if (obj->offset > 0) {
-        __builtin_debugtrap();
+static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
+    assert(prefetch.length >= sizeof(COFF_FileHeader));
 
-        TB_ArchiveFileParser* ar_parser = &((TB_LinkerArchive*) obj->parent)->parser;
-        TB_ArchiveEntry e = tb_archive_member_get(ar_parser, obj->prefetch_page);
-        obj->name = e.name;
+    // Object file:
+    //   Load symbol table and string table (which takes up the remainder of the
+    //   file after the symbols).
+    COFF_FileHeader header = *(COFF_FileHeader*) &prefetch.data[0];
+    size_t end_of_section_headers = sizeof(COFF_FileHeader) + (header.section_count * sizeof(COFF_SectionHeader));
+    size_t symstr_table_size = obj->size - header.symbol_table;
 
-        file_header_offset += sizeof(COFF_ArchiveMemberHeader);
-
-        // skip header now
-        content.data += sizeof(COFF_ArchiveMemberHeader);
-        content.length = e.content.length;
-    }
-
-    size_t slash = 0;
-    FOR_REV_N(i, 0, obj->name.length) {
-        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
-            slash = i + 1;
-            break;
-        }
-    }
-    log_debug("Loading input '%.*s' (%#llx)", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->time);
-    cuikperf_region_start2(OBJ_STAGE_NAMES[obj->stage], obj->name.length - slash, (const char*) obj->name.data + slash);
-
-    // Load symbol table and string table (which takes up the remainder of the
-    // file after the symbols).
-    if (obj->stage == 0) {
-        assert(content.length >= sizeof(COFF_FileHeader));
-        COFF_FileHeader header = *(COFF_FileHeader*) &content.data[0];
-
-        obj->stage  = 1;
+    if (end_of_section_headers <= prefetch.length) {
+        // File header & section headers fit within the prefetch? cool, don't
+        // read more than we need then. We should tune these factors later
+        obj->io_rem = 1;
+        obj->file_bottom = (uint8_t*) &prefetch.data[0];
+    } else {
         obj->io_rem = 2;
-        obj->file_bottom  = tb_linker_read_req(l, obj->fd, file_header_offset, sizeof(COFF_FileHeader) + (header.section_count * sizeof(COFF_SectionHeader)), obj);
-        obj->symbol_table = tb_linker_read_req(l, obj->fd, header.symbol_table, obj->size - header.symbol_table, obj);
-        cuikperf_region_end();
-        return;
+        obj->file_bottom = tb_linker_moar_mem(end_of_section_headers);
+        tb_linker_read_req(l, file_header_offset, end_of_section_headers, obj->file_bottom, obj);
     }
 
+    obj->symbol_table = tb_linker_moar_mem(symstr_table_size);
+    tb_linker_read_req(l, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
+    return false;
+}
+
+static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
     TB_COFF_Parser parser = { obj->name };
     COFF_FileHeader* header = (COFF_FileHeader*) &obj->file_bottom[0];
 
@@ -97,14 +78,13 @@ void pe_append_object(TPool* pool, void** args) {
             if (dollar >= drectve_len && memcmp(s_name.data, ".drectve", drectve_len) == 0) {
                 sec2piece[i] = NULL;
 
-                cuikperf_region_start("mmap", NULL);
-                uint8_t* buf = cuik__valloc(sec->raw_data_size);
+                cuikperf_region_start("alloc", NULL);
+                uint8_t* buf = tb_linker_moar_mem(sec->raw_data_size);
                 cuikperf_region_end();
 
-                tb_linker_read_req2(l, obj->fd, obj->offset + sec->raw_data_pos, sec->raw_data_size, buf, pe_linker_parse_directives);
-                // printf("tb-link: Directives: %.*s\n", (int) s->raw_data.length, s->raw_data.data);
-                // parse_directives(l, s->raw_data.data, s->raw_data.data + s->raw_data.length);
-                // assert(0);
+                // Fork out a parallel task
+                l->jobs.count += 1;
+                tb_linker_read_req2(l, obj->fd, file_header_offset + sec->raw_data_pos, sec->raw_data_size, buf, pe_linker_parse_directives);
                 continue;
             }
 
@@ -116,8 +96,13 @@ void pe_append_object(TPool* pool, void** args) {
                 ls->generic_flags |= TB_LINKER_SECTION_DISCARD;
             }
 
+            size_t sec_vsize = sec->raw_data_size;
+            if (sec_vsize < sec->misc.virtual_size) {
+                sec_vsize = sec->misc.virtual_size;
+            }
+
             TB_LinkerSectionPiece* p;
-            p = tb_linker_append_piece(ls, PIECE_BSS, sec->misc.virtual_size, obj);
+            p = tb_linker_append_piece(ls, PIECE_BSS, sec_vsize, obj);
             if ((sec_flags & IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0) {
                 p->kind        = PIECE_FILE;
                 p->file_offset = obj->offset + sec->raw_data_pos;
@@ -136,7 +121,10 @@ void pe_append_object(TPool* pool, void** args) {
             p->order = order + i;
             p->flags = (sec_flags & IMAGE_SCN_MEM_EXECUTE) ? TB_LINKER_PIECE_CODE : 0;
             p->reloc_count = sec->num_reloc;
-            p->relocs = &parser.file.data[sec->pointer_to_reloc];
+            p->reloc_pos = file_header_offset + sec->pointer_to_reloc;
+            p->reloc_size = sec->num_reloc * sizeof(COFF_ImageReloc);
+            p->relocs = NULL; // &parser.file.data[sec->pointer_to_reloc];
+
             if (sec_flags & IMAGE_SCN_LNK_COMDAT) {
                 p->flags |= TB_LINKER_PIECE_COMDAT;
             } else {
@@ -176,6 +164,7 @@ void pe_append_object(TPool* pool, void** args) {
 
             TB_LinkerSymbol* s = NULL;
             if (sym->section_num > 0) {
+                assert(sym->section_num <= parser.section_count);
                 COFF_SectionHeader* sec = &sections[sym->section_num - 1];
                 TB_LinkerSectionPiece* p = sec2piece[sym->section_num - 1];
 
@@ -287,20 +276,13 @@ void pe_append_object(TPool* pool, void** args) {
 
             // weak aux
             uint32_t* weak_sym = src_symbol->extra;
-            TB_ObjectSymbol* alt_sym = bsearch(
-                                               &(TB_ObjectSymbol){ .ordinal = *weak_sym },
-                                               syms, sym_count, sizeof(TB_ObjectSymbol),
-                                               symbol_cmp
-                                               );
-
+            TB_ObjectSymbol key = { .ordinal = *weak_sym };
+            TB_ObjectSymbol* alt_sym = bsearch(&key, syms, sym_count, sizeof(TB_ObjectSymbol), obj_symbol_cmp);
             tb_linker_symbol_weak(l, src_symbol->user_data, alt_sym->user_data);
         }
         dyn_array_destroy(weak_syms);
     }
     tb_arena_restore(&linker_tmp_arena, sp);
-
-    linker_job_done(l);
-    cuikperf_region_end();
 }
 
 ////////////////////////////////
@@ -320,22 +302,24 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
     cuikperf_region_start("directives", NULL);
 
     TB_Linker* l = args[0];
+    tb_linker_worker_init(l);
+
     const uint8_t* curr = args[1];
     const uint8_t* end_directive = args[2];
 
-    while (curr != end_directive && *curr == ' ') {
-        curr++;
-    }
-
     while (curr != end_directive) {
+        while (curr != end_directive && *curr == ' ') {
+            curr++;
+        }
+
         const uint8_t* end = curr;
         while (end != end_directive && *end != ' ') end++;
-
-        // printf("directive: %.*s\n", (int) (end - curr), curr);
-
         if (*curr == 0 || curr == end_directive) {
             break;
-        } else if (strprefix((const char*) curr, "/merge:", end - curr)) {
+        }
+
+        log_info("directive: %.*s", (int) (end - curr), curr);
+        if (strprefix((const char*) curr, "/merge:", end - curr)) {
             curr += sizeof("/merge:")-1;
 
             // printf("merge: %.*s\n", (int) (end - curr), curr);
@@ -350,9 +334,11 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
                 };
 
                 // low contention, don't care
+                cuikperf_region_start("LOCK", NULL);
                 mtx_lock(&l->lock);
                 dyn_array_put(l->merges, cmd);
                 mtx_unlock(&l->lock);
+                cuikperf_region_end();
             }
         } else if (strprefix((const char*) curr, "/include:", end - curr)) {
             curr += sizeof("/include:")-1;
@@ -389,9 +375,11 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
             snprintf(path, FILENAME_MAX, "%.*s", len, curr);
 
             // low contention, don't care
+            cuikperf_region_start("LOCK", NULL);
             mtx_lock(&l->lock);
             dyn_array_put(l->default_libs, path);
             mtx_unlock(&l->lock);
+            cuikperf_region_end();
         } else if (strprefix((const char*) curr, "/alternatename:", end - curr)) {
             curr += sizeof("/alternatename:")-1;
 
@@ -408,16 +396,19 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
                 };
 
                 // low contention, don't care
+                cuikperf_region_start("LOCK", NULL);
                 mtx_lock(&l->lock);
                 dyn_array_put(l->alternate_names, cmd);
                 mtx_unlock(&l->lock);
+                cuikperf_region_end();
             }
         } else {
             // log_warn("unknown linker directive: %.*s", (int) (end - curr), curr);
         }
-
-        curr = end+1;
+        curr = end;
     }
+
     cuikperf_region_end();
+    tb_linker_job_done(l);
 }
 

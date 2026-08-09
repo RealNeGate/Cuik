@@ -51,20 +51,16 @@ typedef ptrdiff_t ssize_t;
 #define TPOOL_ATOMIC_FUTEX_DEC(val) (atomic_fetch_sub_explicit(&val, 1, memory_order_acquire))
 #define __debugbreak() __builtin_debugtrap()
 
+enum {
+    POOL_IO_DEPTH = 16,
+};
+
 TPool_Thread_Local bool tpool_is_pool_thread = false;
 TPool_Thread_Local int tpool_current_thread_idx = -1;
 
 #define GRAB_SUCCESS 0
 #define GRAB_EMPTY   1
 #define GRAB_FAILED  2
-
-// SPSC
-typedef struct {
-    _Alignas(64) bool is_sleep;
-    _Alignas(64) Futex io_head;
-    _Alignas(64) Futex io_tail;
-    _Alignas(64) TPool_ReadReq entries[64];
-} TPool_SPSC;
 
 typedef struct {
     TPool_Atomic ssize_t size;
@@ -82,7 +78,7 @@ typedef struct {
     _Alignas(64) bool is_sleep;
     _Alignas(64) Futex io_head;
     _Alignas(64) Futex io_tail;
-    _Alignas(64) TPool_ReadReq entries[64];
+    _Alignas(64) TPool_ReadReq entries[POOL_IO_DEPTH];
 } TPool_IOQueue;
 
 typedef struct TPool_Thread {
@@ -102,6 +98,8 @@ typedef struct TPool_Thread {
     // These are where completed I/O tasks go, other threads could
     // steal from here.
     TPool_Queue io_complete;
+
+    tpool_task_proc* last_run;
 } TPool_Thread;
 
 TPool_RingBuffer *tpool_ring_make(ssize_t size) {
@@ -132,7 +130,7 @@ TPool_RingBuffer *tpool_ring_grow(TPool_RingBuffer *ring, ssize_t bottom, ssize_
 }
 
 void _thread_init(TPool *pool, TPool_Thread *thread, int idx) {
-    thread->queue = tpool_queue_make(1 << 1);
+    thread->queue = tpool_queue_make(32);
     thread->pool = pool;
     thread->idx = idx;
 }
@@ -272,11 +270,11 @@ int _tpool_io_worker(void *ptr) {
     cuikperf_region_start("I/O", NULL);
     while (pool->running) {
         // wait for new requests
-        uint64_t t, h = queue->io_head;
-        while (t = queue->io_tail, h == t) {
+        uint64_t h = queue->io_head;
+        while (h == queue->io_tail) {
             queue->is_sleep = true;
             cuikperf_region_end();
-            futex_wait(&queue->io_tail, t);
+            futex_wait(&queue->io_tail, h);
             cuikperf_region_start("I/O", NULL);
             if (pool->running == 0) {
                 goto done;
@@ -285,25 +283,20 @@ int _tpool_io_worker(void *ptr) {
 
         // just in case there was some racing on the futex
         queue->is_sleep = false;
-        TPool_ReadReq req = queue->entries[h];
+        TPool_ReadReq req = queue->entries[h % POOL_IO_DEPTH];
 
         // wait for reads to finish
         cuikperf_region_start("pread", NULL);
         pread(req.fd, (void*) req.data, req.size, req.offset);
         cuikperf_region_end();
 
-        queue->io_head = (queue->io_head + 1) % 64;
+        queue->io_head += 1;
         futex_signal(&queue->io_head);
 
-        if (req.io_rem == NULL) {
-            _tpool_queue_push(pool, &current_thread->io_complete, req.do_work, 2, req.args);
-        } else {
-            // tell real workers to run the completion task now
-            int rem = atomic_fetch_sub(req.io_rem, 1);
-            if (rem == 1) {
-                _tpool_queue_push(pool, &current_thread->io_complete, req.do_work, 2, req.args);
-            }
+        if (req.io_rem == NULL || atomic_fetch_sub(req.io_rem, 1) == 1) {
+            _tpool_queue_push(pool, &current_thread->io_complete, req.do_work, 3, req.args);
         }
+        TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
     }
     done:
     cuikperf_region_end();
@@ -324,6 +317,7 @@ int _tpool_worker(void *ptr) {
     spall_auto_thread_init(tpool_current_thread_idx, SPALL_DEFAULT_BUFFER_SIZE);
     #endif
 
+    cuikperf_region_start("Worker", NULL);
     for (;;) {
         work_start:
         if (!pool->running) {
@@ -339,12 +333,6 @@ int _tpool_worker(void *ptr) {
             finished_tasks += 1;
         }
 
-        while (!_tpool_queue_take(&current_thread->io_complete, &task)) {
-            task.do_work(pool, task.args);
-            TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
-            finished_tasks += 1;
-        }
-
         if (finished_tasks > 0 && !TPOOL_LOAD(pool->tasks_left)) {
             futex_signal(&pool->tasks_left);
         }
@@ -354,6 +342,23 @@ int _tpool_worker(void *ptr) {
             bool dirty;
             do {
                 dirty = false;
+
+                if (!TPOOL_LOAD(pool->tasks_left)) {
+                    break;
+                }
+
+                int ret = _tpool_queue_steal(&current_thread->io_complete, &task);
+                if (ret == GRAB_SUCCESS) {
+                    task.do_work(pool, task.args);
+                    TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
+
+                    if (!TPOOL_LOAD(pool->tasks_left)) {
+                        futex_signal(&pool->tasks_left);
+                    }
+                    goto work_start;
+                } else if (ret == GRAB_FAILED) {
+                    dirty = true;
+                }
 
                 int idx = current_thread->idx;
                 for (int i = 0; i < pool->thread_count; i++) {
@@ -395,8 +400,11 @@ int _tpool_worker(void *ptr) {
         if (!pool->running) { break; }
 
         pool->sleeping_tasks |= 1ull << (tpool_current_thread_idx % 64ull);
+        cuikperf_region_end();
         futex_wait(&pool->tasks_available, state);
+        cuikperf_region_start("Worker", NULL);
     }
+    cuikperf_region_end();
 
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_thread_quit();
@@ -429,14 +437,15 @@ void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, 
     TPool_IOQueue* queue = thread->io_submit;
 
     uint64_t t = queue->io_tail;
-    uint64_t next_t = (t + 1) % 64;
+    uint64_t next_t = t + 1;
 
     // wait for the queue to empty up
-    while (next_t == queue->io_head) {
-        futex_wait(&queue->io_head, next_t);
+    uint64_t h;
+    while (h = queue->io_head, next_t - h > POOL_IO_DEPTH - 1) {
+        futex_wait(&queue->io_head, h);
     }
 
-    queue->entries[t] = (TPool_ReadReq){ fd, offset, size, data, io_rem, fn, { arg0, arg1, arg2 } };
+    queue->entries[t % POOL_IO_DEPTH] = (TPool_ReadReq){ fd, offset, size, data, io_rem, fn, { arg0, arg1, arg2 } };
     atomic_thread_fence(memory_order_release);
     queue->io_tail = next_t;
 
@@ -467,11 +476,6 @@ void tpool_wait(TPool *pool) {
     while (TPOOL_LOAD(pool->tasks_left)) {
         // if we've got tasks on our queue, run them
         while (!_tpool_queue_take(&current_thread->queue, &task)) {
-            task.do_work(pool, task.args);
-            TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
-        }
-
-        while (!_tpool_queue_take(&current_thread->io_complete, &task)) {
             task.do_work(pool, task.args);
             TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
         }
@@ -518,7 +522,7 @@ void tpool_io_prep_all(TPool *pool) {
 
 void tpool_destroy(TPool *pool) {
     pool->running = false;
-    for (int i = 1; i < pool->thread_count; i++) {
+    for (int i = 0; i < pool->thread_count; i++) {
         if (pool->threads[i].has_pair) {
             pool->threads[i].io_submit->io_tail = -1;
             futex_signal(&pool->threads[i].io_submit->io_tail);
@@ -531,6 +535,9 @@ void tpool_destroy(TPool *pool) {
         if (pool->threads[i].has_pair) {
             thrd_join(pool->threads[i].pair_thread, NULL);
         }
+    }
+    if (pool->threads[0].has_pair) {
+        thrd_join(pool->threads[0].pair_thread, NULL);
     }
     for (int i = 0; i < pool->thread_count; i++) {
         tpool_queue_delete(&pool->threads[i].queue);
