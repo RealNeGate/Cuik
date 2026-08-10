@@ -1,26 +1,26 @@
 /*
- * Copyright (c) 2020 rxi
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to
- * deal in the Software without restriction, including without limitation the
- * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
- * sell copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
- *
- * Modified by NeGate for lovely reasons
- */
+* Copyright (c) 2020 rxi
+*
+* Permission is hereby granted, free of charge, to any person obtaining a copy
+* of this software and associated documentation files (the "Software"), to
+* deal in the Software without restriction, including without limitation the
+* rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+* sell copies of the Software, and to permit persons to whom the Software is
+* furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+* IN THE SOFTWARE.
+*
+* Modified by NeGate for lovely reasons
+*/
 #include "log.h"
 #include <inttypes.h>
 
@@ -113,9 +113,25 @@ void log_set_quiet(bool enable) {
     L.quiet = enable;
 }
 
-static _Atomic bool log_running = true;
 static Futex log_done = 0;
+static Futex log_sleep = 0;
+
+static _Atomic bool log_running = true;
+
+static void aux_flush(void) {
+    log_running = false;
+
+    // signal aux thread to wake up from whatever it is up to
+    log_sleep = 0;
+    futex_signal(&log_sleep);
+
+    // wait for aux thread to die
+    futex_wait_eq(&log_done, 1);
+}
+
 static int aux_work(void* arg) {
+    atexit(aux_flush);
+
     while (log_running) {
         uint32_t ticket = atomic_fetch_add(&queue.head, 1);
         uint32_t target = ticket % QUEUE_SIZE;
@@ -123,8 +139,10 @@ static int aux_work(void* arg) {
         // wait for slot to be ready
         int64_t old;
         while (old = queue.ids[target], old != id) {
-            // wait for changes
-            futex_wait(&queue.ids[target], old);
+            // wait for things to be added, we're not directly waiting on the IDs
+            // because of a data race that i haven't thought about too hard.
+            log_sleep = 1;
+            futex_wait(&log_sleep, 1);
             // did log_thread_flush cancel waiting? ok let's just dip out then
             if (!log_running) {
                 goto dip;
@@ -151,22 +169,12 @@ static int aux_work(void* arg) {
     return 0;
 }
 
+// Just flush whatever we had in motion at the moment
 static void log_thread_flush(void* ptr) {
-    // wait for all the pending aux thread writes, then pop off
-    if (log_done == 0) {
-        if (atomic_compare_exchange_strong(&log_running, &(bool){ true }, false)) {
-            // now we forcibly wake up every id
-            FOR_N(i, 0, QUEUE_SIZE) {
-                queue.ids[i] = 0;
-                futex_broadcast(&queue.ids[i]);
-            }
-        }
-
-        futex_wait(&log_done, 0);
+    if (log_buffer_used) {
+        char* dst = &log_buffer[log_buffer_to_write ? LOG_BUFFER_CAPACITY : 0];
+        fwrite(dst, log_buffer_used, 1, stdout);
     }
-
-    char* dst = &log_buffer[log_buffer_to_write ? LOG_BUFFER_CAPACITY : 0];
-    fwrite(dst, log_buffer_used, 1, stdout);
 }
 
 static tss_t log_exit_key;
@@ -216,14 +224,14 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
         int used = log_buffer_used;
         #ifdef LOG_USE_COLOR
         int len = snprintf(
-            &dst[used], LOG_BUFFER_CAPACITY - used, "T%-5d %-10.4f %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
-            tid, time / 1000000.0, level_colors[level], level_strings[level], file, line
-        );
+                           &dst[used], LOG_BUFFER_CAPACITY - used, "T%-5d %-10.4f %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
+                           tid, time / 1000000.0, level_colors[level], level_strings[level], file, line
+                           );
         #else
         int len = snprintf(
-            &dst[used], LOG_BUFFER_CAPACITY - used, "T%-5d %-10.4f %-5s %s:%d: ",
-            tid, time / 1000000.0, level_strings[level], file, line
-        );
+                           &dst[used], LOG_BUFFER_CAPACITY - used, "T%-5d %-10.4f %-5s %s:%d: ",
+                           tid, time / 1000000.0, level_strings[level], file, line
+                           );
         #endif
 
         if (len >= 0 && len < LOG_BUFFER_CAPACITY - used) {
@@ -272,7 +280,9 @@ static void log_enqueue(char* dst) {
     queue.items[target].status = &log_buffer_writer_status;
     // writer thread can now see what we enqueued
     atomic_store(&queue.ids[target], (id+1) % MAX_ID);
-    futex_broadcast(&queue.ids[target]);
+
+    log_sleep = 0;
+    futex_signal(&log_sleep);
 
     log_buffer_used = 0;
     log_buffer_to_write = !log_buffer_to_write;

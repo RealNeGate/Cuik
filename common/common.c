@@ -320,7 +320,7 @@ void futex_broadcast(Futex* addr) {
     }
 }
 
-void futex_wait(Futex* addr, int64_t val) {
+void futex_wait(Futex* addr, FutexV val) {
     for (;;) {
         int ret = futex(addr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, val, NULL, NULL, 0);
 
@@ -385,7 +385,7 @@ void _tpool_broadcast(Futex* addr) {
     }
 }
 
-void futex_wait(Futex* addr, int32_t val) {
+void futex_wait(Futex* addr, FutexV val) {
     for (;;) {
         int ret = __ulock_wait(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO, addr, val, 0);
         if (ret >= 0) {
@@ -423,26 +423,17 @@ void futex_broadcast(Futex* addr) {
     WakeByAddressAll((void*) addr);
 }
 
-void futex_wait(Futex* addr, int64_t val) {
+void futex_wait(Futex* addr, FutexV val) {
     for (;;) {
-        WaitOnAddress(addr, (void *)&val, sizeof(val), INFINITE);
+        WaitOnAddress(addr, (void*) &val, sizeof(val), INFINITE);
         if (*addr != val) break;
     }
 }
 #endif
 
-#if defined(__APPLE__)
-void futex_wait_eq(Futex* addr, int32_t val) {
-    int32_t old;
+void futex_wait_eq(Futex* addr, FutexV val) {
+    FutexV old;
     while (old = *addr, old != val) {
         futex_wait(addr, old);
     }
 }
-#else
-void futex_wait_eq(Futex* addr, int64_t val) {
-    int64_t old;
-    while (old = *addr, old != val) {
-        futex_wait(addr, old);
-    }
-}
-#endif

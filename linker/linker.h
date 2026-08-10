@@ -75,6 +75,17 @@ struct TB_LinkerObject {
     // Windows-specific debug stuff
     TB_LinkerSectionPiece* debug_s;
     TB_LinkerSectionPiece* debug_t;
+
+    // Cache relocations by making a small bitmap of each 4K
+    // block we've loaded already.
+    struct {
+        uint64_t reloc_lo;
+        uint64_t reloc_hi;
+
+        // We allocate the space beforehand, we just don't load or
+        // touch it until later
+        char* reloc_cache;
+    };
 };
 
 struct TB_LinkerArchive {
@@ -159,7 +170,7 @@ struct TB_LinkerSectionPiece {
     size_t reloc_size;
     size_t reloc_pos;
 
-    const void* relocs;
+    void* relocs;
 
     _Atomic(TB_LinkerPieceFlags) flags;
 
@@ -453,9 +464,9 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
 bool tb__linker_is_library_new(TB_Linker* l, const char* file_name);
 void tb__linker_module_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
 
-void tb_linker_push_symbol(TB_Linker* l, TB_LinkerSymbol* sym);
-bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p);
-void tb_linker_push_named(TB_Linker* l, const char* name);
+void tb_linker_push_symbol(TB_Linker* l, TB_LinkerSymbol* sym, int depth);
+bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p, int depth);
+void tb_linker_push_named(TB_Linker* l, const char* name, int depth);
 void tb_linker_mark_live(TB_Linker* l);
 
 void tb_linker_job_tail(TB_Linker* l, tpool_task_proc* fn, int count, void** args);
@@ -472,9 +483,9 @@ void tb_linker_print_map(TB_Linker* l);
 void tb_linker_complete_appends(TB_Linker* l);
 
 void tb_linker_read_imm(int fd, size_t offset, size_t count, void* data);
-void tb_linker_read_req(TB_Linker* l, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj);
-void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn);
+void tb_linker_read_req(TB_Linker* l, bool hi_prio, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj);
+void tb_linker_read_req2(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn);
+void tb_linker_read_req3(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn, void* arg1, void* arg2);
 
 void tb_linker_worker_init(TB_Linker* l);
 void* tb_linker_moar_mem(size_t size);
-

@@ -9,6 +9,11 @@ static int obj_symbol_cmp(const void* a, const void* b) {
     return sym_a->ordinal - sym_b->ordinal;
 }
 
+static void tb_linker_ack_read(TPool* pool, void** args) {
+    TB_Linker* l = args[0];
+    tb_linker_job_done(l);
+}
+
 static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
     assert(prefetch.length >= sizeof(COFF_FileHeader));
 
@@ -27,11 +32,11 @@ static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
     } else {
         obj->io_rem = 2;
         obj->file_bottom = tb_linker_moar_mem(end_of_section_headers);
-        tb_linker_read_req(l, file_header_offset, end_of_section_headers, obj->file_bottom, obj);
+        tb_linker_read_req(l, false, file_header_offset, end_of_section_headers, obj->file_bottom, obj);
     }
 
     obj->symbol_table = tb_linker_moar_mem(symstr_table_size);
-    tb_linker_read_req(l, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
+    tb_linker_read_req(l, false, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
     return false;
 }
 
@@ -63,6 +68,10 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     TB_LinkerSectionPiece** comdat_parent = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_LinkerSectionPiece*));
     TB_LinkerSectionPiece** sec2piece = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_LinkerSectionPiece*));
 
+    // Compute where the relocations are, since they're usually next to each other
+    // and they're likely to overlap the same file blocks.
+    size_t reloc_lo = SIZE_MAX, reloc_hi = 0, reloc_used = 0;
+
     uint64_t order = obj->time;
     TB_LinkerSymbol** symbol_map = tb_arena_alloc(&linker_perm_arena, parser.symbol_count * sizeof(TB_LinkerSymbol*));
     CUIK_TIMED_BLOCK("parse sections") {
@@ -78,13 +87,13 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             if (dollar >= drectve_len && memcmp(s_name.data, ".drectve", drectve_len) == 0) {
                 sec2piece[i] = NULL;
 
-                cuikperf_region_start("alloc", NULL);
-                uint8_t* buf = tb_linker_moar_mem(sec->raw_data_size);
-                cuikperf_region_end();
+                if (sec->raw_data_size != 0) {
+                    uint8_t* buf = tb_linker_moar_mem(sec->raw_data_size);
 
-                // Fork out a parallel task
-                l->jobs.count += 1;
-                tb_linker_read_req2(l, obj->fd, file_header_offset + sec->raw_data_pos, sec->raw_data_size, buf, pe_linker_parse_directives);
+                    // Fork out a parallel task
+                    l->jobs.count += 1;
+                    tb_linker_read_req2(l, false, obj->fd, file_header_offset + sec->raw_data_pos, sec->raw_data_size, buf, pe_linker_parse_directives);
+                }
                 continue;
             }
 
@@ -125,6 +134,14 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             p->reloc_size = sec->num_reloc * sizeof(COFF_ImageReloc);
             p->relocs = NULL; // &parser.file.data[sec->pointer_to_reloc];
 
+            if (sec->num_reloc) {
+                size_t end_of_reloc = p->reloc_pos + p->reloc_size;
+                reloc_lo = TB_MIN(reloc_lo, p->reloc_pos);
+                reloc_hi = TB_MAX(reloc_hi, end_of_reloc);
+                reloc_used += p->reloc_size;
+                // printf("  %zu %zu\n", p->reloc_pos, end_of_reloc);
+            }
+
             if (sec_flags & IMAGE_SCN_LNK_COMDAT) {
                 p->flags |= TB_LINKER_PIECE_COMDAT;
             } else {
@@ -142,6 +159,28 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             }
         }
     }
+
+    size_t reloc_pages = (reloc_hi - reloc_lo) / 4096;
+    if (reloc_pages < 64) {
+        obj->reloc_lo = reloc_lo & ~4095;
+        obj->reloc_hi = (reloc_hi + 4095) & ~4095;
+        obj->reloc_cache = tb_linker_moar_mem(obj->reloc_hi - obj->reloc_lo);
+
+        // request to load all the relocation data early, this way it can also
+        // happen in the background before the mark phase.
+        l->jobs.count += 1;
+        tb_linker_read_req3(l, true, obj->fd, obj->reloc_lo, obj->reloc_hi, obj->reloc_cache, tb_linker_ack_read, obj, NULL);
+
+        FOR_N(i, 0, parser.section_count) {
+            TB_LinkerSectionPiece* p = sec2piece[i];
+            if (p != NULL) {
+                p->relocs = &obj->reloc_cache[reloc_lo - obj->reloc_lo];
+            }
+        }
+    }
+
+    // double usage = (reloc_used / (double) (reloc_hi - reloc_lo)) * 100.0;
+    // printf("A %.*s %zu %zu %zu (%.2f %%)\n", (int) obj->name.length, obj->name.data, reloc_lo, reloc_hi, (reloc_hi - reloc_lo) / 4096, usage);
 
     // associate the debug and pdata with the text
     if (text_piece && pdata_piece) {
@@ -318,7 +357,7 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
             break;
         }
 
-        log_info("directive: %.*s", (int) (end - curr), curr);
+        // log_info("directive: %.*s", (int) (end - curr), curr);
         if (strprefix((const char*) curr, "/merge:", end - curr)) {
             curr += sizeof("/merge:")-1;
 
@@ -371,13 +410,14 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
                 len -= 2;
             }
 
-            char* path = tb_arena_alloc(&linker_perm_arena, FILENAME_MAX);
-            snprintf(path, FILENAME_MAX, "%.*s", len, curr);
+            char* str = tb_arena_alloc(&linker_perm_arena, len + 1);
+            memcpy(str, curr, len + 1);
+            str[len] = 0;
 
             // low contention, don't care
             cuikperf_region_start("LOCK", NULL);
             mtx_lock(&l->lock);
-            dyn_array_put(l->default_libs, path);
+            dyn_array_put(l->default_libs, str);
             mtx_unlock(&l->lock);
             cuikperf_region_end();
         } else if (strprefix((const char*) curr, "/alternatename:", end - curr)) {

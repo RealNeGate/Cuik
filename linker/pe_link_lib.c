@@ -1,4 +1,8 @@
 
+enum {
+    LAZY_IMPORT_BATCH_SIZE = 1024
+};
+
 static void lazy_import_task(TPool* pool, void** args) {
     cuikperf_region_start("lazy parse", NULL);
 
@@ -6,7 +10,7 @@ static void lazy_import_task(TPool* pool, void** args) {
     TB_Linker* l = lib->header.linker;
     tb_linker_worker_init(l);
 
-    size_t i = (size_t) args[1], limit = i + 250;
+    size_t i = (size_t) args[1], limit = i + LAZY_IMPORT_BATCH_SIZE;
     if (limit > lib->symbol_count) {
         limit = lib->symbol_count;
     }
@@ -80,7 +84,7 @@ static bool fetch_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
     // Read the archive up until the end of the longnames
     lib->header.io_rem = 1;
     lib->second_longnames = tb_linker_moar_mem(file_offset - lib->second_base);
-    tb_linker_read_req(l, lib->second_base, file_offset - lib->second_base, lib->second_longnames, &lib->header);
+    tb_linker_read_req(l, false, lib->second_base, file_offset - lib->second_base, lib->second_longnames, &lib->header);
     return false;
 }
 
@@ -111,8 +115,8 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
         if (l->jobs.pool != NULL) {
             #if CUIK_ALLOW_THREADS
             size_t i = 0, str_head = 0;
-            for (size_t i = 0; i < lib->symbol_count; i += 250) {
-                size_t limit = i + 250;
+            for (size_t i = 0; i < lib->symbol_count; i += LAZY_IMPORT_BATCH_SIZE) {
+                size_t limit = i + LAZY_IMPORT_BATCH_SIZE;
                 if (limit > lib->symbol_count) {
                     limit = lib->symbol_count;
                 }
@@ -120,11 +124,28 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 void* args[3] = { lib, (void*) i, (void*) str_head };
                 tb_linker_job_submit_N(l, lazy_import_task, 3, args);
 
+                #if USE_INTRIN && CUIK__IS_X64
+                size_t j = i;
+                while (j < limit) {
+                    // Skip 16B each time we don't reach the limit
+                    __m128i str128  = _mm_loadu_si128((__m128i*) &strtab[str_head]);
+                    __m128i zero128 = _mm_set1_epi8('\0');
+                    uint32_t null_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(str128, zero128));
+                    int nulls = __builtin_popcount(null_mask);
+                    if (j + nulls >= limit) {
+                        break;
+                    }
+                    str_head += 16, j += nulls;
+                }
+                #else
+                size_t j = i;
+                #endif
+
                 // Skip strings
-                FOR_N(j, i, limit) {
+                while (j < limit) {
                     uint16_t offset_index = lib->symbols[j] - 1;
                     const char* name = &strtab[str_head];
-                    str_head += ideally_fast_strlen(name) + 1;
+                    j += 1, str_head += ideally_fast_strlen(name) + 1;
                 }
             }
             #else

@@ -17,6 +17,8 @@ typedef struct TPool_Task {
 } TPool_Task;
 
 typedef struct {
+    bool hi_prio;
+
     int fd;
     size_t offset, size;
     void* data;
@@ -48,7 +50,7 @@ void tpool_destroy(TPool *pool);
 
 void tpool_io_prep_all(TPool *pool);
 void tpool_io_prep(TPool* pool);
-void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, tpool_task_proc* fn, void* arg0, void* arg1, void* arg2, _Atomic(int)* io_rem);
+void tpool_io_read(TPool* pool, bool hi_prio, int fd, size_t offset, size_t size, void* data, tpool_task_proc* fn, void* arg0, void* arg1, void* arg2, _Atomic(int)* io_rem);
 
 void tpool_wait_for_jobs(TPool *pool, Futex* done, Futex* count);
 void tpool_wait_for_jobs2(TPool *pool, Futex* done, int64_t count);

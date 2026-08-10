@@ -125,29 +125,29 @@ void* tb_linker_moar_mem(size_t size) {
     return ptr;
 }
 
-void tb_linker_read_req(TB_Linker* l, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj) {
+void tb_linker_read_req(TB_Linker* l, bool hi_prio, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj) {
     log_trace("read_req(%zu, %zu, %p)", offset, size, buffer);
 
     cuikperf_region_start("read_req", NULL);
-    tpool_io_read(l->jobs.pool, obj->fd, offset, size, buffer, l->vtbl.add_input, obj, NULL, NULL, &obj->io_rem);
+    tpool_io_read(l->jobs.pool, hi_prio, obj->fd, offset, size, buffer, l->vtbl.add_input, obj, NULL, NULL, &obj->io_rem);
     cuikperf_region_end();
 }
 
-void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn) {
+void tb_linker_read_req2(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn) {
     assert(fn != NULL);
     log_trace("read_req(%zu, %zu, %p)", offset, size, buffer);
 
     cuikperf_region_start("read_req", NULL);
-    tpool_io_read(l->jobs.pool, fd, offset, size, buffer, fn, l, buffer, ((char*) buffer) + size, NULL);
+    tpool_io_read(l->jobs.pool, hi_prio, fd, offset, size, buffer, fn, l, buffer, ((char*) buffer) + size, NULL);
     cuikperf_region_end();
 }
 
-void tb_linker_read_req3(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn, void* arg) {
+void tb_linker_read_req3(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn, void* arg1, void* arg2) {
     assert(fn != NULL);
     log_trace("read_req(%zu, %zu, %p)", offset, size, buffer);
 
     cuikperf_region_start("read_req", NULL);
-    tpool_io_read(l->jobs.pool, fd, offset, size, buffer, fn, l, arg, NULL, NULL);
+    tpool_io_read(l->jobs.pool, hi_prio, fd, offset, size, buffer, fn, l, arg1, arg2, NULL);
     cuikperf_region_end();
 }
 
@@ -200,15 +200,17 @@ TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
     l->jobs.pool = tp;
     mtx_init(&l->lock, mtx_plain);
 
-    l->symbols  = nbhm_alloc(16384);
-    l->sections = nbhs_alloc(16);
-    l->imports  = nbhs_alloc(256);
-    l->libs     = nbhs_alloc(32);
-    l->objects  = nbhs_alloc(256);
-    l->unresolved_symbols = nbhs_alloc(16);
-
     CUIK_TIMED_BLOCK("I/O thread prep") {
         tpool_io_prep_all(l->jobs.pool);
+    }
+
+    CUIK_TIMED_BLOCK("Alloc tables") {
+        l->symbols  = nbhm_alloc(16384);
+        l->sections = nbhs_alloc(16);
+        l->imports  = nbhs_alloc(256);
+        l->libs     = nbhs_alloc(32);
+        l->objects  = nbhs_alloc(256);
+        l->unresolved_symbols = nbhs_alloc(16);
     }
 
     switch (exe) {
@@ -338,7 +340,7 @@ void tb_linker_forward_input(TPool* pool, void** args) {
     obj->size = size;
     obj->io_rem = 1;
     obj->prefetch_page = tb_linker_moar_mem(PREFETCH_BLOCK_SIZE);
-    tb_linker_read_req(l, 0, PREFETCH_BLOCK_SIZE, obj->prefetch_page, obj);
+    tb_linker_read_req(l, true, 0, PREFETCH_BLOCK_SIZE, obj->prefetch_page, obj);
 
     done:
     cuikperf_region_end();
@@ -407,7 +409,7 @@ static void linker_job_find_lib(TPool* pool, void** args) {
 
     lib_file->header.io_rem = 1;
     lib_file->header.prefetch_page = tb_linker_moar_mem(PREFETCH_BLOCK_SIZE);
-    tb_linker_read_req(l, 0, PREFETCH_BLOCK_SIZE, lib_file->header.prefetch_page, &lib_file->header);
+    tb_linker_read_req(l, true, 0, PREFETCH_BLOCK_SIZE, lib_file->header.prefetch_page, &lib_file->header);
 
     done:
     cuikperf_region_end();
@@ -812,7 +814,7 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym) {
     l->jobs.count += 1;
     obj->io_rem = 1;
     obj->prefetch_page = tb_linker_moar_mem(PREFETCH_BLOCK_SIZE);
-    tb_linker_read_req(obj->linker, offset, PREFETCH_BLOCK_SIZE, obj->prefetch_page, obj);
+    tb_linker_read_req(obj->linker, true, offset, PREFETCH_BLOCK_SIZE, obj->prefetch_page, obj);
 
     #if 0
     size_t slash = 0;
@@ -1414,32 +1416,12 @@ static TB_LinkerSymbol* resolve_external(TB_Linker* l, TB_External* ext) {
     return sym;
 }
 
-static void tb_linker_mark_piece(TPool* pool, void** args) {
-    cuikperf_region_start("visit", NULL);
-
-    TB_Linker* l = args[0];
-    tb_linker_worker_init(l);
-
-    TB_LinkerSectionPiece* p = args[1];
-    if (p->relocs == NULL && p->reloc_size > 0) {
-        cuikperf_region_start("alloc", NULL);
-        uint8_t* buf = tb_linker_moar_mem(p->reloc_size);
-        p->relocs = buf;
-        cuikperf_region_end();
-
-        tb_linker_read_req3(l, p->obj->fd, p->reloc_pos, p->reloc_size, buf, tb_linker_mark_piece, p);
-        cuikperf_region_end();
-        return;
-    }
-
-    if (p->obj) {
-        atomic_store_explicit(&p->obj->live, true, memory_order_relaxed);
-    }
-    // printf("Walk: %#llx (%zu, %.*s)\n", p->order, p->reloc_count, (int) p->obj->name.length, p->obj->name.data);
+static void tb_linker_mark_piece(TB_Linker* l, TB_LinkerSectionPiece* p) {
+    atomic_store_explicit(&p->obj->live, true, memory_order_relaxed);
 
     // associated section
     dyn_array_for(i, p->assoc) {
-        tb_linker_push_piece(l, p->assoc[i]);
+        tb_linker_push_piece(l, p->assoc[i], 0);
     }
 
     // mark module content
@@ -1450,7 +1432,7 @@ static void tb_linker_mark_piece(TPool* pool, void** args) {
         TB_Module* m = p->obj->module;
         dyn_array_for(i, m->sections) {
             if (m->sections[i].piece) {
-                tb_linker_push_piece(l, m->sections[i].piece);
+                tb_linker_push_piece(l, m->sections[i].piece, 0);
             }
         }
         #endif
@@ -1464,7 +1446,7 @@ static void tb_linker_mark_piece(TPool* pool, void** args) {
             TB_LinkerSymbol* sym = resolve_external(l, m->exports.data[i]);
             TB_LinkerSectionPiece* piece = tb_linker_get_piece(l, sym);
             if (piece) {
-                tb_linker_push_piece(l, piece);
+                tb_linker_push_piece(l, piece, 0);
             }
         }
     }
@@ -1483,14 +1465,95 @@ static void tb_linker_mark_piece(TPool* pool, void** args) {
         parse_reloc(l, p, i, &rel);
 
         TB_LinkerSymbol* sym = tb_linker_root_symbol(l, rel.target);
-        tb_linker_push_symbol(l, sym);
+        tb_linker_push_symbol(l, sym, 0);
     }
+}
+
+static bool tb_linker_read_relocs(TB_Linker* l, TB_LinkerSectionPiece* p);
+static void tb_linker_job_mark(TPool* pool, void** args) {
+    cuikperf_region_start("visit", NULL);
+
+    TB_Linker* l = args[0];
+    tb_linker_worker_init(l);
+
+    TB_LinkerSectionPiece* p = args[1];
+    assert(p->obj != NULL);
+
+    #if 0
+    if (p->relocs == NULL && p->reloc_size > 0) {
+        // We haven't read the relocations yet? do that first
+        if (!tb_linker_read_relocs(l, p)) {
+            cuikperf_region_end();
+            return;
+        }
+        assert(p->relocs != NULL || p->reloc_size == 0);
+    }
+    #endif
+
+    // printf("Walk: %#llx (%zu, %.*s)\n", p->order, p->reloc_count, (int) p->obj->name.length, p->obj->name.data);
+
+    assert(p->relocs != NULL || p->reloc_size == 0);
+    tb_linker_mark_piece(l, p);
 
     cuikperf_region_end();
     tb_linker_job_done(l);
 }
 
-bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p) {
+#if 0
+// returns true if the relocations are immediately available
+static bool tb_linker_read_relocs(TB_Linker* l, TB_LinkerSectionPiece* p) {
+    TB_LinkerObject* obj = p->obj;
+    size_t reloc_lo = p->reloc_pos;
+    size_t reloc_hi = p->reloc_pos + p->reloc_size;
+
+    if (p->relocs != NULL || p->reloc_size == 0) {
+        return true;
+    }
+
+    // If it's not represented in the cache we just send out a big request
+    if (reloc_lo < obj->reloc_lo || reloc_hi > obj->reloc_hi) {
+        l->jobs.count += 1;
+        p->relocs = tb_linker_moar_mem(p->reloc_size);
+        tb_linker_read_req3(l, false, p->obj->fd, p->reloc_pos, p->reloc_size, p->relocs, tb_linker_job_mark, p, NULL);
+        return false;
+    }
+
+    #if 0
+    size_t bits_lo = (reloc_lo - obj->reloc_lo) / 4096;
+    size_t bits_hi = ((reloc_hi - obj->reloc_lo) + 4095) / 4096;
+    uint64_t mask = (UINT64_MAX >> (64 - (bits_hi - bits_lo))) << bits_lo;
+
+    // Set the reserve bit to signal that we'll be enqueueing this block
+    uint64_t curr = obj->reserve;
+    while ((curr & mask) != mask) {
+        uint64_t block = __builtin_ffsll(~curr & mask) - 1;
+        uint64_t next = curr | (1ull << block);
+        if (atomic_compare_exchange_strong(&obj->reserve, &curr, next)) {
+            size_t offset = obj->reloc_lo + block*4096;
+            char* buf = &obj->reloc_cache[block*4096];
+
+            // printf("FILE CACHE READ: %d:%zu (BLK %lu)\n", obj->fd, offset, block);
+
+            l->jobs.count += 1;
+            tb_linker_read_req3(l, true, obj->fd, offset, 4096, buf, tb_linker_read_block, obj, (void*) block);
+        }
+    }
+
+    // re-queue the same task, hopefully the answer changes by the time we do this again
+    if ((obj->commit & mask) != mask) {
+        void* args[2] = { l, p };
+        tpool_add_task2(l->jobs.pool, tb_linker_job_mark, 2, args);
+        return false;
+    }
+
+    // we've read all the necessary blocks, yippee!!
+    p->relocs = &obj->reloc_cache[reloc_lo - obj->reloc_lo];
+    return true;
+    #endif
+}
+#endif
+
+bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p, int depth) {
     if (p->size == 0 || (p->parent->generic_flags & TB_LINKER_SECTION_DISCARD)) {
         return false;
     }
@@ -1501,16 +1564,52 @@ bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p) {
     }
 
     if (l->jobs.pool) {
-        l->jobs.count += 1;
-        void* args[2] = { l, p };
-        tpool_add_task2(l->jobs.pool, tb_linker_mark_piece, 2, args);
+        if (p->reloc_count == 0 && p->obj->module == NULL) {
+            cuikperf_region_start("visit_F", NULL);
+            atomic_store_explicit(&p->obj->live, true, memory_order_relaxed);
+
+            // associated section
+            dyn_array_for(i, p->assoc) {
+                tb_linker_push_piece(l, p->assoc[i], depth + 1);
+            }
+            cuikperf_region_end();
+        } else {
+            size_t reloc_lo = p->reloc_pos;
+            size_t reloc_hi = p->reloc_pos + p->reloc_size;
+
+            // If it's not represented in the cache we just send out a big request
+            TB_LinkerObject* obj = p->obj;
+            if (obj->reloc_lo == obj->reloc_hi) { // if (reloc_lo < obj->reloc_lo || reloc_hi > obj->reloc_hi) {
+                l->jobs.count += 1;
+                p->relocs = tb_linker_moar_mem(p->reloc_size);
+                tb_linker_read_req3(l, false, p->obj->fd, p->reloc_pos, p->reloc_size, p->relocs, tb_linker_job_mark, p, NULL);
+                return false;
+            } else {
+                l->jobs.count += 1;
+                void* args[2] = { l, p };
+                tpool_add_task2(l->jobs.pool, tb_linker_job_mark, 2, args);
+            }
+
+            #if 0
+            l->jobs.count += 1;
+            if (tb_linker_read_relocs(l, p)) {
+                if (p->reloc_count < 64) {
+                    tb_linker_mark_piece(l, p);
+                    tb_linker_job_done(l);
+                } else {
+                    void* args[2] = { l, p };
+                    tpool_add_task2(l->jobs.pool, tb_linker_job_mark, 2, args);
+                }
+            }
+            #endif
+        }
     } else {
         dyn_array_put(l->worklist, p);
     }
     return true;
 }
 
-void tb_linker_push_symbol(TB_Linker* l, TB_LinkerSymbol* sym) {
+void tb_linker_push_symbol(TB_Linker* l, TB_LinkerSymbol* sym, int depth) {
     if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN || sym->tag == TB_LINKER_SYMBOL_LAZY) {
         TB_LinkerSymbol* alt = tb_linker_root_symbol(l, atomic_load_explicit(&sym->weak_alt, memory_order_relaxed));
         if (alt && alt->tag != TB_LINKER_SYMBOL_UNKNOWN && alt->tag != TB_LINKER_SYMBOL_LAZY) {
@@ -1534,17 +1633,17 @@ void tb_linker_push_symbol(TB_Linker* l, TB_LinkerSymbol* sym) {
     }
 
     if (sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB) {
-        tb_linker_push_piece(l, tb_linker_get_piece(l, sym));
+        tb_linker_push_piece(l, tb_linker_get_piece(l, sym), depth);
     }
 }
 
-void tb_linker_push_named(TB_Linker* l, const char* name) {
+void tb_linker_push_named(TB_Linker* l, const char* name, int depth) {
     TB_LinkerSymbol* sym = tb_linker_find_symbol2(l, name);
-    tb_linker_push_symbol(l, sym);
+    tb_linker_push_symbol(l, sym, depth);
 }
 
 void tb_linker_mark_live(TB_Linker* l) {
-    tb_linker_push_named(l, l->entrypoint);
+    tb_linker_push_named(l, l->entrypoint, 0);
 
     // mark all non-COMDAT pieces as live
     cuikperf_region_start("root scan", NULL);
@@ -1559,7 +1658,7 @@ void tb_linker_mark_live(TB_Linker* l) {
         TB_LinkerSectionPiece* p = atomic_load_explicit(&s->list, memory_order_relaxed);
         for (; p != NULL; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
             if ((p->flags & TB_LINKER_PIECE_COMDAT) == 0) {
-                tb_linker_push_piece(l, p);
+                tb_linker_push_piece(l, p, 0);
             }
         }
     }
@@ -1577,8 +1676,7 @@ void tb_linker_mark_live(TB_Linker* l) {
         cuikperf_region_start("mark", NULL);
         while (dyn_array_length(l->worklist)) {
             TB_LinkerSectionPiece* p = dyn_array_pop(l->worklist);
-            void* args[2] = { l, p };
-            tb_linker_mark_piece(NULL, args);
+            tb_linker_mark_piece(l, p);
         }
         cuikperf_region_end();
     }

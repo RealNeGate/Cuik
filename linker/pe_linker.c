@@ -782,8 +782,8 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     // this will resolve the sections, GC any pieces which aren't used and
     // resolve symbols.
     CUIK_TIMED_BLOCK("Resolve & GC") {
-        tb_linker_push_named(l, "_load_config_used");
-        tb_linker_push_named(l, "_tls_used");
+        tb_linker_push_named(l, "_load_config_used", 0);
+        tb_linker_push_named(l, "_tls_used", 0);
         tb_linker_mark_live(l);
     }
 
