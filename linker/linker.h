@@ -31,6 +31,18 @@ typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 typedef struct TB_LinkerObject TB_LinkerObject;
 typedef struct TB_LinkerArchive TB_LinkerArchive;
 
+typedef struct {
+    // relative to the FD
+    uint32_t offset;
+    uint32_t size;
+
+    // track how many blocks are missing before we can use this range.
+    _Atomic(int) io_rem;
+
+    // track if we're ready to issue tasks on it.
+    _Atomic(TB_LinkerSectionPiece*) pending;
+} TB_CacheRange;
+
 // basically an object file or a library
 struct TB_LinkerObject {
     TB_Slice name;
@@ -53,11 +65,25 @@ struct TB_LinkerObject {
         // this is the first peek, so we can get a look at the magic numbers and
         // the rest of the header.
         uint8_t* prefetch_page;
-
         uint8_t* file_bottom;
 
         size_t symbol_table_pos;
         uint8_t* symbol_table;
+    };
+
+    struct {
+        // Cache for the relocations and section data, aka the stuff which is
+        // gonna require grabbing arrays which may or may not share the same file
+        // block as another.
+        uint64_t cache_lo;
+        uint64_t cache_hi;
+        char* cache_data;
+
+        // Tracks the sorted ranges
+        DynArray(TB_CacheRange) cache_ranges;
+
+        // Track which pages have issued reads
+        _Atomic(uint64_t)* reserve;
     };
 
     #ifdef CONFIG_HAS_TB
@@ -75,17 +101,6 @@ struct TB_LinkerObject {
     // Windows-specific debug stuff
     TB_LinkerSectionPiece* debug_s;
     TB_LinkerSectionPiece* debug_t;
-
-    // Cache relocations by making a small bitmap of each 4K
-    // block we've loaded already.
-    struct {
-        uint64_t reloc_lo;
-        uint64_t reloc_hi;
-
-        // We allocate the space beforehand, we just don't load or
-        // touch it until later
-        char* reloc_cache;
-    };
 };
 
 struct TB_LinkerArchive {
@@ -177,14 +192,14 @@ struct TB_LinkerSectionPiece {
     union {
         // kind=PIECE_FILE
         struct {
-            uint32_t file_offset;
             uint32_t file_size;
+            uint32_t file_offset;
             int fd;
         };
 
         // kind=PIECE_BUFFER
         struct {
-            size_t buffer_size;
+            uint32_t buffer_size;
             const uint8_t* buffer;
         };
 
@@ -415,8 +430,9 @@ struct TB_Linker {
 
         _Alignas(64) Futex done;
         _Alignas(64) Futex count;
-        // _Alignas(64) uint64_t count_cache;
     } jobs;
+
+    _Alignas(64) bool is_exporting;
 };
 
 extern thread_local int linker_thread_id;
@@ -464,9 +480,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
 bool tb__linker_is_library_new(TB_Linker* l, const char* file_name);
 void tb__linker_module_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
 
-void tb_linker_push_symbol(TB_Linker* l, TB_LinkerSymbol* sym, int depth);
-bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p, int depth);
-void tb_linker_push_named(TB_Linker* l, const char* name, int depth);
+void tb_linker_push_named(TB_Linker* l, const char* name);
 void tb_linker_mark_live(TB_Linker* l);
 
 void tb_linker_job_tail(TB_Linker* l, tpool_task_proc* fn, int count, void** args);
@@ -485,7 +499,7 @@ void tb_linker_complete_appends(TB_Linker* l);
 void tb_linker_read_imm(int fd, size_t offset, size_t count, void* data);
 void tb_linker_read_req(TB_Linker* l, bool hi_prio, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj);
 void tb_linker_read_req2(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn);
-void tb_linker_read_req3(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn, void* arg1, void* arg2);
+void tb_linker_read_req3(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn, void* arg1, void* arg2, _Atomic(int)* io_rem);
 
 void tb_linker_worker_init(TB_Linker* l);
 void* tb_linker_moar_mem(size_t size);

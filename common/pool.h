@@ -48,6 +48,8 @@ void tpool_add_task2(TPool *pool, tpool_task_proc* fn, int arg_count, void** arg
 void tpool_wait(TPool *pool);
 void tpool_destroy(TPool *pool);
 
+int tpool_num_threads(TPool *pool);
+
 void tpool_io_prep_all(TPool *pool);
 void tpool_io_prep(TPool* pool);
 void tpool_io_read(TPool* pool, bool hi_prio, int fd, size_t offset, size_t size, void* data, tpool_task_proc* fn, void* arg0, void* arg1, void* arg2, _Atomic(int)* io_rem);

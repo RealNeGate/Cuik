@@ -477,20 +477,20 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
         DynArray(TB_LinkerSymbol*) tbl = imp->thunks;
 
         // prune dead thunks
-        size_t cnt = 0;
-        dyn_array_for(k, tbl) if (tbl[k]->flags & TB_LINKER_SYMBOL_USED) {
-            tbl[cnt++] = tbl[k];
-            // printf("IMPORT %.*s\n", (int) tbl[k]->name.length, tbl[k]->name.data);
+        #if 0 // ndef NDEBUG
+        dyn_array_for(k, tbl) {
+            assert(tbl[k]->flags & TB_LINKER_SYMBOL_USED);
+            printf("IMPORT %.*s\n", (int) tbl[k]->name.length, tbl[k]->name.data);
         }
-        dyn_array_set_length(tbl, cnt);
-        imp->thunks = tbl;
+        #endif
 
+        size_t cnt = dyn_array_length(tbl);
         if (cnt > 0) {
             // there's an extra NULL terminator for the import entry lists
             import_entry_count += cnt + 1;
 
             CUIK_TIMED_BLOCK("sort import syms") {
-                qsort(tbl, dyn_array_length(tbl), sizeof(TB_LinkerSymbol*), compare_name);
+                qsort(tbl, cnt, sizeof(TB_LinkerSymbol*), compare_name);
             }
 
             dyn_array_put(sorted_imports, imp);
@@ -782,8 +782,8 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     // this will resolve the sections, GC any pieces which aren't used and
     // resolve symbols.
     CUIK_TIMED_BLOCK("Resolve & GC") {
-        tb_linker_push_named(l, "_load_config_used", 0);
-        tb_linker_push_named(l, "_tls_used", 0);
+        tb_linker_push_named(l, "_load_config_used");
+        tb_linker_push_named(l, "_tls_used");
         tb_linker_mark_live(l);
     }
 
@@ -794,12 +794,12 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     tb_linker_merge_sections(l, tb_linker_find_section(l, ".CRT"), rdata);
     } */
 
-    if (!tb_linker_layout(l)) {
+    if (1) {
         cuikperf_region_end();
         return false;
     }
 
-    if (1) {
+    if (!tb_linker_layout(l)) {
         cuikperf_region_end();
         return false;
     }
@@ -889,14 +889,14 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     }
 
     TB_LinkerSegment* text = tb_linker_find_segment(l, ".text");
-    CUIK_TIMED_BLOCK("sort .pdata") {
+    if (0) CUIK_TIMED_BLOCK("sort .pdata") {
         TB_LinkerSection* pdata = tb_linker_find_section(l, ".pdata");
         uint8_t* pdata_buffer   = cuik_malloc(pdata->size);
 
         uint32_t pdata_rva = pdata->segment->address + pdata->offset;
         dyn_array_for(i, pdata->pieces) {
             TB_LinkerSectionPiece* p = pdata->pieces[i];
-            assert(p->kind == PIECE_BUFFER);
+            TB_ASSERT(p->kind == PIECE_FILE);
 
             size_t rem = 0;
             uint8_t* out = &pdata_buffer[p->offset];

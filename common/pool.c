@@ -500,9 +500,6 @@ void tpool_wait_for_jobs(TPool *pool, Futex* done, Futex* count) {
         if (*done == c) {
             break;
         }
-
-        pool->sleeping_tasks |= 1ull << (tpool_current_thread_idx % 64ull);
-        futex_wait(&pool->tasks_available, avail);
     }
 }
 
@@ -542,7 +539,13 @@ void tpool_wait(TPool *pool) {
 
 }
 
+int tpool_num_threads(TPool *pool) {
+    return pool->thread_count;
+}
+
 void tpool_init(TPool *pool, int child_thread_count) {
+    cuikperf_region_start("tpool_init", NULL);
+
     int thread_count = child_thread_count + 1;
     pool->thread_count = thread_count;
     pool->threads = cuik_calloc(pool->thread_count, sizeof(TPool_Thread));
@@ -560,6 +563,7 @@ void tpool_init(TPool *pool, int child_thread_count) {
     }
 
     tpool_io_prep_all(pool);
+    cuikperf_region_end();
 }
 
 void tpool_io_prep_all(TPool *pool) {

@@ -112,7 +112,7 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
         uint64_t t = lib->header.time;
         char* strtab = lib->symbol_strtab;
 
-        if (l->jobs.pool != NULL) {
+        if (l->jobs.pool != NULL && tpool_num_threads(l->jobs.pool) > 1) {
             #if CUIK_ALLOW_THREADS
             size_t i = 0, str_head = 0;
             for (size_t i = 0; i < lib->symbol_count; i += LAZY_IMPORT_BATCH_SIZE) {

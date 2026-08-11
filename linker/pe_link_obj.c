@@ -14,6 +14,12 @@ static void tb_linker_ack_read(TPool* pool, void** args) {
     tb_linker_job_done(l);
 }
 
+static int compare_cache_ranges(const void* a, const void* b) {
+    const TB_CacheRange* aa = (const TB_CacheRange*) a;
+    const TB_CacheRange* bb = (const TB_CacheRange*) b;
+    return aa->offset - bb->offset;
+}
+
 static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
     assert(prefetch.length >= sizeof(COFF_FileHeader));
 
@@ -68,10 +74,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     TB_LinkerSectionPiece** comdat_parent = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_LinkerSectionPiece*));
     TB_LinkerSectionPiece** sec2piece = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_LinkerSectionPiece*));
 
-    // Compute where the relocations are, since they're usually next to each other
-    // and they're likely to overlap the same file blocks.
-    size_t reloc_lo = SIZE_MAX, reloc_hi = 0, reloc_used = 0;
-
+    size_t cache_lo = SIZE_MAX, cache_hi = 0;
     uint64_t order = obj->time;
     TB_LinkerSymbol** symbol_map = tb_arena_alloc(&linker_perm_arena, parser.symbol_count * sizeof(TB_LinkerSymbol*));
     CUIK_TIMED_BLOCK("parse sections") {
@@ -117,6 +120,15 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 p->file_offset = obj->offset + sec->raw_data_pos;
                 p->file_size   = sec->raw_data_size;
                 p->fd          = obj->fd;
+
+                if (p->file_size) {
+                    size_t end_of_data = p->file_offset + p->file_size;
+                    cache_lo = TB_MIN(cache_lo, p->file_offset);
+                    cache_hi = TB_MAX(cache_hi, end_of_data);
+
+                    TB_CacheRange r = { p->file_offset, p->file_size };
+                    dyn_array_put(obj->cache_ranges, r);
+                }
             }
             if (sec_flags & 0x00F00000) {
                 // go stare at the table, it'll make sense
@@ -132,14 +144,15 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             p->reloc_count = sec->num_reloc;
             p->reloc_pos = file_header_offset + sec->pointer_to_reloc;
             p->reloc_size = sec->num_reloc * sizeof(COFF_ImageReloc);
-            p->relocs = NULL; // &parser.file.data[sec->pointer_to_reloc];
+            p->relocs = NULL;
 
             if (sec->num_reloc) {
                 size_t end_of_reloc = p->reloc_pos + p->reloc_size;
-                reloc_lo = TB_MIN(reloc_lo, p->reloc_pos);
-                reloc_hi = TB_MAX(reloc_hi, end_of_reloc);
-                reloc_used += p->reloc_size;
-                // printf("  %zu %zu\n", p->reloc_pos, end_of_reloc);
+                cache_lo = TB_MIN(cache_lo, p->reloc_pos);
+                cache_hi = TB_MAX(cache_hi, end_of_reloc);
+
+                TB_CacheRange r = { p->reloc_pos, p->reloc_size };
+                dyn_array_put(obj->cache_ranges, r);
             }
 
             if (sec_flags & IMAGE_SCN_LNK_COMDAT) {
@@ -160,23 +173,38 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
         }
     }
 
-    size_t reloc_pages = (reloc_hi - reloc_lo) / 4096;
-    if (reloc_pages < 64) {
-        obj->reloc_lo = reloc_lo & ~4095;
-        obj->reloc_hi = (reloc_hi + 4095) & ~4095;
-        obj->reloc_cache = tb_linker_moar_mem(obj->reloc_hi - obj->reloc_lo);
+    // Initialize the block cache
+    CUIK_TIMED_BLOCK("initialize cache") {
+        obj->cache_lo = cache_lo & ~4095;
+        obj->cache_hi = (cache_hi + 4095) & ~4095;
+        obj->cache_data = tb_linker_moar_mem(obj->cache_hi - obj->cache_lo);
 
-        // request to load all the relocation data early, this way it can also
-        // happen in the background before the mark phase.
-        l->jobs.count += 1;
-        tb_linker_read_req3(l, true, obj->fd, obj->reloc_lo, obj->reloc_hi, obj->reloc_cache, tb_linker_ack_read, obj, NULL);
+        // Sort the ranges
+        qsort(obj->cache_ranges, dyn_array_length(obj->cache_ranges), sizeof(TB_CacheRange), compare_cache_ranges);
 
+        dyn_array_for(i, obj->cache_ranges) {
+            uint32_t page_start = obj->cache_ranges[i].offset / 4096;
+            uint32_t page_end   = (obj->cache_ranges[i].offset + obj->cache_ranges[i].size + 4095) / 4096;
+
+            obj->cache_ranges[i].io_rem = page_end - page_start;
+        }
+
+        // setup pointers early
         FOR_N(i, 0, parser.section_count) {
             TB_LinkerSectionPiece* p = sec2piece[i];
             if (p != NULL) {
-                p->relocs = &obj->reloc_cache[reloc_lo - obj->reloc_lo];
+                if (p->reloc_size > 0) {
+                    p->relocs = &obj->cache_data[p->reloc_pos - obj->cache_lo];
+                }
             }
         }
+
+        // Allocate bitmaps
+        size_t cache_blocks = (obj->cache_hi - obj->cache_lo) / 4096;
+        size_t bitmap_size = (cache_blocks + 63) / 64;
+        assert(bitmap_size <= 1 && "TODO");
+
+        obj->reserve = tb_linker_moar_mem(bitmap_size * sizeof(uint64_t));
     }
 
     // double usage = (reloc_used / (double) (reloc_hi - reloc_lo)) * 100.0;

@@ -38,7 +38,16 @@ static void process_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
         import_name.data   = (const uint8_t*) imported_symbol;
     }
 
-    TB_Slice dll_str = { (const uint8_t*) dll_path, strlen(dll_path) };
+    // Create import table early, but we'll only populate it during the marking phase
+    ImportTable* table = tb_arena_alloc(&linker_perm_arena, sizeof(ImportTable));
+    *table = (ImportTable){ .libpath = { (const uint8_t*) dll_path, strlen(dll_path) } };
+    mtx_init(&table->lock, mtx_plain);
+
+    ImportTable* old = namehs_intern(&l->imports, table);
+    if (old != table) {
+        tb_arena_free(&linker_perm_arena, table, sizeof(ImportTable));
+        table = old;
+    }
 
     // first time we're importing this symbol, swag
     // make __imp_ form which refers to raw address
@@ -52,8 +61,7 @@ static void process_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     *import_sym = (TB_LinkerSymbol){
         .name   = { newstr, newlen },
         .tag    = TB_LINKER_SYMBOL_IMPORT,
-        // TODO(NeGate): figure out the import table later
-        .import = { .ordinal = import.ordinal_hint }
+        .import = { .table = table, .ordinal = import.ordinal_hint }
     };
 
     TB_LinkerSymbol* new_sym = tb_linker_symbol_insert(l, import_sym, true);
