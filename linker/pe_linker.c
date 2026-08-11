@@ -794,7 +794,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     tb_linker_merge_sections(l, tb_linker_find_section(l, ".CRT"), rdata);
     } */
 
-    if (1) {
+    if (0) {
         cuikperf_region_end();
         return false;
     }
@@ -814,6 +814,8 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     CUIK_TIMED_BLOCK("base relocs") {
         base_relocs = find_base_relocs(l);
     }
+
+    l->is_exporting = true;
 
     size_t final_section_count = dyn_array_length(l->segments);
     size_t size_of_headers = sizeof(dos_stub)
@@ -1273,6 +1275,11 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 
         close_file_map(&fm);
     }
+
+    #if 0
+    extern _Atomic int total_reads, total_requests;
+    printf("A %d %d\n", total_reads, total_requests);
+    #endif
 
     cuikperf_region_end();
     return true;

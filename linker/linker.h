@@ -22,7 +22,8 @@
 
 enum {
     // 60 (archive member header) + 20 (COFF header), rounded to the next pow2
-    PREFETCH_BLOCK_SIZE = 256
+    PREFETCH_BLOCK_SIZE = 256,
+    FILE_BLOCK_SIZE = 4096,
 };
 
 typedef void TB_LinkerAppendFn(TPool* pool, void** args);
@@ -72,6 +73,9 @@ struct TB_LinkerObject {
     };
 
     struct {
+        // The cache region is completely loaded from the start, because it's small.
+        bool fully_resident;
+
         // Cache for the relocations and section data, aka the stuff which is
         // gonna require grabbing arrays which may or may not share the same file
         // block as another.
@@ -187,19 +191,20 @@ struct TB_LinkerSectionPiece {
 
     void* relocs;
 
+    // how many data bytes
+    uint32_t buffer_size;
+
     _Atomic(TB_LinkerPieceFlags) flags;
 
     union {
         // kind=PIECE_FILE
         struct {
-            uint32_t file_size;
             uint32_t file_offset;
             int fd;
         };
 
         // kind=PIECE_BUFFER
         struct {
-            uint32_t buffer_size;
             const uint8_t* buffer;
         };
 

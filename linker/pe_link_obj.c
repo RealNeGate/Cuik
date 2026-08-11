@@ -117,16 +117,16 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             p = tb_linker_append_piece(ls, PIECE_BSS, sec_vsize, obj);
             if ((sec_flags & IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0) {
                 p->kind        = PIECE_FILE;
-                p->file_offset = obj->offset + sec->raw_data_pos;
-                p->file_size   = sec->raw_data_size;
+                p->file_offset = file_header_offset + sec->raw_data_pos;
+                p->buffer_size = sec->raw_data_size;
                 p->fd          = obj->fd;
 
-                if (p->file_size) {
-                    size_t end_of_data = p->file_offset + p->file_size;
+                if (p->buffer_size) {
+                    size_t end_of_data = p->file_offset + p->buffer_size;
                     cache_lo = TB_MIN(cache_lo, p->file_offset);
                     cache_hi = TB_MAX(cache_hi, end_of_data);
 
-                    TB_CacheRange r = { p->file_offset, p->file_size };
+                    TB_CacheRange r = { p->file_offset, p->buffer_size };
                     dyn_array_put(obj->cache_ranges, r);
                 }
             }
@@ -175,18 +175,32 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
 
     // Initialize the block cache
     CUIK_TIMED_BLOCK("initialize cache") {
-        obj->cache_lo = cache_lo & ~4095;
-        obj->cache_hi = (cache_hi + 4095) & ~4095;
+        obj->cache_lo = cache_lo & -FILE_BLOCK_SIZE;
+        obj->cache_hi = (cache_hi + FILE_BLOCK_SIZE - 1) & -FILE_BLOCK_SIZE;
         obj->cache_data = tb_linker_moar_mem(obj->cache_hi - obj->cache_lo);
 
-        // Sort the ranges
-        qsort(obj->cache_ranges, dyn_array_length(obj->cache_ranges), sizeof(TB_CacheRange), compare_cache_ranges);
+        size_t cache_blocks = (obj->cache_hi - obj->cache_lo) / FILE_BLOCK_SIZE;
+        if (cache_blocks <= 2) {
+            obj->fully_resident = true;
 
-        dyn_array_for(i, obj->cache_ranges) {
-            uint32_t page_start = obj->cache_ranges[i].offset / 4096;
-            uint32_t page_end   = (obj->cache_ranges[i].offset + obj->cache_ranges[i].size + 4095) / 4096;
+            l->jobs.count += 1;
+            tb_linker_read_req2(l, false, obj->fd, obj->cache_lo, cache_blocks*FILE_BLOCK_SIZE, obj->cache_data, tb_linker_ack_read);
+        } else {
+            // Sort the ranges
+            qsort(obj->cache_ranges, dyn_array_length(obj->cache_ranges), sizeof(TB_CacheRange), compare_cache_ranges);
 
-            obj->cache_ranges[i].io_rem = page_end - page_start;
+            dyn_array_for(i, obj->cache_ranges) {
+                uint32_t page_start = obj->cache_ranges[i].offset / FILE_BLOCK_SIZE;
+                uint32_t page_end   = (obj->cache_ranges[i].offset + obj->cache_ranges[i].size + FILE_BLOCK_SIZE - 1) / FILE_BLOCK_SIZE;
+
+                obj->cache_ranges[i].io_rem = page_end - page_start;
+            }
+
+            // Allocate bitmaps
+            size_t bitmap_size = (cache_blocks + 63) / 64;
+            assert(bitmap_size <= 1 && "TODO");
+
+            obj->reserve = tb_linker_moar_mem(bitmap_size * sizeof(uint64_t));
         }
 
         // setup pointers early
@@ -198,13 +212,6 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 }
             }
         }
-
-        // Allocate bitmaps
-        size_t cache_blocks = (obj->cache_hi - obj->cache_lo) / 4096;
-        size_t bitmap_size = (cache_blocks + 63) / 64;
-        assert(bitmap_size <= 1 && "TODO");
-
-        obj->reserve = tb_linker_moar_mem(bitmap_size * sizeof(uint64_t));
     }
 
     // double usage = (reloc_used / (double) (reloc_hi - reloc_lo)) * 100.0;
