@@ -264,6 +264,10 @@ void log_flush(void) {
 static void log_enqueue(char* dst) {
     // we need this to be 0 for us to queue up more IO, that way we know that the chunk
     // we flip to is ready for use.
+    if (log_buffer_writer_status == 1) {
+        log_sleep = 0;
+        futex_signal(&log_sleep);
+    }
     futex_wait_eq(&log_buffer_writer_status, 0);
     log_buffer_writer_status = 1;
 

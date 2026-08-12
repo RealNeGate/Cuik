@@ -137,33 +137,41 @@ TB_ObjectSymbolType classify_symbol_type(uint16_t st_class) {
     }
 }
 
+typedef struct {
+    union {
+        uint8_t  short_name[8];
+        uint32_t long_name[2];
+    };
+    uint32_t value;
+} COFF_SymbolBase;
+
 size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym) {
     TB_Slice file = parser->file;
-    size_t symbol_offset = i * sizeof(COFF_Symbol);
-    if (symbol_offset + sizeof(COFF_Symbol) > parser->symbol_table.length) {
+    size_t symbol_size = parser->is_big ? sizeof(COFF_BigSymbol) : sizeof(COFF_Symbol);
+    size_t symbol_offset = i * symbol_size;
+    if (symbol_offset + symbol_size > parser->symbol_table.length) {
         return 0;
     }
 
-    COFF_Symbol* sym = (COFF_Symbol*) &parser->symbol_table.data[symbol_offset];
+    COFF_SymbolBase sym;
+    memcpy(&sym, &parser->symbol_table.data[symbol_offset], sizeof(COFF_SymbolBase));
     *out_sym = (TB_ObjectSymbol) {
         .ordinal = i,
-        .type = classify_symbol_type(sym->storage_class),
-        .section_num = sym->section_number,
-        .value = sym->value
+        .value = sym.value
     };
 
     // Parse string table name stuff
-    if (sym->long_name[0] == 0) {
+    if (sym.long_name[0] == 0) {
         // string table access (read a cstring)
         // TODO(NeGate): bounds check this
-        const uint8_t* data = &parser->string_table.data[sym->long_name[1]];
+        const uint8_t* data = &parser->string_table.data[sym.long_name[1]];
         out_sym->name = (TB_Slice){ data, ideally_fast_strlen((const char*) data) };
     } else {
-        out_sym->name.data = sym->short_name;
+        out_sym->name.data = &parser->symbol_table.data[symbol_offset];
 
         // normal inplace string
         uint64_t name;
-        memcpy(&name, sym->short_name, 8);
+        memcpy(&name, sym.short_name, 8);
 
         static const uint64_t mask = (~(uint64_t)0) / 255 * (uint64_t)(0);
         uint64_t x = name ^ mask;
@@ -175,10 +183,24 @@ size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_Object
         }
     }
 
-    // TODO(NeGate): Process aux symbols
-    if (sym->aux_symbols_count) {
-        out_sym->extra = &sym[1];
-    }
+    // TODO(NeGate): should remove these pointer casts later
+    if (parser->is_big) {
+        COFF_BigSymbol* extra = (COFF_BigSymbol*) &parser->symbol_table.data[symbol_offset];
 
-    return sym->aux_symbols_count + 1;
+        out_sym->type = classify_symbol_type(extra->storage_class);
+        out_sym->section_num = extra->section_number;
+        if (extra->aux_symbols_count) {
+            out_sym->extra = &extra[1];
+        }
+        return extra->aux_symbols_count + 1;
+    } else {
+        COFF_Symbol* extra = (COFF_Symbol*) &parser->symbol_table.data[symbol_offset];
+
+        out_sym->type = classify_symbol_type(extra->storage_class);
+        out_sym->section_num = extra->section_number;
+        if (extra->aux_symbols_count) {
+            out_sym->extra = &extra[1];
+        }
+        return extra->aux_symbols_count + 1;
+    }
 }

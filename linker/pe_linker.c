@@ -281,8 +281,8 @@ void pe_add_input(TPool* pool, void** args) {
 
     log_debug("Loading input '%.*s' (%#llx)", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->time);
     obj->process(l, obj, content, file_header_offset);
-    tb_linker_job_done(l);
     cuikperf_region_end();
+    tb_linker_job_done(l);
 }
 
 void pe_append_module(TPool* pool, void** args) {
@@ -756,6 +756,11 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
     tb_linker_complete_appends(l);
 
+    if (1) {
+        cuikperf_region_end();
+        return false;
+    }
+
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
     dyn_array_for(i, info->merges) {
     NL_Slice to_name = { info->merges[i].to.length, info->merges[i].to.data };
@@ -793,11 +798,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     tb_linker_merge_sections(l, tb_linker_find_section(l, ".xdata"), rdata);
     tb_linker_merge_sections(l, tb_linker_find_section(l, ".CRT"), rdata);
     } */
-
-    if (0) {
-        cuikperf_region_end();
-        return false;
-    }
 
     if (!tb_linker_layout(l)) {
         cuikperf_region_end();
@@ -891,46 +891,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     }
 
     TB_LinkerSegment* text = tb_linker_find_segment(l, ".text");
-    if (0) CUIK_TIMED_BLOCK("sort .pdata") {
-        TB_LinkerSection* pdata = tb_linker_find_section(l, ".pdata");
-        uint8_t* pdata_buffer   = cuik_malloc(pdata->size);
-
-        uint32_t pdata_rva = pdata->segment->address + pdata->offset;
-        dyn_array_for(i, pdata->pieces) {
-            TB_LinkerSectionPiece* p = pdata->pieces[i];
-            TB_ASSERT(p->kind == PIECE_FILE);
-
-            size_t rem = 0;
-            uint8_t* out = &pdata_buffer[p->offset];
-            if (p->buffer) {
-                memcpy(out, p->buffer, p->buffer_size);
-                rem = p->buffer_size;
-            }
-
-            // zero the remaining space (or CC if it's code)
-            if (rem < p->size) {
-                int b = (p->flags & TB_LINKER_PIECE_CODE) ? 0xCC : 0;
-                memset(&out[rem], b, p->size - rem);
-            }
-
-            tb_linker_apply_reloc(l, p, out, pdata_rva, text->address + l->trampoline_pos, 0, 0, p->size);
-        }
-        qsort(pdata_buffer, pdata->size / sizeof(uint32_t[3]), sizeof(uint32_t[3]), compare_rva);
-
-        // this doesn't change the section contents size, just resolves it into one big piece
-        TB_LinkerSectionPiece* piece = cuik_malloc(sizeof(TB_LinkerSectionPiece));
-        *piece = (TB_LinkerSectionPiece){
-            .kind        = PIECE_BUFFER,
-            .flags       = TB_LINKER_PIECE_LIVE,
-            .parent      = pdata,
-            .size        = pdata->size,
-            .buffer      = pdata_buffer,
-            .buffer_size = pdata->size,
-        };
-
-        dyn_array_clear(pdata->pieces);
-        dyn_array_put(pdata->pieces, piece);
-    }
+    uint64_t trampoline_rva = l->trampoline_rva = text->address + l->trampoline_pos;
 
     if (import_dirs != NULL) {
         uint32_t rdata_rva = rdata->segment->address;
@@ -950,7 +911,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 
                 uint64_t *ilt = imp->ilt, *iat = imp->iat;
                 uint64_t iat_rva = header->import_address_table;
-                uint64_t trampoline_rva = text->address + l->trampoline_pos;
 
                 dyn_array_for(j, imp->thunks) {
                     if (iat[j] != 0) {
@@ -1101,6 +1061,14 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         l->output = output;
 
         tb_linker_export_pieces(l);
+
+        CUIK_TIMED_BLOCK("sort .pdata") {
+            TB_LinkerSection* pdata = tb_linker_find_section(l, ".pdata");
+            uint8_t* pdata_buffer = &l->output[pdata->segment->offset + pdata->offset];
+
+            qsort(pdata_buffer, pdata->size / sizeof(uint32_t[3]), sizeof(uint32_t[3]), compare_rva);
+        }
+
         close_file_map(&fm);
     }
 

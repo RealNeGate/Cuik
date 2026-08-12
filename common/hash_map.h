@@ -39,34 +39,34 @@ typedef struct {
 #define nl_map_create(map, initial_cap) ((map) = ((void*) nl_map__alloc(initial_cap, sizeof(*map))->kv_table))
 
 #define nl_map_put(map, key, value)                                                  \
-do {                                                                                 \
-    NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key), &(key)); \
-    (map) = ins__.new_map;                                                           \
-    (map)[ins__.index].v = (value);                                                  \
-} while (0)
+    do {                                                                                 \
+        NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key), &(key)); \
+        (map) = ins__.new_map;                                                           \
+        (map)[ins__.index].v = (value);                                                  \
+    } while (0)
 
 #define nl_map_puti(map, key, out_index)                                             \
-do {                                                                                 \
-    NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key), &(key)); \
-    (map) = ins__.new_map;                                                           \
-    (out_index) = ins__.index;                                                       \
-} while (0)
+    do {                                                                                 \
+        NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key), &(key)); \
+        (map) = ins__.new_map;                                                           \
+        (out_index) = ins__.index;                                                       \
+    } while (0)
 
 #define nl_map_put_cstr(map, key, value)                                             \
-do {                                                                                 \
-    NL_Slice key_ = { strlen(key), (const uint8_t*) (key) };                         \
-    NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key_), &key_); \
-    (map) = ins__.new_map;                                                           \
-    (map)[ins__.index].v = (value);                                                  \
-} while (0)
+    do {                                                                                 \
+        NL_Slice key_ = { strlen(key), (const uint8_t*) (key) };                         \
+        NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key_), &key_); \
+        (map) = ins__.new_map;                                                           \
+        (map)[ins__.index].v = (value);                                                  \
+    } while (0)
 
 #define nl_map_puti_cstr(map, key, out_index)                                        \
-do {                                                                                 \
-    NL_Slice key_ = { strlen(key), (const uint8_t*) (key) };                         \
-    NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key_), &key_); \
-    (map) = ins__.new_map;                                                           \
-    (out_index) = ins__.index;                                                       \
-} while (0)
+    do {                                                                                 \
+        NL_Slice key_ = { strlen(key), (const uint8_t*) (key) };                         \
+        NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key_), &key_); \
+        (map) = ins__.new_map;                                                           \
+        (out_index) = ins__.index;                                                       \
+    } while (0)
 
 #define nl_map_remove(map, key) ((map) != NULL ? nl_map__remove(map, sizeof(*map), sizeof(key), &(key)) : -1)
 
@@ -75,18 +75,18 @@ do {                                                                            
 #define nl_map_get_cstr(map, key) ((map) != NULL ? nl_map__gets(((NL_MapHeader*)(map)) - 1, sizeof(*map), sizeof(NL_Slice), &(NL_Slice){ strlen(key), (const uint8_t*) (key) }) : -1)
 
 #define nl_map_for_str(it, map) \
-for (size_t it = 0; it < nl_map_get_capacity(map); it++) if ((map)[it].k.length != 0)
+    for (size_t it = 0; it < nl_map_get_capacity(map); it++) if ((map)[it].k.length != 0)
 
 #define nl_map_for(it, map) \
-for (size_t it = 0; it < nl_map_get_capacity(map); it++) if ((map)[it].k != 0 && (map)[it].k != (void*) (uintptr_t) -1)
+    for (size_t it = 0; it < nl_map_get_capacity(map); it++) if ((map)[it].k != 0 && (map)[it].k != (void*) (uintptr_t) -1)
 
 #define nl_map_free(map) \
-do {                                              \
-    if ((map) != NULL) {                          \
-        nl_map__free(((NL_MapHeader*)(map)) - 1); \
-        (map) = NULL;                             \
-    }                                             \
-} while (0)
+    do {                                              \
+        if ((map) != NULL) {                          \
+            nl_map__free(((NL_MapHeader*)(map)) - 1); \
+            (map) = NULL;                             \
+        }                                             \
+    } while (0)
 
 /////////////////////////////////////////////////
 // internals

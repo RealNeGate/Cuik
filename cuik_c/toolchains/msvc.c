@@ -277,7 +277,7 @@ static bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
     // then, if that's not found, a Windows 8 kit.
     HKEY main_key;
     LSTATUS rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
-        0, KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS, &main_key);
+                               0, KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS, &main_key);
     if (rc != S_OK) return false;
 
     // Look for a Windows 10 entry.
@@ -293,10 +293,10 @@ static bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
             result->windows_sdk_version = 10;
 
             swprintf_s(result->windows_sdk_include, MAX_PATH,
-                L"%sInclude\\%d.%d.%d.%d",
-                windows10_root,
-                data.best_version[0], data.best_version[1],
-                data.best_version[2], data.best_version[3]);
+                       L"%sInclude\\%d.%d.%d.%d",
+                       windows10_root,
+                       data.best_version[0], data.best_version[1],
+                       data.best_version[2], data.best_version[3]);
 
             cuik_free(windows10_root);
             RegCloseKey(main_key);
@@ -319,10 +319,10 @@ static bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
             result->windows_sdk_version = 8;
 
             swprintf_s(result->windows_sdk_include, MAX_PATH,
-                L"%sInclude\\%d.%d.%d.%d",
-                windows10_root,
-                data.best_version[0], data.best_version[1],
-                data.best_version[2], data.best_version[3]);
+                       L"%sInclude\\%d.%d.%d.%d",
+                       windows10_root,
+                       data.best_version[0], data.best_version[1],
+                       data.best_version[2], data.best_version[3]);
 
             cuik_free(windows10_root);
             cuik_free(windows8_root);
@@ -418,10 +418,10 @@ static bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik
         cuik_free(version);
 
         /*
-           Ryan Saunderson said:
-           "Clang uses the 'SetupInstance->GetInstallationVersion' / ISetupHelper->ParseVersion to find the newest version
-           and then reads the tools file to define the tools path - which is definitely better than what i did."
-           So... @Incomplete: Should probably pick the newest version...
+        Ryan Saunderson said:
+        "Clang uses the 'SetupInstance->GetInstallationVersion' / ISetupHelper->ParseVersion to find the newest version
+        and then reads the tools file to define the tools path - which is definitely better than what i did."
+        So... @Incomplete: Should probably pick the newest version...
         */
     }
 
@@ -613,11 +613,11 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
 
     char cmd_line[CMD_LINE_MAX];
     int cmd_line_len = snprintf(cmd_line, CMD_LINE_MAX,
-        "cmd /c \"\"" STR_FMT "bin\\Hostx64\\x64\\link.exe\" /nologo /machine:amd64 %s"
-        "/debug:%s /pdb:%s.pdb /out:%s /incremental:no ",
-        t->vc_tools_install, subsystem_option[args->subsystem],
-        args->debug_info ? "full" : "none", output, output
-    );
+                                "cmd /c \"\"" STR_FMT "bin\\Hostx64\\x64\\link.exe\" /nologo /machine:amd64 %s"
+                                "/debug:%s /pdb:%s.pdb /out:%s /incremental:no ",
+                                t->vc_tools_install, subsystem_option[args->subsystem],
+                                args->debug_info ? "full" : "none", output, output
+                                );
 
     if (args->subsystem == TB_WIN_SUBSYSTEM_EFI_APP) {
         cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "/entry:EfiMain ");
@@ -679,10 +679,10 @@ static void* init(void) {
     } else {
         if (!find_windows_kit_root(result)) {
             fprintf(stderr,
-                "warning: could not locate windows SDK!\n"
-                "  you can provide WindowsSDKDir, WindowsSDKVersion and\n"
-                "  VCToolsInstallDir via the environment.\n"
-            );
+                    "warning: could not locate windows SDK!\n"
+                    "  you can provide WindowsSDKDir, WindowsSDKVersion and\n"
+                    "  VCToolsInstallDir via the environment.\n"
+                    );
             return NULL;
         }
     }
@@ -696,10 +696,10 @@ static void* init(void) {
     } else {
         if (!find_visual_studio_by_fighting_through_microsoft_craziness(result)) {
             fprintf(stderr,
-                "warning: could not locate VC tools!\n"
-                "  you can provide SDK_INCLUDE, SDK_LIBS and\n"
-                "  VCToolsInstallDir via the environment.\n"
-            );
+                    "warning: could not locate VC tools!\n"
+                    "  you can provide SDK_INCLUDE, SDK_LIBS and\n"
+                    "  VCToolsInstallDir via the environment.\n"
+                    );
             return NULL;
         }
     }

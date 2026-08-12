@@ -63,11 +63,16 @@ struct TB_LinkerObject {
 
         int stage;
 
+        // BigCOFF
+        bool is_big;
+
         // this is the first peek, so we can get a look at the magic numbers and
         // the rest of the header.
         uint8_t* prefetch_page;
-        uint8_t* file_bottom;
+        uint8_t* sections;
 
+        size_t symbol_count;
+        size_t section_count;
         size_t symbol_table_pos;
         uint8_t* symbol_table;
     };
@@ -75,6 +80,7 @@ struct TB_LinkerObject {
     struct {
         // The cache region is completely loaded from the start, because it's small.
         bool fully_resident;
+        size_t bitmap_size;
 
         // Cache for the relocations and section data, aka the stuff which is
         // gonna require grabbing arrays which may or may not share the same file
@@ -408,6 +414,7 @@ struct TB_Linker {
     DynArray(void*) worklist;
     _Atomic bool defer_jobs;
 
+    uint32_t trampoline_rva;
     size_t trampoline_pos;  // relative to the .text section
     TB_Emitter trampolines; // these are for calling imported functions
 

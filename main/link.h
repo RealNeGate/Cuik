@@ -3,12 +3,14 @@
 #include <tb_linker.h>
 #include <ebr.h>
 
+#ifdef _WIN32
+#define strtok_r(a, b, c) strtok_s(a, b, c)
+#endif
+
 static const char* link_output_name;
 static DynArray(const char*) link_default_libs;
 
 static bool gnu_cli(TB_Linker* l, int argc, const char** argv) {
-    link_output_name = "a.out";
-
     bool as_needed = false;
 
     char tmp[4096];
@@ -73,12 +75,43 @@ static bool str_case_prefix(const char* l, const char* r, size_t r_len) {
 }
 
 static bool msvc_cli(TB_Linker* l, int argc, const char** argv) {
-    link_output_name = "a.exe";
-
     for (int i = 0; i < argc; i++) {
         const char* arg = argv[i];
 
-        if (arg[0] == '-' || arg[0] == '/') {
+        if (arg[0] == '@') {
+            FILE* file = fopen(arg+1, "r");
+            if (!file) {
+                printf("Could not read file: %s\n", arg+1);
+                return false;
+            }
+
+            int descriptor = fileno(file);
+            struct stat file_stats;
+            if (fstat(descriptor, &file_stats) == -1) {
+                fclose(file);
+                abort();
+            }
+
+            size_t len = file_stats.st_size;
+            char* data = cuik_malloc(len + 1);
+
+            fseek(file, 0, SEEK_SET);
+            fread(data, 1, len, file);
+            data[len] = 0;
+
+            DynArray(const char*) rsp_args = NULL;
+
+            char* ctx;
+            char* arg = strtok_r(data, " \n", &ctx);
+            while (arg != NULL) {
+                dyn_array_put(rsp_args, arg);
+                arg = strtok_r(NULL, " \n", &ctx);
+            }
+
+            msvc_cli(l, dyn_array_length(rsp_args), rsp_args);
+            dyn_array_destroy(rsp_args);
+            fclose(file);
+        } else if (arg[0] == '-' || arg[0] == '/') {
             arg += 1;
 
             if (str_case_prefix(arg, "j", 1)) {
@@ -156,6 +189,7 @@ int run_link(int argc, const char** argv) {
         }
 
         link_default_libs = dyn_array_create(char*, 32);
+        link_output_name = is_msvc ? "a.exe" : "a.out";
 
         bool status = is_msvc ? msvc_cli(l, argc, argv) : gnu_cli(l, argc, argv);
         if (dyn_array_length(link_default_libs) > 0) {

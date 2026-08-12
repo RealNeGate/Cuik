@@ -1,12 +1,78 @@
 ////////////////////////////////
 // Import file
 ////////////////////////////////
+static const char BIG_OBJ_MAGIC[] = {
+    '\xc7', '\xa1', '\xba', '\xd1', '\xee', '\xba', '\xa9', '\x4b',
+    '\xaf', '\x20', '\xfa', '\xf6', '\x6a', '\xa4', '\xdc', '\xb8',
+};
+
+typedef struct {
+    uint16_t sig1;
+    uint16_t sig2;
+    uint16_t machine;
+    uint32_t timestamp;
+
+    uint8_t  uuid[16];
+    uint32_t padding[4];
+
+    uint32_t section_count;
+    uint32_t symbol_table;
+    uint32_t symbol_count;
+} COFF_BigHeader;
+_Static_assert(sizeof(COFF_BigHeader) == 56, "WOAH");
+
 // These are small files which mostly just hold an import name, DLL path and an
 // ordinal (which is optional but helpful i think?)
 static bool fetch_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
     COFF_ImportHeader import;
     memcpy(&import, prefetch.data, sizeof(import));
-    return prefetch.length > sizeof(COFF_ImportHeader) + import.size_of_data;
+
+    if (prefetch.length < 12+16) {
+        // must be an import, too small for anything else
+        return true;
+    }
+
+    // Check UUID, if it matches we're gonna transition to parsing an object file
+    if (memcmp(BIG_OBJ_MAGIC, &prefetch.data[12], 16) == 0) {
+        TB_ASSERT(prefetch.length >= sizeof(COFF_BigHeader));
+
+        COFF_BigHeader header;
+        memcpy(&header, prefetch.data, sizeof(header));
+        size_t size_of_section_headers = header.section_count * sizeof(COFF_SectionHeader);
+        size_t symstr_table_size = obj->size - header.symbol_table;
+
+        obj->is_big = true;
+        obj->symbol_count     = header.symbol_count;
+        obj->symbol_table_pos = header.symbol_table;
+        obj->section_count    = header.section_count;
+        obj->process          = process_obj_file;
+
+        obj->io_rem = 2;
+        obj->sections = tb_linker_moar_mem(size_of_section_headers);
+        tb_linker_read_req(l, false, file_header_offset + sizeof(header), size_of_section_headers, obj->sections, obj);
+
+        obj->symbol_table = tb_linker_moar_mem(symstr_table_size);
+        tb_linker_read_req(l, false, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
+        return false;
+    }
+
+    size_t import_size = sizeof(COFF_ImportHeader) + import.size_of_data;
+    if (prefetch.length < import_size) {
+        #if 0
+        // read request
+        obj->io_rem = 1;
+        obj->file_bottom = tb_linker_moar_mem(import_size);
+        tb_linker_read_req(l, false, file_header_offset, import_size, obj->file_bottom, obj);
+        return false;
+        #endif
+
+        log_warn("Didn't load object %.*s", (int) obj->name.length, obj->name.data);
+        tb_linker_job_done(l);
+        return false;
+    }
+
+    // prefetch was enough
+    return true;
 }
 
 static void process_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
@@ -14,7 +80,7 @@ static void process_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     memcpy(&import, &prefetch.data[0], sizeof(import));
 
     size_t import_size = sizeof(COFF_ImportHeader) + import.size_of_data;
-    assert(import_size <= prefetch.length);
+    assert(prefetch.length >= import_size);
 
     const char* imported_symbol = (const char*) &prefetch.data[sizeof(COFF_ImportHeader)];
     const char* dll_path = (const char*) &prefetch.data[sizeof(COFF_ImportHeader) + strlen(imported_symbol) + 1];

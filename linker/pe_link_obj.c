@@ -26,19 +26,24 @@ static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
     // Object file:
     //   Load symbol table and string table (which takes up the remainder of the
     //   file after the symbols).
-    COFF_FileHeader header = *(COFF_FileHeader*) &prefetch.data[0];
-    size_t end_of_section_headers = sizeof(COFF_FileHeader) + (header.section_count * sizeof(COFF_SectionHeader));
+    COFF_FileHeader header;
+    memcpy(&header, prefetch.data, sizeof(header));
+    size_t size_of_section_headers = header.section_count * sizeof(COFF_SectionHeader);
     size_t symstr_table_size = obj->size - header.symbol_table;
 
-    if (end_of_section_headers <= prefetch.length) {
+    obj->symbol_count     = header.symbol_count;
+    obj->symbol_table_pos = header.symbol_table;
+    obj->section_count    = header.section_count;
+
+    if (sizeof(COFF_FileHeader) + size_of_section_headers <= prefetch.length) {
         // File header & section headers fit within the prefetch? cool, don't
         // read more than we need then. We should tune these factors later
         obj->io_rem = 1;
-        obj->file_bottom = (uint8_t*) &prefetch.data[0];
+        obj->sections = (uint8_t*) &prefetch.data[sizeof(COFF_FileHeader)];
     } else {
         obj->io_rem = 2;
-        obj->file_bottom = tb_linker_moar_mem(end_of_section_headers);
-        tb_linker_read_req(l, false, file_header_offset, end_of_section_headers, obj->file_bottom, obj);
+        obj->sections = tb_linker_moar_mem(size_of_section_headers);
+        tb_linker_read_req(l, false, file_header_offset + sizeof(COFF_FileHeader), size_of_section_headers, obj->sections, obj);
     }
 
     obj->symbol_table = tb_linker_moar_mem(symstr_table_size);
@@ -47,16 +52,19 @@ static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
 }
 
 static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
-    TB_COFF_Parser parser = { obj->name };
-    COFF_FileHeader* header = (COFF_FileHeader*) &obj->file_bottom[0];
+    /* if (obj->fetch != fetch_obj_file) {
+    __builtin_debugtrap();
+    } */
 
-    // locate string table (it spans until the end of the file)
-    size_t string_table_pos = header->symbol_count * sizeof(COFF_Symbol);
-    parser.symbol_count = header->symbol_count;
-    parser.symbol_table_pos = header->symbol_table;
-    parser.section_count = header->section_count;
+    size_t symbol_size      = obj->is_big ? sizeof(COFF_BigSymbol) : sizeof(COFF_Symbol);
+    TB_COFF_Parser parser   = { obj->name, .is_big = obj->is_big };
+    size_t string_table_pos = obj->symbol_count * symbol_size;
+
+    parser.symbol_count     = obj->symbol_count;
+    parser.symbol_table_pos = obj->symbol_table_pos;
+    parser.section_count    = obj->section_count;
     parser.symbol_table = (TB_Slice){
-        .length = header->symbol_count * sizeof(COFF_Symbol),
+        .length = obj->symbol_count * symbol_size,
         .data   = obj->symbol_table,
     };
     parser.string_table = (TB_Slice){
@@ -65,7 +73,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     };
 
     TB_ArenaSavepoint sp = tb_arena_save(&linker_tmp_arena);
-    COFF_SectionHeader* sections = (COFF_SectionHeader*) &obj->file_bottom[sizeof(COFF_FileHeader)];
+    COFF_SectionHeader* sections = (COFF_SectionHeader*) obj->sections;
 
     // Apply all sections (generate lookup for sections based on ordinals)
     TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
@@ -73,6 +81,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     static TB_LinkerSectionPiece UNKNOWN_LEADER;
     TB_LinkerSectionPiece** comdat_parent = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_LinkerSectionPiece*));
     TB_LinkerSectionPiece** sec2piece = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_LinkerSectionPiece*));
+    COFF_AuxSectionSymbol** comdat_sections = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(COFF_AuxSectionSymbol*));
 
     size_t cache_lo = SIZE_MAX, cache_hi = 0;
     uint64_t order = obj->time;
@@ -83,6 +92,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
 
             // Init for later
             comdat_parent[i] = &UNKNOWN_LEADER;
+            comdat_sections[i] = NULL;
 
             TB_Slice s_name = tb_coff_section_name(&parser, sec);
             int dollar = find_char(s_name, '$');
@@ -197,10 +207,8 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             }
 
             // Allocate bitmaps
-            size_t bitmap_size = (cache_blocks + 63) / 64;
-            assert(bitmap_size <= 1 && "TODO");
-
-            obj->reserve = tb_linker_moar_mem(bitmap_size * sizeof(uint64_t));
+            obj->bitmap_size = (cache_blocks + 63) / 64;
+            obj->reserve = tb_linker_moar_mem(obj->bitmap_size * sizeof(uint64_t));
         }
 
         // setup pointers early
@@ -228,7 +236,6 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
 
     DynArray(PendingCOMDAT) pending_indices = NULL;
     DynArray(TB_ObjectSymbol*) weak_syms = NULL;
-    NL_Map(int, COFF_AuxSectionSymbol*) comdat_sections = NULL;
     CUIK_TIMED_BLOCK("apply symbols") {
         size_t i = 0;
         while (i < parser.symbol_count) {
@@ -257,7 +264,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                                 dyn_array_put(pending_indices, pending);
                             } else {
                                 // next symbol in this section is the COMDAT symbol
-                                nl_map_put(comdat_sections, sym->section_num, sym->extra);
+                                comdat_sections[sym->section_num - 1] = sym->extra;
                             }
                         }
 
@@ -276,9 +283,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                     .normal = { p, sym->value }
                 };
 
-                ptrdiff_t search = nl_map_get(comdat_sections, sym->section_num);
-                COFF_AuxSectionSymbol* comdat_aux = search >= 0 ? comdat_sections[search].v : NULL;
-
+                COFF_AuxSectionSymbol* comdat_aux = comdat_sections[sym->section_num - 1];
                 TB_ASSERT(sym->type != TB_OBJECT_SYMBOL_WEAK_EXTERN);
                 if (!is_section && comdat_aux) {
                     if (comdat_aux->selection == 1) {
@@ -286,7 +291,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                     } else {
                         s->comdat = TB_LINKER_COMDAT_ANY;
                     }
-                    nl_map_remove(comdat_sections, sym->section_num);
+                    comdat_sections[sym->section_num - 1] = NULL;
 
                     // private COMDATs just always win
                     if (sym->type == TB_OBJECT_SYMBOL_STATIC) {
@@ -327,7 +332,6 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             i += c;
         }
     }
-    nl_map_free(comdat_sections);
 
     if (dyn_array_length(pending_indices) > 0) {
         dyn_array_for(i, pending_indices) {

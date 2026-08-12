@@ -111,11 +111,11 @@ static thread_local char* linker_bump_mark;
 void* tb_linker_moar_mem(size_t size) {
     cuikperf_region_start("alloc", NULL);
     if (linker_bump_base == NULL) {
-        linker_bump_base = cuik__valloc(1ull << 30ull);
+        linker_bump_base = cuik__valloc(8ull << 30ull);
         linker_bump_mark = linker_bump_base;
     }
 
-    assert(linker_bump_mark - linker_bump_base < (1ull << 30ull));
+    TB_ASSERT(linker_bump_mark - linker_bump_base < (8ull << 30ull));
     size = (size + 63) & ~63ull;
 
     char* ptr = linker_bump_mark;
@@ -484,6 +484,7 @@ void tb_linker_complete_appends(TB_Linker* l) {
     bool repeat;
     do {
         tb_linker_barrier(l);
+        break;
 
         l->defer_jobs = true;
 
@@ -1316,32 +1317,16 @@ static bool tb_linker_read_cached(TB_Linker* l, TB_LinkerSectionPiece* p, size_t
         return true;
     }
 
-    TB_LinkerObject* obj = p->obj;
-
     // Accesses must fit within the cached range, if not we're breaking something
-    assert(lo >= obj->cache_lo && hi <= obj->cache_hi);
+    TB_LinkerObject* obj = p->obj;
+    TB_ASSERT(lo >= obj->cache_lo && hi <= obj->cache_hi);
     if (obj->fully_resident) {
         return true;
     }
 
-    size_t bits_lo = (lo - obj->cache_lo) / FILE_BLOCK_SIZE;
-    size_t bits_hi = ((hi - obj->cache_lo) + FILE_BLOCK_SIZE - 1) / FILE_BLOCK_SIZE;
-    uint64_t mask = (UINT64_MAX >> (64 - (bits_hi - bits_lo))) << bits_lo;
-
-    // total_requests += __builtin_popcountll(mask);
-
-    #if 0
-    printf("REQUEST %d:%p", obj->fd, p);
-    FOR_N(i, bits_lo, bits_hi) {
-        printf(", %zu", i);
-    }
-    printf("\n");
-    #endif
-
     // this could be a binary search
-    DynArray(TB_CacheRange) ranges = obj->cache_ranges;
-
     TB_CacheRange* found = NULL;
+    DynArray(TB_CacheRange) ranges = obj->cache_ranges;
     dyn_array_for(i, ranges) {
         if (ranges[i].offset == lo && ranges[i].size == hi - lo) {
             ranges[i].pending = p;
@@ -1354,24 +1339,40 @@ static bool tb_linker_read_cached(TB_Linker* l, TB_LinkerSectionPiece* p, size_t
             }
         }
     }
-    assert(found != NULL && "Bad search of a range?");
+    TB_ASSERT(found != NULL && "Bad search of a range?");
 
-    // Issue individual block reads on any of the missing blocks, when they're done
-    // they'll trigger the completion task for the piece.
-    uint64_t curr = obj->reserve[0];
-    while ((curr & mask) != mask) {
-        uint64_t block = __builtin_ffsll(~curr & mask) - 1;
-        uint64_t next  = curr | (1ull << block);
-        if (atomic_compare_exchange_strong(&obj->reserve[0], &curr, next)) {
-            size_t offset = obj->cache_lo + block*FILE_BLOCK_SIZE;
-            char* buf = &obj->cache_data[block*FILE_BLOCK_SIZE];
+    int first_block = (lo - obj->cache_lo) / FILE_BLOCK_SIZE;
+    int last_block  = ((hi - obj->cache_lo) + FILE_BLOCK_SIZE - 1) / FILE_BLOCK_SIZE;
 
-            // printf("FILE CACHE READ: %d:%zu (BLK %lu)\n", obj->fd, offset, block);
-            // total_reads += 1;
+    __builtin_debugtrap();
+    int first_word  = first_block / 64;
+    int last_word   = (last_block + 63) / 64;
+    FOR_N(i, first_word, last_word) {
+        int bits_lo = first_block - (i*64);
+        int bits_hi = (i*64 + 64) - last_block;
+        if (bits_lo < 0)  { bits_lo = 0;  }
+        if (bits_hi > 64) { bits_hi = 64; }
 
-            CUIK_TIMED_BLOCK("issue") {
-                l->jobs.count += 1;
-                tb_linker_read_req3(l, true, obj->fd, offset, FILE_BLOCK_SIZE, buf, tb_linker_read_block, obj, (void*) block, NULL);
+        uint64_t mask = (UINT64_MAX >> (64 - (bits_hi - bits_lo))) << bits_lo;
+        // total_requests += __builtin_popcountll(mask);
+
+        // Issue individual block reads on any of the missing blocks, when they're done
+        // they'll trigger the completion task for the piece.
+        uint64_t curr = obj->reserve[0];
+        while ((curr & mask) != mask) {
+            uint64_t block = __builtin_ffsll(~curr & mask) - 1;
+            uint64_t next  = curr | (1ull << block);
+            if (atomic_compare_exchange_strong(&obj->reserve[0], &curr, next)) {
+                size_t offset = obj->cache_lo + block*FILE_BLOCK_SIZE;
+                char* buf = &obj->cache_data[block*FILE_BLOCK_SIZE];
+
+                // printf("FILE CACHE READ: %d:%zu (BLK %lu)\n", obj->fd, offset, block);
+                // total_reads += 1;
+
+                CUIK_TIMED_BLOCK("issue") {
+                    l->jobs.count += 1;
+                    tb_linker_read_req3(l, true, obj->fd, offset, FILE_BLOCK_SIZE, buf, tb_linker_read_block, obj, (void*) block, NULL);
+                }
             }
         }
     }
@@ -1653,12 +1654,9 @@ size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* ou
     return reloc_i;
 }
 
-static void tb_linker_export_piece(TB_Linker* l, TB_LinkerSectionPiece* p, uint32_t trampoline_rva) {
-    uint8_t* file = l->output;
+// has_zero is when we know the output buffer is already zeroed
+static void tb_linker_export_piece(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, bool has_zero) {
     size_t section_rva = tb_linker_section_rva(p->parent);
-    size_t section_file_offset = tb_linker_section_file_pos(p->parent);
-    uint8_t* out = &file[section_file_offset + p->offset];
-
     size_t buffer_size = p->buffer_size;
     if (p->kind == PIECE_BUFFER) {
         memcpy(out, p->buffer, buffer_size);
@@ -1672,12 +1670,12 @@ static void tb_linker_export_piece(TB_Linker* l, TB_LinkerSectionPiece* p, uint3
 
     // zero the remaining space (or CC if it's code)
     int b = (p->flags & TB_LINKER_PIECE_CODE) ? 0xCC : 0;
-    if (p->size > buffer_size && b != 0) {
+    if (p->size > buffer_size && (!has_zero || b != 0)) {
         memset(&out[buffer_size], b, p->size - buffer_size);
     }
 
     if (p->reloc_count > 0) CUIK_TIMED_BLOCK("reloc") {
-        tb_linker_apply_reloc(l, p, out, section_rva, trampoline_rva, 0, 0, p->size);
+        tb_linker_apply_reloc(l, p, out, section_rva, l->trampoline_rva, 0, 0, p->size);
     }
 }
 
@@ -1688,9 +1686,9 @@ void tb_linker_export_job(TPool* pool, void** args) {
     TB_LinkerSectionPiece* p = args[1];
     tb_linker_worker_init(l);
 
-    TB_LinkerSection* text  = tb_linker_find_section(l, ".text");
-    uint32_t trampoline_rva = text->segment->address + l->trampoline_pos;
-    tb_linker_export_piece(l, p, trampoline_rva);
+    size_t section_file_offset = tb_linker_section_file_pos(p->parent);
+    uint8_t* out = &l->output[section_file_offset + p->offset];
+    tb_linker_export_piece(l, p, out, true);
 
     cuikperf_region_end();
     tb_linker_job_done(l);
@@ -1702,7 +1700,6 @@ static void tb_linker_broadcast_pieces(TPool* pool, void** args) {
     size_t base = (size_t) args[2];
 
     cuikperf_region_start("broadcast", (const char*) section->name.data);
-
     size_t limit = base + EXPORT_BROADCAST_BATCH;
     if (limit > dyn_array_length(section->pieces)) {
         limit = dyn_array_length(section->pieces);
@@ -1718,7 +1715,9 @@ static void tb_linker_broadcast_pieces(TPool* pool, void** args) {
         TB_LinkerSectionPiece* p = section->pieces[j];
         if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind == PIECE_FILE) {
             if (tb_linker_read_cached(l, p, p->file_offset, p->file_offset + p->buffer_size)) {
-                tb_linker_export_piece(l, p, trampoline_rva);
+                size_t section_file_offset = tb_linker_section_file_pos(p->parent);
+                uint8_t* out = &l->output[section_file_offset + p->offset];
+                tb_linker_export_piece(l, p, out, true);
             }
             io_batch_size++;
         }
@@ -1729,7 +1728,9 @@ static void tb_linker_broadcast_pieces(TPool* pool, void** args) {
         FOR_N(j, base, limit) {
             TB_LinkerSectionPiece* p = section->pieces[j];
             if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind == PIECE_BUFFER) {
-                tb_linker_export_piece(l, p, trampoline_rva);
+                size_t section_file_offset = tb_linker_section_file_pos(p->parent);
+                uint8_t* out = &l->output[section_file_offset + p->offset];
+                tb_linker_export_piece(l, p, out, true);
             }
         }
     }

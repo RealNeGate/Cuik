@@ -190,7 +190,6 @@ void pe_append_library(TPool* pool, void** args) {
         printf("READ %hu %u %s\n", offset_index, lib->members[offset_index], name);
         i += 1, j += len + 1;
     }
-    tb_linker_job_done(l);
 }
 #endif
 

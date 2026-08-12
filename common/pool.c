@@ -302,6 +302,11 @@ int _tpool_io_worker(void *ptr) {
 }
 
 static void issue_load(TPool* pool, TPool_Thread* current_thread) {
+    work_start:
+    if (!pool->running) {
+        return;
+    }
+
     TPool_Task task;
     size_t old_finished;
     size_t finished_tasks = 0;
@@ -333,6 +338,52 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
     if (finished_tasks > 0 && !TPOOL_LOAD(pool->tasks_left)) {
         futex_signal(&pool->tasks_left);
     }
+
+    // If there's still work somewhere and we don't have it, steal it.
+    if (TPOOL_LOAD(pool->tasks_left)) {
+        bool dirty;
+        do {
+            dirty = false;
+
+            int idx = current_thread->idx;
+            for (int i = 0; i < pool->thread_count; i++) {
+                if (!TPOOL_LOAD(pool->tasks_left)) {
+                    break;
+                }
+
+                idx = (idx + 1) % pool->thread_count;
+                TPool_Thread *thread = &pool->threads[idx];
+
+                TPool_Task task;
+                int ret = _tpool_queue_steal(&thread->queue, &task);
+                dirty |= (ret == GRAB_FAILED);
+
+                if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
+                    ret = _tpool_queue_steal(&thread->io_complete_hi, &task);
+                    dirty |= (ret == GRAB_FAILED);
+                }
+
+                if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
+                    ret = _tpool_queue_steal(&thread->io_complete_lo, &task);
+                    dirty |= (ret == GRAB_FAILED);
+                }
+
+                // fail twice? we'll try to find another thread, it might
+                // make sense to prioritize certain thread scan orderings
+                if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
+                    continue;
+                }
+
+                task.do_work(pool, task.args);
+                TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
+
+                if (!TPOOL_LOAD(pool->tasks_left)) {
+                    futex_signal(&pool->tasks_left);
+                }
+                goto work_start;
+            }
+        } while (dirty);
+    }
 }
 
 int _tpool_worker(void *ptr) {
@@ -350,58 +401,7 @@ int _tpool_worker(void *ptr) {
 
     cuikperf_region_start("Worker", NULL);
     for (;;) {
-        work_start:
-        if (!pool->running) {
-            break;
-        }
-
         issue_load(pool, current_thread);
-
-        // If there's still work somewhere and we don't have it, steal it.
-        if (TPOOL_LOAD(pool->tasks_left)) {
-            bool dirty;
-            do {
-                dirty = false;
-
-                int idx = current_thread->idx;
-                for (int i = 0; i < pool->thread_count; i++) {
-                    if (!TPOOL_LOAD(pool->tasks_left)) {
-                        break;
-                    }
-
-                    idx = (idx + 1) % pool->thread_count;
-                    TPool_Thread *thread = &pool->threads[idx];
-
-                    TPool_Task task;
-                    int ret = _tpool_queue_steal(&thread->queue, &task);
-                    dirty |= (ret == GRAB_FAILED);
-
-                    if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
-                        ret = _tpool_queue_steal(&thread->io_complete_hi, &task);
-                        dirty |= (ret == GRAB_FAILED);
-                    }
-
-                    if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
-                        ret = _tpool_queue_steal(&thread->io_complete_lo, &task);
-                        dirty |= (ret == GRAB_FAILED);
-                    }
-
-                    // fail twice? we'll try to find another thread, it might
-                    // make sense to prioritize certain thread scan orderings
-                    if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
-                        continue;
-                    }
-
-                    task.do_work(pool, task.args);
-                    TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
-
-                    if (!TPOOL_LOAD(pool->tasks_left)) {
-                        futex_signal(&pool->tasks_left);
-                    }
-                    goto work_start;
-                }
-            } while (dirty);
-        }
 
         // if we've done all our work, and there's nothing to steal, go to sleep
         int32_t state = TPOOL_LOAD(pool->tasks_available);

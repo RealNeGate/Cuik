@@ -86,6 +86,7 @@ typedef enum {
 typedef struct TB_COFF_Parser {
     // inputs
     TB_Slice name, file;
+    bool is_big;
 
     // results
     size_t section_count;
@@ -134,6 +135,19 @@ typedef struct COFF_Symbol {
     uint8_t  storage_class;
     uint8_t  aux_symbols_count;
 } COFF_Symbol;
+
+// just a symbol with a bigger section number
+typedef struct COFF_BigSymbol {
+    union {
+        uint8_t  short_name[8];
+        uint32_t long_name[2];
+    };
+    uint32_t value;
+    int32_t  section_number;
+    uint16_t type;
+    uint8_t  storage_class;
+    uint8_t  aux_symbols_count;
+} COFF_BigSymbol;
 
 typedef struct COFF_ImageReloc {
     union {
