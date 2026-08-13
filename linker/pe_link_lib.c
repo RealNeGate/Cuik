@@ -3,6 +3,34 @@ enum {
     LAZY_IMPORT_BATCH_SIZE = 1024
 };
 
+static size_t ideally_fast_skip16(const char* strtab, int limit, size_t str_head) {
+    #if USE_INTRIN && CUIK__IS_X64
+    size_t j = 0;
+    while (j < limit) {
+        // Skip 16B each time we don't reach the limit
+        __m128i str128  = _mm_loadu_si128((__m128i*) &strtab[str_head]);
+        __m128i zero128 = _mm_set1_epi8('\0');
+        uint32_t null_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(str128, zero128));
+        int nulls = __builtin_popcount(null_mask);
+        if (j + nulls >= limit) {
+            break;
+        }
+        str_head += 16, j += nulls;
+    }
+    #else
+    size_t j = i;
+    #endif
+
+    // Skip strings
+    while (j < limit) {
+        const char* name = &strtab[str_head];
+        j += 1, str_head += ideally_fast_strlen(name) + 1;
+    }
+
+    assert(j == limit);
+    return str_head;
+}
+
 static void lazy_import_task(TPool* pool, void** args) {
     cuikperf_region_start("lazy parse", NULL);
 
@@ -20,16 +48,17 @@ static void lazy_import_task(TPool* pool, void** args) {
     while (i < limit) {
         uint16_t offset_index = lib->symbols[i] - 1;
         const char* name = &strtab[j];
-        size_t len = ideally_fast_strlen(name);
+        size_t next = ideally_fast_skip16(strtab, 1, j);
+        // size_t len = ideally_fast_strlen(name);
 
         TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
         *s = (TB_LinkerSymbol){
-            .name   = { (const uint8_t*) name, len },
+            .name   = { (const uint8_t*) name, (next - j) - 1 },
             .tag    = TB_LINKER_SYMBOL_LAZY,
             .lazy   = { lib, lib->members[offset_index] },
         };
         s = tb_linker_symbol_insert(l, s, true);
-        i += 1, j += len + 1;
+        i += 1, j = next;
     }
 
     cuikperf_region_end();
@@ -84,7 +113,7 @@ static bool fetch_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
     // Read the archive up until the end of the longnames
     lib->header.io_rem = 1;
     lib->second_longnames = tb_linker_moar_mem(file_offset - lib->second_base);
-    tb_linker_read_req(l, false, lib->second_base, file_offset - lib->second_base, lib->second_longnames, &lib->header);
+    tb_linker_read_req(l, lib->second_base, file_offset - lib->second_base, lib->second_longnames, &lib->header);
     return false;
 }
 
@@ -124,29 +153,7 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 void* args[3] = { lib, (void*) i, (void*) str_head };
                 tb_linker_job_submit_N(l, lazy_import_task, 3, args);
 
-                #if USE_INTRIN && CUIK__IS_X64
-                size_t j = i;
-                while (j < limit) {
-                    // Skip 16B each time we don't reach the limit
-                    __m128i str128  = _mm_loadu_si128((__m128i*) &strtab[str_head]);
-                    __m128i zero128 = _mm_set1_epi8('\0');
-                    uint32_t null_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(str128, zero128));
-                    int nulls = __builtin_popcount(null_mask);
-                    if (j + nulls >= limit) {
-                        break;
-                    }
-                    str_head += 16, j += nulls;
-                }
-                #else
-                size_t j = i;
-                #endif
-
-                // Skip strings
-                while (j < limit) {
-                    uint16_t offset_index = lib->symbols[j] - 1;
-                    const char* name = &strtab[str_head];
-                    j += 1, str_head += ideally_fast_strlen(name) + 1;
-                }
+                str_head = ideally_fast_skip16(strtab, limit - i, str_head);
             }
             #else
             abort(); // Unreachable
@@ -156,16 +163,17 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             while (i < lib->symbol_count) {
                 uint16_t offset_index = lib->symbols[i] - 1;
                 const char* name = &strtab[j];
-                size_t len = ideally_fast_strlen(name);
+                size_t next = ideally_fast_skip16(strtab, 1, j);
+                // size_t len = ideally_fast_strlen(name);
 
                 TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
                 *s = (TB_LinkerSymbol){
-                    .name   = { (const uint8_t*) name, len },
+                    .name   = { (const uint8_t*) name, (next - j) - 1 },
                     .tag    = TB_LINKER_SYMBOL_LAZY,
                     .lazy   = { lib, lib->members[offset_index] },
                 };
                 s = tb_linker_symbol_insert(l, s, true);
-                i += 1, j += len + 1;
+                i += 1, j = next;
             }
         }
     }

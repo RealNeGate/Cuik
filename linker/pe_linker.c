@@ -188,11 +188,6 @@ static TB_Slice cstr_into_slice(const char* str) {
     return (TB_Slice){ (const uint8_t*) str, len };
 }
 
-typedef struct {
-    TB_LinkerSectionPiece* piece;
-    COFF_AuxSectionSymbol* aux;
-} PendingCOMDAT;
-
 #include "pe_link_obj.c"
 #include "pe_link_imp.c"
 #include "pe_link_lib.c"
@@ -201,11 +196,7 @@ static const char* STAGE_NAMES[] = {
     "fetch_input", "parse_input"
 };
 
-void pe_add_input(TPool* pool, void** args) {
-    TB_LinkerObject* obj = args[0];
-    TB_Linker* l = obj->linker;
-    tb_linker_worker_init(l);
-
+void pe_classify_input(TB_Linker* l, TB_LinkerObject* obj) {
     // if this object isn't at the base of the FD then it's an archive's object.
     // this means we'll need to parse the "archive file header".
     TB_Slice content = { obj->prefetch_page, PREFETCH_BLOCK_SIZE };
@@ -215,21 +206,21 @@ void pe_add_input(TPool* pool, void** args) {
         COFF_ArchiveMemberHeader* sym = (COFF_ArchiveMemberHeader*) obj->prefetch_page;
 
         // only extract the name & size the first time around
-        if (obj->stage == 0) {
-            obj->size = tb__parse_decimal_int(sizeof(sym->size), sym->size);
-            obj->name = (TB_Slice){ (uint8_t*) sym->name, strchr(sym->name, ' ') - sym->name };
-            if (obj->name.data[0] == '/') {
-                // name is actually just an index into the long names table
-                size_t num = tb__parse_decimal_int(obj->name.length - 1, (char*) obj->name.data + 1);
+        obj->size = tb__parse_decimal_int(sizeof(sym->size), sym->size);
+        obj->name = (TB_Slice){ (uint8_t*) sym->name, strchr(sym->name, ' ') - sym->name };
+        if (obj->name.data[0] == '/') {
+            // name is actually just an index into the long names table
+            size_t num = tb__parse_decimal_int(obj->name.length - 1, (char*) obj->name.data + 1);
 
-                // TODO(NeGate): better error checking for bad files
-                assert(num < lib->longnames.length);
-                obj->name = (TB_Slice){
-                    &lib->longnames.data[num],
-                    strlen((const char*) &lib->longnames.data[num])
-                };
-            }
+            // TODO(NeGate): better error checking for bad files
+            assert(num < lib->longnames.length);
+            obj->name = (TB_Slice){
+                &lib->longnames.data[num],
+                strlen((const char*) &lib->longnames.data[num])
+            };
         }
+
+        obj->skip_header = sizeof(COFF_ArchiveMemberHeader);
         file_header_offset += sizeof(COFF_ArchiveMemberHeader);
 
         // skip header now
@@ -237,52 +228,33 @@ void pe_add_input(TPool* pool, void** args) {
         content.length -= sizeof(COFF_ArchiveMemberHeader);
     }
 
-    size_t slash = 0;
-    FOR_REV_N(i, 0, obj->name.length) {
-        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
-            slash = i + 1;
-            break;
+    // Classify file from magic numbers
+    if (memcmp(content.data, "\0\0\xFF\xFF", 4) == 0) {
+        // Import
+        obj->fetch   = fetch_imp_file;
+        obj->process = process_imp_file;
+    } else if (memcmp(content.data, "!<arch>\n", 8) == 0) {
+        // Library
+        obj->fetch   = fetch_lib_file;
+        obj->process = process_lib_file;
+    } else if ((content.data[0] == 0 && content.data[0] == 0) ||
+               (content.data[0] == 0x64 && (content.data[1] == 0x86 || content.data[1] == 0xAA))
+               ) {
+        // Object
+        obj->fetch   = fetch_obj_file;
+        obj->process = process_obj_file;
+    } else {
+        assert(0 && "TODO");
+    }
+}
+
+static TB_Slice get_base_name(TB_Slice name) {
+    FOR_REV_N(i, 0, name.length) {
+        if (name.data[i] == '/' || name.data[i] == '\\') {
+            return (TB_Slice){ name.data + i + 1, name.length - (i + 1) };
         }
     }
-    // printf("STEP '%.*s' (%d)\n", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->stage);
-
-    cuikperf_region_start2(STAGE_NAMES[obj->stage], obj->name.length - slash, (const char*) obj->name.data + slash);
-    if (obj->stage == 0) {
-        log_debug("Fetching input '%.*s' (%ld)", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->offset);
-
-        // Classify file from magic numbers
-        if (memcmp(content.data, "\0\0\xFF\xFF", 4) == 0) {
-            // Import
-            obj->fetch   = fetch_imp_file;
-            obj->process = process_imp_file;
-        } else if (memcmp(content.data, "!<arch>\n", 8) == 0) {
-            // Library
-            obj->fetch   = fetch_lib_file;
-            obj->process = process_lib_file;
-        } else if ((content.data[0] == 0 && content.data[0] == 0) ||
-                   (content.data[0] == 0x64 && (content.data[1] == 0x86 || content.data[1] == 0xAA))
-                   ) {
-            // Object
-            obj->fetch   = fetch_obj_file;
-            obj->process = process_obj_file;
-        } else {
-            assert(0 && "TODO");
-        }
-
-        // issue a variety of read requests, when this function is called again
-        // we'll be doing the processing stage.
-        obj->stage = 1;
-
-        if (!obj->fetch(l, obj, content, file_header_offset)) {
-            cuikperf_region_end();
-            return;
-        }
-    }
-
-    log_debug("Loading input '%.*s' (%#llx)", (int) (obj->name.length - slash), (const char*) obj->name.data + slash, obj->time);
-    obj->process(l, obj, content, file_header_offset);
-    cuikperf_region_end();
-    tb_linker_job_done(l);
+    return name;
 }
 
 void pe_append_module(TPool* pool, void** args) {
@@ -756,11 +728,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
     tb_linker_complete_appends(l);
 
-    if (1) {
-        cuikperf_region_end();
-        return false;
-    }
-
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
     dyn_array_for(i, info->merges) {
     NL_Slice to_name = { info->merges[i].to.length, info->merges[i].to.data };
@@ -790,6 +757,11 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         tb_linker_push_named(l, "_load_config_used");
         tb_linker_push_named(l, "_tls_used");
         tb_linker_mark_live(l);
+    }
+
+    if (0) {
+        cuikperf_region_end();
+        return false;
     }
 
     /* CUIK_TIMED_BLOCK("Merge ops") {
@@ -888,6 +860,11 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 
     if (0) {
         tb_linker_print_map(l);
+    }
+
+    if (1) {
+        cuikperf_region_end();
+        return false;
     }
 
     TB_LinkerSegment* text = tb_linker_find_segment(l, ".text");
@@ -1258,9 +1235,9 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 #undef WRITE
 
 TB_LinkerVtbl tb__linker_pe = {
-    .init        = pe_init,
-    .find_lib    = pe_find_lib,
-    .add_input   = pe_add_input,
-    .parse_reloc = pe_parse_reloc,
-    .export      = pe_export
+    .init           = pe_init,
+    .find_lib       = pe_find_lib,
+    .classify_input = pe_classify_input,
+    .parse_reloc    = pe_parse_reloc,
+    .export         = pe_export
 };

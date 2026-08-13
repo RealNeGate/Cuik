@@ -8,26 +8,24 @@
 
 typedef struct TPool_Thread TPool_Thread;
 typedef struct TPool TPool;
+typedef struct TPool_ReadReq TPool_ReadReq;
 
 typedef void tpool_task_proc(TPool* pool, void** args);
+typedef void tpool_io_task_proc(TPool* pool, TPool_ReadReq* req);
 
 typedef struct TPool_Task {
     tpool_task_proc *do_work;
     void *args[3];
 } TPool_Task;
 
-typedef struct {
-    bool hi_prio;
-
+struct TPool_ReadReq {
     int fd;
     size_t offset, size;
     void* data;
-    _Atomic(int)* io_rem;
 
-    // submit this task on completion
-    tpool_task_proc* do_work;
+    tpool_io_task_proc* do_work;
     void* args[3];
-} TPool_ReadReq;
+};
 
 struct TPool {
     struct TPool_Thread *threads;
@@ -52,7 +50,10 @@ int tpool_num_threads(TPool *pool);
 
 void tpool_io_prep_all(TPool *pool);
 void tpool_io_prep(TPool* pool);
-void tpool_io_read(TPool* pool, bool hi_prio, int fd, size_t offset, size_t size, void* data, tpool_task_proc* fn, void* arg0, void* arg1, void* arg2, _Atomic(int)* io_rem);
+void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, tpool_io_task_proc* fn, void* arg0, void* arg1, void* arg2);
+
+// Called within an I/O task to forward tasks to the worker threads
+void tpool_io_forward(TPool *pool, bool hi_prio, tpool_task_proc* fn, int arg_count, void** args);
 
 void tpool_wait_for_jobs(TPool *pool, Futex* done, Futex* count);
 void tpool_wait_for_jobs2(TPool *pool, Futex* done, int64_t count);

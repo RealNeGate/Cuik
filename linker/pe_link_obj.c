@@ -1,6 +1,17 @@
 
+typedef struct {
+    TB_ObjectSymbol* sym;
+    TB_LinkerSectionPiece* p;
+    COFF_AuxSectionSymbol* aux;
+} PendingCOMDAT;
+
 static void pe_linker_parse_directives(TPool* pool, void** args);
 static bool pe_linker_parse_import(TB_Linker* l, TB_Slice content);
+
+static void pe_linker_parse_directives_io(TPool* pool, TPool_ReadReq* req) {
+    void* args[3] = { req->args[0], req->data, ((char*)req->data) + req->size };
+    tpool_io_forward(pool, true, pe_linker_parse_directives, 3, args);
+}
 
 static int obj_symbol_cmp(const void* a, const void* b) {
     const TB_ObjectSymbol* sym_a = (const TB_ObjectSymbol*)a;
@@ -9,9 +20,8 @@ static int obj_symbol_cmp(const void* a, const void* b) {
     return sym_a->ordinal - sym_b->ordinal;
 }
 
-static void tb_linker_ack_read(TPool* pool, void** args) {
-    TB_Linker* l = args[0];
-    tb_linker_job_done(l);
+static void tb_linker_ack_read(TPool* pool, TPool_ReadReq* req) {
+    tb_linker_job_done(req->args[0]);
 }
 
 static int compare_cache_ranges(const void* a, const void* b) {
@@ -43,14 +53,15 @@ static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
     } else {
         obj->io_rem = 2;
         obj->sections = tb_linker_moar_mem(size_of_section_headers);
-        tb_linker_read_req(l, false, file_header_offset + sizeof(COFF_FileHeader), size_of_section_headers, obj->sections, obj);
+        tb_linker_read_req(l, file_header_offset + sizeof(COFF_FileHeader), size_of_section_headers, obj->sections, obj);
     }
 
     obj->symbol_table = tb_linker_moar_mem(symstr_table_size);
-    tb_linker_read_req(l, false, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
+    tb_linker_read_req(l, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
     return false;
 }
 
+static TB_LinkerSectionPiece UNKNOWN_LEADER;
 static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
     /* if (obj->fetch != fetch_obj_file) {
     __builtin_debugtrap();
@@ -78,8 +89,6 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     // Apply all sections (generate lookup for sections based on ordinals)
     TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
 
-    static TB_LinkerSectionPiece UNKNOWN_LEADER;
-    TB_LinkerSectionPiece** comdat_parent = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_LinkerSectionPiece*));
     TB_LinkerSectionPiece** sec2piece = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_LinkerSectionPiece*));
     COFF_AuxSectionSymbol** comdat_sections = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(COFF_AuxSectionSymbol*));
 
@@ -90,8 +99,6 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
         FOR_N(i, 0, parser.section_count) {
             COFF_SectionHeader* sec = &sections[i];
 
-            // Init for later
-            comdat_parent[i] = &UNKNOWN_LEADER;
             comdat_sections[i] = NULL;
 
             TB_Slice s_name = tb_coff_section_name(&parser, sec);
@@ -105,7 +112,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
 
                     // Fork out a parallel task
                     l->jobs.count += 1;
-                    tb_linker_read_req2(l, false, obj->fd, file_header_offset + sec->raw_data_pos, sec->raw_data_size, buf, pe_linker_parse_directives);
+                    tb_linker_read_req2(l, obj->fd, file_header_offset + sec->raw_data_pos, sec->raw_data_size, buf, pe_linker_parse_directives_io);
                 }
                 continue;
             }
@@ -123,8 +130,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 sec_vsize = sec->misc.virtual_size;
             }
 
-            TB_LinkerSectionPiece* p;
-            p = tb_linker_append_piece(ls, PIECE_BSS, sec_vsize, obj);
+            TB_LinkerSectionPiece* p = tb_linker_append_piece(ls, PIECE_BSS, sec_vsize, obj);
             if ((sec_flags & IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0) {
                 p->kind        = PIECE_FILE;
                 p->file_offset = file_header_offset + sec->raw_data_pos;
@@ -156,6 +162,9 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             p->reloc_size = sec->num_reloc * sizeof(COFF_ImageReloc);
             p->relocs = NULL;
 
+            // Init for later
+            p->comdat_parent = &UNKNOWN_LEADER;
+
             if (sec->num_reloc) {
                 size_t end_of_reloc = p->reloc_pos + p->reloc_size;
                 cache_lo = TB_MIN(cache_lo, p->reloc_pos);
@@ -174,10 +183,6 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 } else if (dollar == 6 && memcmp(s_name.data, ".pdata", 6) == 0) {
                     // assert(pdata_piece == NULL);
                     pdata_piece = p;
-                } else if (s_name.length == 8 && memcmp(s_name.data, ".debug$S", 8) == 0) {
-                    obj->debug_s = p;
-                } else if (s_name.length == 8 && memcmp(s_name.data, ".debug$T", 8) == 0) {
-                    obj->debug_t = p;
                 }
             }
         }
@@ -190,11 +195,11 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
         obj->cache_data = tb_linker_moar_mem(obj->cache_hi - obj->cache_lo);
 
         size_t cache_blocks = (obj->cache_hi - obj->cache_lo) / FILE_BLOCK_SIZE;
-        if (cache_blocks <= 2) {
+        if (cache_blocks <= 16) {
             obj->fully_resident = true;
 
             l->jobs.count += 1;
-            tb_linker_read_req2(l, false, obj->fd, obj->cache_lo, cache_blocks*FILE_BLOCK_SIZE, obj->cache_data, tb_linker_ack_read);
+            tb_linker_read_req2(l, obj->fd, obj->cache_lo, cache_blocks*FILE_BLOCK_SIZE, obj->cache_data, tb_linker_ack_read);
         } else {
             // Sort the ranges
             qsort(obj->cache_ranges, dyn_array_length(obj->cache_ranges), sizeof(TB_CacheRange), compare_cache_ranges);
@@ -234,8 +239,9 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     size_t sym_count = 0;
     TB_ObjectSymbol* syms = tb_arena_alloc(&linker_tmp_arena, parser.symbol_count * sizeof(TB_ObjectSymbol));
 
-    DynArray(PendingCOMDAT) pending_indices = NULL;
-    DynArray(TB_ObjectSymbol*) weak_syms = NULL;
+    static _Thread_local DynArray(PendingCOMDAT) pending_indices = NULL;
+    static _Thread_local DynArray(TB_ObjectSymbol*) weak_syms = NULL;
+
     CUIK_TIMED_BLOCK("apply symbols") {
         size_t i = 0;
         while (i < parser.symbol_count) {
@@ -258,17 +264,22 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                         // COMDAT is how linkers handle merging of inline functions in C++
                         if ((sec->characteristics & IMAGE_SCN_LNK_COMDAT)) {
                             COFF_AuxSectionSymbol* comdat_aux = sym->extra;
-                            if (comdat_aux->selection == 5) {
-                                TB_ASSERT(p != NULL);
-                                PendingCOMDAT pending = { p, comdat_aux };
-                                dyn_array_put(pending_indices, pending);
-                            } else {
+                            if (comdat_aux->selection != 5) {
                                 // next symbol in this section is the COMDAT symbol
                                 comdat_sections[sym->section_num - 1] = sym->extra;
+                            } else {
+                                TB_ASSERT(p != NULL);
+                                PendingCOMDAT pending = { sym, p, comdat_aux };
+                                dyn_array_put(pending_indices, pending);
+
+                                // track the symbol index for later, all other
+                                // user_data in this parsing is the symbol ptr
+                                // but we don't have one yet
+                                sym->user_data = (void*) i;
+                                goto skip;
                             }
                         }
 
-                        // sections without a piece are ok
                         if (p == NULL) {
                             goto skip;
                         }
@@ -293,9 +304,9 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                     }
                     comdat_sections[sym->section_num - 1] = NULL;
 
-                    // private COMDATs just always win
+                    // private COMDATs always win
                     if (sym->type == TB_OBJECT_SYMBOL_STATIC) {
-                        comdat_parent[sym->section_num - 1] = s->normal.piece;
+                        p->comdat_parent = s->normal.piece;
                     }
                 }
             } else if (sym->type == TB_OBJECT_SYMBOL_EXTERN || sym->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
@@ -318,8 +329,10 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             if (s != NULL && sym->type != TB_OBJECT_SYMBOL_STATIC) {
                 TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s, true);
                 if (s->comdat != TB_LINKER_COMDAT_NONE) {
+                    TB_LinkerSectionPiece* p = s->normal.piece;
                     assert(s->tag == TB_LINKER_SYMBOL_NORMAL);
-                    comdat_parent[sym->section_num - 1] = s == new_s ? s->normal.piece : NULL;
+                    assert(p->comdat_parent == &UNKNOWN_LEADER);
+                    p->comdat_parent = s == new_s ? p : NULL;
                 }
                 s = new_s;
             }
@@ -335,17 +348,44 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
 
     if (dyn_array_length(pending_indices) > 0) {
         dyn_array_for(i, pending_indices) {
+            TB_ObjectSymbol* sym = pending_indices[i].sym;
+            TB_LinkerSectionPiece* p = pending_indices[i].p;
             COFF_AuxSectionSymbol* comdat_aux = pending_indices[i].aux;
-            TB_LinkerSectionPiece* leader = comdat_parent[comdat_aux->number - 1];
+            TB_LinkerSectionPiece* leader = sec2piece[comdat_aux->number - 1]->comdat_parent;
             assert(leader != &UNKNOWN_LEADER);
 
+            TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
             if (leader != NULL) {
-                tb_linker_associate(l, leader, pending_indices[i].piece);
+                tb_linker_associate(l, leader, p);
+                p->comdat_parent = p;
+
+                // we won, so this associated symbol will be defined
+                *s = (TB_LinkerSymbol){
+                    .name   = sym->name,
+                    .tag    = TB_LINKER_SYMBOL_NORMAL,
+                    .normal = { p, sym->value }
+                };
             } else {
-                // ls->generic_flags |= TB_LINKER_SECTION_DISCARD;
+                p->comdat_parent = NULL;
+                p->size = 0;
+
+                // we lost, since there's concurrency storm going on outside we'll insert an
+                // undefined and it'll be subsumed by whoever actually won when they place their
+                // symbol down.
+                *s = (TB_LinkerSymbol){
+                    .name   = sym->name,
+                    .tag    = TB_LINKER_SYMBOL_UNKNOWN,
+                };
             }
+
+            if (sym->type != TB_OBJECT_SYMBOL_STATIC) {
+                s = tb_linker_symbol_insert(l, s, true);
+            }
+
+            // Update symbol table directly to ideally save on lookups later
+            symbol_map[(size_t) sym->user_data] = s;
         }
-        dyn_array_destroy(pending_indices);
+        dyn_array_clear(pending_indices);
     }
 
     if (dyn_array_length(weak_syms) > 0) {
@@ -358,7 +398,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             TB_ObjectSymbol* alt_sym = bsearch(&key, syms, sym_count, sizeof(TB_ObjectSymbol), obj_symbol_cmp);
             tb_linker_symbol_weak(l, src_symbol->user_data, alt_sym->user_data);
         }
-        dyn_array_destroy(weak_syms);
+        dyn_array_clear(weak_syms);
     }
     tb_arena_restore(&linker_tmp_arena, sp);
 }
@@ -380,10 +420,9 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
     cuikperf_region_start("directives", NULL);
 
     TB_Linker* l = args[0];
-    tb_linker_worker_init(l);
-
     const uint8_t* curr = args[1];
     const uint8_t* end_directive = args[2];
+    tb_linker_worker_init(l);
 
     while (curr != end_directive) {
         while (curr != end_directive && *curr == ' ') {
@@ -396,7 +435,7 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
             break;
         }
 
-        // log_info("directive: %.*s", (int) (end - curr), curr);
+        // log_info("directive: %e*s", (int) (end - curr), curr);
         if (strprefix((const char*) curr, "/merge:", end - curr)) {
             curr += sizeof("/merge:")-1;
 
@@ -421,8 +460,14 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
         } else if (strprefix((const char*) curr, "/include:", end - curr)) {
             curr += sizeof("/include:")-1;
 
+            int len = end - curr;
+            if (curr[0] == '"') {
+                curr += 1;
+                len -= 2;
+            }
+
             // forcibly include symbol
-            tb_linker_import_symbol(l, (TB_Slice){ curr, end - curr });
+            tb_linker_import_symbol(l, (TB_Slice){ curr, len });
         } else if (strprefix((const char*) curr, "/disallowlib:", end - curr)) {
             curr += sizeof("/disallowlib:")-1;
 

@@ -122,32 +122,34 @@ void* tb_linker_moar_mem(size_t size) {
     linker_bump_mark += size;
     cuikperf_region_end();
 
+    log_debug("moar %.3f KiB", size / 1024.0);
     return ptr;
 }
 
-void tb_linker_read_req(TB_Linker* l, bool hi_prio, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj) {
+void tb_linker_add_input_resp(TPool* pool, TPool_ReadReq* req);
+void tb_linker_read_req(TB_Linker* l, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj) {
     log_trace("read_req(%zu, %zu, %p)", offset, size, buffer);
 
     cuikperf_region_start("read_req", NULL);
-    tpool_io_read(l->jobs.pool, hi_prio, obj->fd, offset, size, buffer, l->vtbl.add_input, obj, NULL, NULL, &obj->io_rem);
+    tpool_io_read(l->jobs.pool, obj->fd, offset, size, buffer, tb_linker_add_input_resp, l, obj, NULL);
     cuikperf_region_end();
 }
 
-void tb_linker_read_req2(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn) {
+void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_io_task_proc* fn) {
     assert(fn != NULL);
     log_trace("read_req(%zu, %zu, %p)", offset, size, buffer);
 
     cuikperf_region_start("read_req", NULL);
-    tpool_io_read(l->jobs.pool, hi_prio, fd, offset, size, buffer, fn, l, buffer, ((char*) buffer) + size, NULL);
+    tpool_io_read(l->jobs.pool, fd, offset, size, buffer, fn, l, buffer, ((char*) buffer) + size);
     cuikperf_region_end();
 }
 
-void tb_linker_read_req3(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn, void* arg1, void* arg2, _Atomic(int)* io_rem) {
+void tb_linker_read_req3(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_io_task_proc* fn, void* arg1, void* arg2) {
     assert(fn != NULL);
     log_trace("read_req(%zu, %zu, %p)", offset, size, buffer);
 
     cuikperf_region_start("read_req", NULL);
-    tpool_io_read(l->jobs.pool, hi_prio, fd, offset, size, buffer, fn, l, arg1, arg2, io_rem);
+    tpool_io_read(l->jobs.pool, fd, offset, size, buffer, fn, l, arg1, arg2);
     cuikperf_region_end();
 }
 
@@ -273,7 +275,7 @@ void tb_linker_print_map(TB_Linker* l) {
     DynArray(TB_LinkerSymbol*) symbols = NULL;
     NBHM_FOR(e, &l->symbols) {
         TB_LinkerSymbol* sym = tb_linker_root_symbol(l, e.v);
-        if ((sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_IMPORT) && (sym->flags & TB_LINKER_SYMBOL_USED)) {
+        if ((sym->tag == TB_LINKER_SYMBOL_NORMAL) && (sym->normal.piece->flags & TB_LINKER_PIECE_LIVE)) {
             dyn_array_put(symbols, sym);
         }
     }
@@ -322,6 +324,63 @@ bool tb__linker_is_library_new(TB_Linker* l, const char* file_name) {
     return !found;
 }
 
+void tb_linker_process_input(TPool* pool, void** args);
+void tb_linker_add_input_resp(TPool* pool, TPool_ReadReq* req) {
+    TB_Linker* l = req->args[0];
+    TB_LinkerObject* obj = req->args[1];
+    tb_linker_worker_init(l);
+
+    if (obj->stage == 0) {
+        cuikperf_region_start("classify", NULL);
+        l->vtbl.classify_input(l, obj);
+        cuikperf_region_end();
+    } else {
+        // if all I/O requests haven't arrived don't continue
+        if (atomic_fetch_sub(&obj->io_rem, 1) > 1) {
+            return;
+        }
+    }
+
+    // stage 0 is high prio, stage 1 isn't
+    void* args[2] = { l, obj };
+    tpool_io_forward(pool, !obj->stage, tb_linker_process_input, 2, args);
+}
+
+void tb_linker_process_input(TPool* pool, void** args) {
+    TB_Linker* l = args[0];
+    TB_LinkerObject* obj = args[1];
+    tb_linker_worker_init(l);
+
+    TB_Slice content = { obj->prefetch_page + obj->skip_header, PREFETCH_BLOCK_SIZE - obj->skip_header };
+    TB_Slice name = get_base_name(obj->name);
+    cuikperf_region_start2(obj->stage ? "process" : "fetch", name.length, (const char*) name.data);
+
+    if (obj->stage == 0) {
+        log_debug("Fetching input '%.*s' (%#llx)", (int) name.length, (const char*) name.data, obj->offset);
+
+        // issue a variety of read requests, when this function is called again
+        // we'll be doing the processing stage.
+        obj->stage = 1;
+        if (!obj->fetch(l, obj, content, obj->offset + obj->skip_header)) {
+            cuikperf_region_end();
+            return;
+        }
+    }
+
+    log_debug("Loading input '%.*s' (%#llx)", (int) name.length, (const char*) name.data, obj->offset);
+    obj->process(l, obj, content, obj->offset + obj->skip_header);
+    cuikperf_region_end();
+    tb_linker_job_done(l);
+}
+
+void tb_linker_issue_prefetch(TB_Linker* l, TB_LinkerObject* obj) {
+    obj->prefetch_page = tb_linker_moar_mem(PREFETCH_BLOCK_SIZE);
+
+    cuikperf_region_start("read_req", NULL);
+    tpool_io_read(l->jobs.pool, obj->fd, 0, PREFETCH_BLOCK_SIZE, obj->prefetch_page, tb_linker_add_input_resp, l, obj, NULL);
+    cuikperf_region_end();
+}
+
 void tb_linker_forward_input(TPool* pool, void** args) {
     cuikperf_region_start("forward", NULL);
     TB_LinkerObject* obj = args[0];
@@ -338,9 +397,7 @@ void tb_linker_forward_input(TPool* pool, void** args) {
 
     obj->fd = fd;
     obj->size = size;
-    obj->io_rem = 1;
-    obj->prefetch_page = tb_linker_moar_mem(PREFETCH_BLOCK_SIZE);
-    tb_linker_read_req(l, true, 0, PREFETCH_BLOCK_SIZE, obj->prefetch_page, obj);
+    tb_linker_issue_prefetch(l, obj);
 
     done:
     cuikperf_region_end();
@@ -414,10 +471,7 @@ static void linker_job_find_lib(TPool* pool, void** args) {
             .fd     = fd,
             .size   = size,
         } };
-
-    lib_file->header.io_rem = 1;
-    lib_file->header.prefetch_page = tb_linker_moar_mem(PREFETCH_BLOCK_SIZE);
-    tb_linker_read_req(l, true, 0, PREFETCH_BLOCK_SIZE, lib_file->header.prefetch_page, &lib_file->header);
+    tb_linker_issue_prefetch(l, &lib_file->header);
 
     done:
     cuikperf_region_end();
@@ -457,24 +511,12 @@ void tb_linker_barrier(TB_Linker* l) {
     if (l->jobs.pool != NULL) {
         #if CUIK_ALLOW_THREADS
         assert(dyn_array_length(l->worklist) == 0);
-
-        l->jobs.count += dyn_array_length(l->worklist);
-        dyn_array_for(i, l->worklist) {
-            TB_LinkerObject* obj = l->worklist[i];
-            tpool_add_task(l->jobs.pool, l->vtbl.add_input, obj);
-        }
-        dyn_array_clear(l->worklist);
-
         tpool_wait_for_jobs(l->jobs.pool, &l->jobs.done, &l->jobs.count);
         #else
         abort(); // Unreachable
         #endif
     } else {
-        // process all items on the worklist
-        while (dyn_array_length(l->worklist)) {
-            TB_LinkerObject* obj = dyn_array_pop(l->worklist);
-            l->vtbl.add_input(NULL, (void**) &obj);
-        }
+        abort();
     }
     cuikperf_region_end();
 }
@@ -484,9 +526,6 @@ void tb_linker_complete_appends(TB_Linker* l) {
     bool repeat;
     do {
         tb_linker_barrier(l);
-        break;
-
-        l->defer_jobs = true;
 
         log_info("LINKER BARRIER!");
 
@@ -517,8 +556,6 @@ void tb_linker_complete_appends(TB_Linker* l) {
         dyn_array_clear(l->default_libs);
         // dyn_array_clear(l->alternate_names);
         mtx_unlock(&l->lock);
-
-        l->defer_jobs = false;
     } while (repeat);
     cuikperf_region_end();
 }
@@ -610,10 +647,50 @@ TB_LinkerSegment* tb_linker_find_segment(TB_Linker* linker, const char* name) {
 TB_LinkerSymbol* tb_linker_root_symbol(TB_Linker* l, TB_LinkerSymbol* sym) {
     // private/static symbols don't have an entry in the global symbol table, which
     // also makes their pointers stable and their data immutable.
-    if (sym == NULL || (sym->flags & TB_LINKER_SYMBOL_GLOBAL) == 0) {
+    //
+    // Defined Non-COMDAT symbols can never be redefined so whatever is in the symbol
+    // map is the correct answer
+    if (sym == NULL || (sym->flags & TB_LINKER_SYMBOL_GLOBAL) == 0 ||
+        (sym->tag == TB_LINKER_SYMBOL_NORMAL && sym->comdat == TB_LINKER_COMDAT_NONE)) {
         return sym;
     }
-    return symhs_get(&l->symbols, &sym->name);
+
+    #if 1
+    TB_LinkerSymbol* root = atomic_load_explicit(&sym->root, memory_order_acquire);
+    if (root == NULL) {
+        return sym;
+    }
+
+    cuikperf_region_start("lookup", NULL);
+    // this really doesn't need to be acquire, maybe relaxed?
+    int path_length = 0;
+    TB_LinkerSymbol *base = sym, *next;
+    while (next = atomic_load_explicit(&sym->root, memory_order_acquire), next) {
+        sym = next, path_length++;
+    }
+
+    if (path_length > 1) {
+        // path compression
+        while (next = atomic_load_explicit(&base->root, memory_order_acquire), next) {
+            atomic_store_explicit(&base->root, sym, memory_order_release);
+            base = next;
+        }
+    }
+
+    // printf("%d\n", path_length);
+    cuikperf_region_end();
+    #else
+    TB_LinkerSymbol* root = atomic_load_explicit(&sym->root, memory_order_acquire);
+    if (root == NULL) {
+        root = symhs_geth(&l->symbols, &sym->name, sym->hash_cache);
+
+        // the answer should be deterministic at this point so we could just
+        // relaxed store and hope for the best.
+        atomic_store_explicit(&sym->root, root, memory_order_release);
+    }
+    #endif
+
+    return sym;
 }
 
 TB_LinkerSection* tb_linker_find_section(TB_Linker* l, const char* name) {
@@ -720,7 +797,7 @@ void tb_linker_symbol_weak(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerSymbol* 
         sym = next;
         tb__set_weak_sym(l, sym, alt);
         next = symhs_get(&l->symbols, &sym->name);
-    } while (sym != next);
+    } while (next && sym != next);
 }
 
 static const char* tag_name(int tag) {
@@ -823,7 +900,7 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym) {
     l->jobs.count += 1;
     obj->io_rem = 1;
     obj->prefetch_page = tb_linker_moar_mem(PREFETCH_BLOCK_SIZE);
-    tb_linker_read_req(obj->linker, true, offset, PREFETCH_BLOCK_SIZE, obj->prefetch_page, obj);
+    tb_linker_read_req(obj->linker, offset, PREFETCH_BLOCK_SIZE, obj->prefetch_page, obj);
 
     #if 0
     size_t slash = 0;
@@ -873,9 +950,12 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* new_sym,
     }
     #endif
 
-    cuikperf_region_start("TX", NULL);
+    // cuikperf_region_start("TX", NULL);
     TB_LinkerSymbol* old;
     NBHM_Tx tx = symhs_tx_begin(&l->symbols, new_sym, false);
+
+    new_sym->hash_cache = tx.h;
+
     do {
         // if the merge is false, meaning our new symbol is
         // ordered before the current one, we don't need to
@@ -888,8 +968,15 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* new_sym,
             break;
         }
 
-        // migrate the weak alternative up
         if (old != NULL) {
+            // Concurrent union-find to speed up later lookups, now we
+            // know that old < new_sym.
+            TB_LinkerSymbol* old_root = old->root;
+            if (old_root == NULL) {
+                atomic_compare_exchange_strong(&old->root, &old_root, new_sym);
+            }
+
+            // migrate the weak alternative up
             TB_LinkerSymbol* weak_alt = atomic_load_explicit(&old->weak_alt, memory_order_acquire);
             if (weak_alt != NULL) {
                 tb__set_weak_sym(l, new_sym, weak_alt);
@@ -897,7 +984,7 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* new_sym,
         }
     } while (!symhs_tx_commit(&tx, new_sym));
     symhs_tx_end(&l->symbols);
-    cuikperf_region_end();
+    // cuikperf_region_end();
 
     // I think all calls have the "owned" as true? check that out later and maybe
     // decide we don't need it
@@ -1186,7 +1273,7 @@ bool tb_linker_layout(TB_Linker* l) {
 ////////////////////////////////
 // Mark phase
 ////////////////////////////////
-enum { MARK_WORKLIST_SIZE = 16 };
+enum { MARK_WORKLIST_SIZE = 64 };
 
 typedef struct {
     int top;
@@ -1206,6 +1293,7 @@ bool tb_linker_mark_piece(TB_Linker* l, TB_LinkerSectionPiece* p) {
     return true;
 }
 
+
 // returns true if we marked it
 bool tb_linker_mark_symbol(TB_Linker* l, TB_LinkerSymbol* sym) {
     if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN || sym->tag == TB_LINKER_SYMBOL_LAZY) {
@@ -1219,25 +1307,19 @@ bool tb_linker_mark_symbol(TB_Linker* l, TB_LinkerSymbol* sym) {
         }
     }
 
-    TB_LinkerSymbolFlags flags = atomic_load_explicit(&sym->flags, memory_order_acquire);
-    if ((flags & TB_LINKER_SYMBOL_USED) || !atomic_compare_exchange_strong(&sym->flags, &flags, flags | TB_LINKER_SYMBOL_USED)) {
-        // If we lose, someone else must've marked it
-        assert(flags & TB_LINKER_SYMBOL_USED);
-        return false;
-    }
-
     // add import to table
     if (sym->tag == TB_LINKER_SYMBOL_IMPORT || sym->tag == TB_LINKER_SYMBOL_THUNK) {
         TB_LinkerSymbol* imp_sym = sym;
         if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
             imp_sym = sym->thunk;
+        }
 
-            // gotta mark the import sym to avoid duplicates
-            flags = atomic_load_explicit(&sym->thunk->flags, memory_order_acquire);
-            if ((flags & TB_LINKER_SYMBOL_USED) || !atomic_compare_exchange_strong(&sym->flags, &flags, flags | TB_LINKER_SYMBOL_USED)) {
-                assert(flags & TB_LINKER_SYMBOL_USED);
-                goto skip;
-            }
+        // gotta mark the import sym to avoid duplicates
+        TB_LinkerSymbolFlags flags = atomic_load_explicit(&imp_sym->flags, memory_order_acquire);
+        if ((flags & TB_LINKER_SYMBOL_USED) || !atomic_compare_exchange_strong(&imp_sym->flags, &flags, flags | TB_LINKER_SYMBOL_USED)) {
+            // If we lose, someone else must've marked it
+            assert(flags & TB_LINKER_SYMBOL_USED);
+            return false;
         }
 
         // TODO(NeGate): consider a concurrent data structure here to avoid
@@ -1251,8 +1333,7 @@ bool tb_linker_mark_symbol(TB_Linker* l, TB_LinkerSymbol* sym) {
         dyn_array_put(imp_table->thunks, imp_sym);
         mtx_unlock(&imp_table->lock);
         cuikperf_region_end();
-
-        skip:;
+        return false;
     }
 
     if (sym->tag != TB_LINKER_SYMBOL_NORMAL && sym->tag != TB_LINKER_SYMBOL_TB) {
@@ -1264,28 +1345,55 @@ bool tb_linker_mark_symbol(TB_Linker* l, TB_LinkerSymbol* sym) {
 
 static bool block_range_overlaps(size_t offset, size_t size, size_t pos) {
     TB_ASSERT((pos & FILE_BLOCK_SIZE - 1) == 0);
-    return pos <= offset + size && offset <= pos + FILE_BLOCK_SIZE - 1;
+    return pos < offset + size && offset < pos + FILE_BLOCK_SIZE;
+}
+
+static size_t tb_linker_search_ranges(DynArray(TB_CacheRange) ranges, size_t key) {
+    cuikperf_region_start("bsearch", NULL);
+    size_t left = 0, right = dyn_array_length(ranges);
+    while (left < right) {
+        size_t middle = (left + right) / 2;
+        if (ranges[middle].offset > key) {
+            right = middle;
+        } else {
+            left = middle + 1;
+        }
+    }
+    cuikperf_region_end();
+
+    // if right=0 then our answer is lower than all ranges (which does happen here)
+    size_t i = right ? right - 1 : 0;
+    assert(i < dyn_array_length(ranges));
+    assert(right == 0 || key >= ranges[right - 1].offset);
+    assert(i == 0 || key != ranges[i - 1].offset);
+    return i;
 }
 
 static void tb_linker_mark_job(TPool* pool, void** args);
 static void tb_linker_export_job(TPool* pool, void** args);
-static void tb_linker_read_block(TPool* pool, void** args) {
+
+static void tb_linker_read_block(TPool* pool, TPool_ReadReq* req) {
     cuikperf_region_start("block", NULL);
 
-    TB_Linker* l = args[0];
-    TB_LinkerObject* obj = args[1];
-    size_t block = (size_t) args[2];
+    TB_Linker* l = req->args[0];
+    TB_LinkerObject* obj = req->args[1];
+    size_t block = (size_t) req->args[2];
     size_t offset = obj->cache_lo + block*FILE_BLOCK_SIZE;
 
-    // skip all entries before we overlap
-    size_t i = 0;
     DynArray(TB_CacheRange) ranges = obj->cache_ranges;
+
+    // skip all entries before we overlap
+    size_t i = tb_linker_search_ranges(ranges, offset);
+
+    #ifndef NDEBUG
     while (i < dyn_array_length(ranges) &&
            !block_range_overlaps(ranges[i].offset,
                                  ranges[i].size,
                                  offset)) {
+        assert(0 && "Huh?");
         i++;
     }
+    #endif
 
     // tick down any overlapping pieces
     while (i < dyn_array_length(ranges) &&
@@ -1299,8 +1407,10 @@ static void tb_linker_read_block(TPool* pool, void** args) {
             TB_LinkerSectionPiece* p = ranges[i].pending;
             if (p && atomic_compare_exchange_strong(&ranges[i].io_rem, &old, -1)) {
                 l->jobs.count += 1;
+
                 void* args[2] = { l, p };
-                tpool_add_task2(l->jobs.pool, l->is_exporting ? tb_linker_export_job : tb_linker_mark_job, 2, args);
+                tpool_task_proc* fn = l->is_exporting ? tb_linker_export_job : tb_linker_mark_job;
+                tpool_io_forward(l->jobs.pool, true, fn, 2, args);
             }
         }
         i++;
@@ -1327,8 +1437,10 @@ static bool tb_linker_read_cached(TB_Linker* l, TB_LinkerSectionPiece* p, size_t
     // this could be a binary search
     TB_CacheRange* found = NULL;
     DynArray(TB_CacheRange) ranges = obj->cache_ranges;
-    dyn_array_for(i, ranges) {
-        if (ranges[i].offset == lo && ranges[i].size == hi - lo) {
+    size_t base = tb_linker_search_ranges(ranges, lo);
+    FOR_N(i, base, dyn_array_length(ranges)) {
+        if (ranges[i].offset != lo) { break; }
+        if (ranges[i].size == hi - lo) {
             ranges[i].pending = p;
             found = &ranges[i];
 
@@ -1344,12 +1456,18 @@ static bool tb_linker_read_cached(TB_Linker* l, TB_LinkerSectionPiece* p, size_t
     int first_block = (lo - obj->cache_lo) / FILE_BLOCK_SIZE;
     int last_block  = ((hi - obj->cache_lo) + FILE_BLOCK_SIZE - 1) / FILE_BLOCK_SIZE;
 
-    __builtin_debugtrap();
     int first_word  = first_block / 64;
     int last_word   = (last_block + 63) / 64;
+
+    /* printf("REQUEST %d:[%zu, %zu):", obj->fd, lo, hi);
+    FOR_N(i, first_block, last_block) {
+    printf(" %zu", i);
+    }
+    printf("\n"); */
+
     FOR_N(i, first_word, last_word) {
         int bits_lo = first_block - (i*64);
-        int bits_hi = (i*64 + 64) - last_block;
+        int bits_hi = last_block  - (i*64);
         if (bits_lo < 0)  { bits_lo = 0;  }
         if (bits_hi > 64) { bits_hi = 64; }
 
@@ -1358,11 +1476,12 @@ static bool tb_linker_read_cached(TB_Linker* l, TB_LinkerSectionPiece* p, size_t
 
         // Issue individual block reads on any of the missing blocks, when they're done
         // they'll trigger the completion task for the piece.
-        uint64_t curr = obj->reserve[0];
+        uint64_t curr = obj->reserve[i];
         while ((curr & mask) != mask) {
-            uint64_t block = __builtin_ffsll(~curr & mask) - 1;
-            uint64_t next  = curr | (1ull << block);
-            if (atomic_compare_exchange_strong(&obj->reserve[0], &curr, next)) {
+            uint64_t pending_i = __builtin_ffsll(~curr & mask) - 1;
+            uint64_t next      = curr | (1ull << pending_i);
+            uint64_t block     = i*64 + pending_i;
+            if (atomic_compare_exchange_strong(&obj->reserve[i], &curr, next)) {
                 size_t offset = obj->cache_lo + block*FILE_BLOCK_SIZE;
                 char* buf = &obj->cache_data[block*FILE_BLOCK_SIZE];
 
@@ -1371,10 +1490,16 @@ static bool tb_linker_read_cached(TB_Linker* l, TB_LinkerSectionPiece* p, size_t
 
                 CUIK_TIMED_BLOCK("issue") {
                     l->jobs.count += 1;
-                    tb_linker_read_req3(l, true, obj->fd, offset, FILE_BLOCK_SIZE, buf, tb_linker_read_block, obj, (void*) block, NULL);
+                    tb_linker_read_req3(l, obj->fd, offset, FILE_BLOCK_SIZE, buf, tb_linker_read_block, obj, (void*) block);
                 }
             }
         }
+    }
+
+    // last chance to do an immediate visit
+    int old = found->io_rem;
+    if (old == 0 && atomic_compare_exchange_strong(&found->io_rem, &old, -1)) {
+        return true;
     }
 
     return false;
@@ -1413,8 +1538,10 @@ static void tb_linker_mark_push(MarkJob* job, TB_Linker* l, TB_LinkerSectionPiec
 
 static void tb_linker_mark_push2(MarkJob* job, TB_Linker* l, TB_LinkerSymbol* sym) {
     if (tb_linker_mark_symbol(l, sym)) {
+        cuikperf_region_start("push", NULL);
         TB_LinkerSectionPiece* p = tb_linker_get_piece(l, sym);
         tb_linker_mark_push(job, l, p);
+        cuikperf_region_end();
     }
 }
 
@@ -1427,8 +1554,6 @@ static void tb_linker_mark_job(TPool* pool, void** args) {
     TB_LinkerSectionPiece* p = args[1];
     assert(p->obj != NULL);
     assert(p->relocs != NULL || p->reloc_size == 0);
-
-    atomic_store_explicit(&p->obj->live, true, memory_order_relaxed);
 
     #ifdef CONFIG_HAS_TB
     RelocParser parse_reloc = p->obj && p->obj->module ? tb__linker_module_parse_reloc : l->vtbl.parse_reloc;
@@ -1448,6 +1573,14 @@ static void tb_linker_mark_job(TPool* pool, void** args) {
     while (ctx.top > 0) {
         TB_LinkerSectionPiece* p = ctx.elems[--ctx.top];
         cuikperf_region_start("v", NULL);
+
+        if (p->flags & TB_LINKER_PIECE_COMDAT) {
+            assert(p->comdat_parent == p);
+        }
+
+        if (!p->obj->live) {
+            atomic_store_explicit(&p->obj->live, true, memory_order_relaxed);
+        }
 
         // mark module content
         if (p->obj->module && !p->obj->module->visited) {
@@ -1484,12 +1617,22 @@ static void tb_linker_mark_job(TPool* pool, void** args) {
             parse_reloc(l, p, i, &rel);
 
             TB_LinkerSymbol* sym = tb_linker_root_symbol(l, rel.target);
-            tb_linker_mark_push2(&ctx, l, sym);
+            TB_LinkerSectionPiece* sym_piece = tb_linker_get_piece(l, sym);
+            if (sym_piece == p) {
+                // the piece is already marked, might as well skip all that code
+                tb_linker_mark_symbol(l, sym);
+            } else {
+                tb_linker_mark_push2(&ctx, l, sym);
+            }
         }
 
         // associated section
-        dyn_array_for(i, p->assoc) {
-            tb_linker_mark_push(&ctx, l, p->assoc[i]);
+        if (dyn_array_length(p->assoc)) {
+            cuikperf_region_start("assoc", NULL);
+            dyn_array_for(i, p->assoc) {
+                tb_linker_mark_push(&ctx, l, p->assoc[i]);
+            }
+            cuikperf_region_end();
         }
         cuikperf_region_end();
     }
@@ -1513,21 +1656,50 @@ void tb_linker_mark_live(TB_Linker* l) {
 
     // mark all non-COMDAT pieces as live
     cuikperf_region_start("root scan", NULL);
+
+    #define MATCH(str) (s->name.length == sizeof(str)-1 && memcmp(s->name.data, str, s->name.length) == 0)
+
+    #if 0
     NBHS_FOR(e, &l->sections) {
         TB_LinkerSection* s = e.k;
         if (s->generic_flags & TB_LINKER_SECTION_DISCARD) { continue; }
+
         // we don't consider .debug as roots because codeview is compiled into the PDB
-        if (s->name.length == sizeof(".debug")-1 && memcmp(s->name.data, ".debug", s->name.length) == 0) {
+        if (MATCH(".debug") || MATCH(".gfids$y") || MATCH(".gehcont$y")) {
             continue;
         }
 
         TB_LinkerSectionPiece* p = atomic_load_explicit(&s->list, memory_order_relaxed);
         for (; p != NULL; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
-            if ((p->flags & TB_LINKER_PIECE_COMDAT) == 0 && tb_linker_mark_piece(l, p) && !tb_linker_is_piece_leaf(p)) {
+            if ((p->flags & TB_LINKER_PIECE_COMDAT) == 0 &&
+                tb_linker_mark_piece(l, p) &&
+                !tb_linker_is_piece_leaf(p)) {
+                printf("A %p %zu\n", p, p->reloc_count);
+            }
+        }
+    }
+    return;
+    #endif
+
+    NBHS_FOR(e, &l->sections) {
+        TB_LinkerSection* s = e.k;
+        if (s->generic_flags & TB_LINKER_SECTION_DISCARD) { continue; }
+
+        // we don't consider .debug as roots because codeview is compiled into the PDB
+        if (MATCH(".debug") || MATCH(".gfids$y") || MATCH(".gehcont$y")) {
+            continue;
+        }
+
+        TB_LinkerSectionPiece* p = atomic_load_explicit(&s->list, memory_order_relaxed);
+        for (; p != NULL; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
+            if ((p->flags & TB_LINKER_PIECE_COMDAT) == 0 &&
+                tb_linker_mark_piece(l, p) &&
+                !tb_linker_is_piece_leaf(p)) {
                 tb_linker_enqueue_piece(l, p);
             }
         }
     }
+    #undef MATCH
     cuikperf_region_end();
 
     if (l->jobs.pool) {

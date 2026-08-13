@@ -23,7 +23,8 @@
 enum {
     // 60 (archive member header) + 20 (COFF header), rounded to the next pow2
     PREFETCH_BLOCK_SIZE = 256,
-    FILE_BLOCK_SIZE = 4096,
+
+    FILE_BLOCK_SIZE = 4*1024,
 };
 
 typedef void TB_LinkerAppendFn(TPool* pool, void** args);
@@ -65,6 +66,7 @@ struct TB_LinkerObject {
 
         // BigCOFF
         bool is_big;
+        size_t skip_header;
 
         // this is the first peek, so we can get a look at the magic numbers and
         // the rest of the header.
@@ -107,10 +109,6 @@ struct TB_LinkerObject {
     // Keep track of how many reads we need to complete before advancing, usually
     // the answer is like 1 or 2.
     _Atomic int io_rem;
-
-    // Windows-specific debug stuff
-    TB_LinkerSectionPiece* debug_s;
-    TB_LinkerSectionPiece* debug_t;
 };
 
 struct TB_LinkerArchive {
@@ -324,9 +322,15 @@ struct TB_LinkerSymbol {
 
     struct {
         _Atomic(TB_LinkerSymbolFlags) flags;
-        _Atomic(TB_LinkerSymbol*) comdat_assoc;
         _Atomic(TB_LinkerSymbol*) weak_alt;
+
+        // cache during the mark and export phase to
+        // avoid looking up existing entries again.
+        _Atomic(TB_LinkerSymbol*) root;
     };
+
+    // speeding up lookups on the global symbol table
+    uint32_t hash_cache;
 
     union {
         // for normal symbols
@@ -372,7 +376,11 @@ typedef struct {
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
     int  (*find_lib)(TB_Linker* l, const char* file_name, char* out_path, size_t* out_size);
-    void (*add_input)(TPool* pool, void** args);
+
+    // if the input file is missing a name or size, we handle that here alongside
+    // parsing the header to know what we're even looking at.
+    void (*classify_input)(TB_Linker* l, TB_LinkerObject* obj);
+
     void (*parse_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
     bool (*export)(TB_Linker* l, const char* file_name);
 } TB_LinkerVtbl;
@@ -509,9 +517,9 @@ void tb_linker_print_map(TB_Linker* l);
 void tb_linker_complete_appends(TB_Linker* l);
 
 void tb_linker_read_imm(int fd, size_t offset, size_t count, void* data);
-void tb_linker_read_req(TB_Linker* l, bool hi_prio, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj);
-void tb_linker_read_req2(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn);
-void tb_linker_read_req3(TB_Linker* l, bool hi_prio, int fd, size_t offset, size_t size, void* buffer, tpool_task_proc* fn, void* arg1, void* arg2, _Atomic(int)* io_rem);
+void tb_linker_read_req(TB_Linker* l, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj);
+void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_io_task_proc* fn);
+void tb_linker_read_req3(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_io_task_proc* fn, void* arg1, void* arg2);
 
 void tb_linker_worker_init(TB_Linker* l);
 void* tb_linker_moar_mem(size_t size);
