@@ -29,6 +29,8 @@ void cuikperf_region_start(const char* fmt, const char* extra);
 void cuikperf_region_start2(const char* fmt, size_t extra_len, const char* extra);
 void cuikperf_region_end(void);
 
+uint64_t cuik_special_time(uint64_t x);
+
 // Usage:
 // CUIK_TIMED_BLOCK("Beans %d", 5) {
 //   ...

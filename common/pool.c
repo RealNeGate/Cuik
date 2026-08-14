@@ -96,7 +96,7 @@ typedef struct TPool_Thread {
     // A pair thread is used to submit async I/O requests to, it's
     // only created whenever that happens because I really only need
     // it for the TB linker
-    _Atomic bool has_pair;
+    bool has_pair;
     thrd_t pair_thread;
 
     #ifdef CUIK_USE_URING
@@ -107,6 +107,10 @@ typedef struct TPool_Thread {
     #else
     TPool_IOQueue* io_submit;
     #endif
+
+    uint64_t curr_submit_i;
+    uint64_t last_submit_i;
+    uint64_t last_submit_t;
 
     // These are where completed I/O tasks go, other threads could steal from here.
     TPool_Queue io_complete_lo;
@@ -161,8 +165,10 @@ void _tpool_queue_push(TPool *pool, TPool_Queue *queue, tpool_task_proc* fn, int
     ssize_t size = bot - top;
     if (size > (cur_ring->size - 1)) {
         // Queue is full
+        cuikperf_region_start("resize", NULL);
         queue->ring = tpool_ring_grow(queue->ring, bot, top);
         cur_ring = atomic_load_explicit(&queue->ring, memory_order_relaxed);
+        cuikperf_region_end();
     }
 
     cur_ring->buffer[bot % cur_ring->size].do_work = fn;
@@ -255,6 +261,7 @@ void cuikperf_thread_stop(void);
 void cuikperf_region_start(const char* label, const char* extra);
 void cuikperf_region_end(void);
 
+static int WAKEUP_TOKEN;
 int _tpool_io_worker(void *ptr) {
     TPool_Thread* current_thread = (TPool_Thread*) ptr;
     tpool_current_thread_idx = current_thread->idx;
@@ -271,28 +278,53 @@ int _tpool_io_worker(void *ptr) {
     TPool_IOQueue* queue = current_thread->io_submit;
     #endif
 
+    size_t stats_requests = 0;
+    size_t stats_requested_size = 0;
+
     uint64_t t = 0;
     while (pool->running) {
         #ifdef CUIK_USE_URING
+        cuikperf_region_end();
+
         // consume and process all the I/O completion responses
         struct io_uring_cqe* cqe;
         int ret = io_uring_wait_cqe(ring, &cqe);
-        assert(ret >= 0);
-        assert(cqe->res >= 0);
+        if (ret == -4) {
+            continue;
+        }
 
-        // completions come in out of order, so we track a bitmap
-        // rather than a queue like the pread impl.
-        TPool_ReadReq req;
-        TPool_ReadReq* src = io_uring_cqe_get_data(cqe);
-        size_t req_i = src - current_thread->entries;
-        memcpy(&req, src, sizeof(req));
-        io_uring_cqe_seen(ring, cqe);
-        // free up slot now
-        current_thread->used_entries &= ~(1ull << req_i);
-        futex_signal(&current_thread->used_entries);
+        cuikperf_region_start("I/O", NULL);
+        if (ret < 0) {
+            printf("error: io_uring_wait_cqe!");
+            abort();
+        }
 
-        // I/O response
-        req.do_work(pool, &req);
+        unsigned int head = 0, i = 0;
+        io_uring_for_each_cqe(ring, head, cqe) {
+            if (io_uring_cqe_get_data(cqe) == &WAKEUP_TOKEN) {
+                break;
+            }
+            if (cqe->res < 0) {
+                printf("error: io_uring_wait_cqe! %s\n", strerror(-cqe->res));
+                abort();
+            }
+
+            // completions come in out of order, so we track a bitmap
+            // rather than a queue like the pread impl.
+            TPool_ReadReq req;
+            TPool_ReadReq* src = io_uring_cqe_get_data(cqe);
+            size_t req_i = src - current_thread->entries;
+            memcpy(&req, src, sizeof(req));
+
+            // free up slot now
+            current_thread->used_entries &= ~(1ull << req_i);
+            futex_signal(&current_thread->used_entries);
+
+            // I/O response
+            req.do_work(pool, &req);
+            i++;
+        }
+        io_uring_cq_advance(ring, i);
         #else
         // wait for new requests
         uint64_t h = queue->io_head;
@@ -322,6 +354,7 @@ int _tpool_io_worker(void *ptr) {
         cuikperf_region_start("pread", NULL);
         TPool_ReadReq req = queue->entries[h % POOL_IO_DEPTH];
         pread(req.fd, (void*) req.data, req.size, req.offset);
+        stats_requested_size += req.size, stats_requests += 1;
         cuikperf_region_end();
 
         queue->io_head += 1;
@@ -334,6 +367,7 @@ int _tpool_io_worker(void *ptr) {
         #endif
     }
     done:
+    printf("STATS %.3f KiB | %zu\n", stats_requested_size / 1024.0f, stats_requests);
     cuikperf_region_end();
     cuikperf_thread_stop();
     return 0;
@@ -350,6 +384,22 @@ static size_t estimate_io_load(TPool_Thread* current_thread) {
     const uint64_t top_bit = 1ull << 63ull;
     uint64_t next_t = current_thread->io_submit->io_tail & ~top_bit;
     return next_t - current_thread->io_submit->io_head;
+    #endif
+}
+
+static void try_submit_io(TPool* pool, TPool_Thread* thread, bool force) {
+    #if CUIK_USE_URING
+    if (thread->has_pair) {
+        uint64_t t = cuik_time_in_nanos();
+        uint64_t elapsed = t - thread->last_submit_t;
+        if ((elapsed > 100000 || force) && thread->curr_submit_i != thread->last_submit_i) {
+            cuikperf_region_start("uring_submit", NULL);
+            io_uring_submit(&thread->io_ring);
+            thread->last_submit_t = t;
+            thread->last_submit_i = thread->curr_submit_i;
+            cuikperf_region_end();
+        }
+    }
     #endif
 }
 
@@ -376,24 +426,21 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
         uint64_t est = estimate_io_load(current_thread);
         while (est <= (POOL_IO_DEPTH * 3) / 4 && _tpool_queue_steal(&current_thread->io_complete_hi, &task) == GRAB_SUCCESS) {
             task.do_work(pool, task.args);
-            TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
-            finished_tasks += 1;
             est = estimate_io_load(current_thread);
+            finished_tasks += 1;
         }
-        // printf("Skip for now %lu\n", est);
-        // cuikperf_region_start("Backpressure", NULL);
 
         if (_tpool_queue_take(&current_thread->queue, &task) == GRAB_SUCCESS) {
             task.do_work(pool, task.args);
-            TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
             finished_tasks += 1;
         }
 
         if (_tpool_queue_steal(&current_thread->io_complete_lo, &task) == GRAB_SUCCESS) {
             task.do_work(pool, task.args);
-            TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
             finished_tasks += 1;
         }
+
+        atomic_fetch_sub(&pool->tasks_left, finished_tasks);
     } while (old_finished != finished_tasks);
 
     if (finished_tasks > 0 && !TPOOL_LOAD(pool->tasks_left)) {
@@ -445,6 +492,8 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
             }
         } while (dirty);
     }
+
+    try_submit_io(pool, current_thread, true);
 }
 
 int _tpool_worker(void *ptr) {
@@ -485,16 +534,13 @@ int _tpool_worker(void *ptr) {
 
 static void tpool_init_io(TPool* pool, TPool_Thread* thread) {
     // lazy init of I/O thread
-    if (!thread->has_pair && atomic_compare_exchange_strong(&thread->has_pair, &(bool){ false }, true)) {
+    if (!thread->has_pair) {
+        thread->has_pair = true;
         thread->io_complete_lo = tpool_queue_make(64);
         thread->io_complete_hi = tpool_queue_make(64);
 
         #ifdef CUIK_USE_URING
-        struct io_uring_params params = {
-            .flags = IORING_SETUP_SQPOLL,
-            .sq_thread_idle = 100
-        };
-        int ret = io_uring_queue_init_params(64, &thread->io_ring, &params);
+        int ret = io_uring_queue_init(64, &thread->io_ring, 0);
         assert(ret == 0);
         #else
         thread->io_submit = cuik_aligned_alloc(sizeof(TPool_IOQueue), alignof(TPool_IOQueue));
@@ -514,14 +560,13 @@ void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, 
     tpool_io_prep(pool);
 
     TPool_Thread* thread = &pool->threads[tpool_current_thread_idx];
-
     const uint64_t top_bit = 1ull << 63ull;
 
     #ifdef CUIK_USE_URING
     struct io_uring* ring = &thread->io_ring;
     struct io_uring_sqe* sqe = io_uring_get_sqe(ring);
-    if (sqe == NULL) {
-        cuikperf_region_start("pressure", NULL);
+    while (sqe == NULL) {
+        cuikperf_region_start("sqe_pressure", NULL);
         io_uring_submit_and_wait(ring, 1);
         sqe = io_uring_get_sqe(ring);
         cuikperf_region_end();
@@ -530,7 +575,8 @@ void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, 
     uint64_t curr = thread->used_entries;
     for (;;) {
         if (curr == UINT64_MAX) {
-            cuikperf_region_start("pressure", NULL);
+            cuikperf_region_start("slot_pressure", NULL);
+            io_uring_submit_and_wait(ring, 1);
             futex_wait(&thread->used_entries, curr);
             curr = thread->used_entries;
             cuikperf_region_end();
@@ -544,7 +590,11 @@ void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, 
 
             io_uring_prep_read(sqe, fd, data, size, offset);
             io_uring_sqe_set_data(sqe, &thread->entries[free_i]);
-            io_uring_submit(ring);
+
+            // printf("PUSH %zu\n", free_i);
+            thread->curr_submit_i++;
+            try_submit_io(pool, thread, false);
+            break;
         }
     }
     #else
@@ -559,7 +609,7 @@ void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, 
         h = queue->io_head_cache = queue->io_head;
 
         if (next_t - h > POOL_IO_DEPTH - 1) {
-            cuikperf_region_start("pressure", null);
+            cuikperf_region_start("pressure", NULL);
             futex_wait(&queue->io_head, h);
             h = queue->io_head_cache = queue->io_head;
             cuikperf_region_end();
@@ -604,10 +654,16 @@ void tpool_wait_for_jobs(TPool *pool, Futex* done, Futex* count) {
         FutexV avail = TPOOL_LOAD(pool->tasks_available);
         issue_load(pool, thread);
 
+        uint64_t rem_tasks = pool->tasks_left;
+
         c = *count;
         if (*done == c) {
             break;
         }
+
+        sleep(1);
+        // assert(rem_tasks != 0);
+        // futex_wait(&pool->tasks_left, rem_tasks);
     }
 }
 
@@ -669,21 +725,28 @@ void tpool_init(TPool *pool, int child_thread_count) {
         _thread_init(pool, &pool->threads[i], i);
         thrd_create(&pool->threads[i].thread, _tpool_worker, &pool->threads[i]);
     }
-
-    tpool_io_prep_all(pool);
     cuikperf_region_end();
 }
 
 void tpool_io_prep_all(TPool *pool) {
-    for (int i = 0; i < pool->thread_count; i++) {
-        tpool_init_io(pool, &pool->threads[i]);
-    }
 }
 
 void tpool_destroy(TPool *pool) {
+    cuikperf_region_start("tpool_destroy", NULL);
+
     pool->running = false;
     for (int i = 0; i < pool->thread_count; i++) {
-        #ifndef CUIK_USE_URING
+        #ifdef CUIK_USE_URING
+        if (pool->threads[i].has_pair) {
+            struct io_uring* ring = &pool->threads[i].io_ring;
+            struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+            if (sqe != NULL) {
+                io_uring_prep_nop(sqe);
+                io_uring_sqe_set_data(sqe, &WAKEUP_TOKEN);
+                io_uring_submit(ring);
+            }
+        }
+        #else
         if (pool->threads[i].has_pair) {
             pool->threads[i].io_submit->io_tail = -1;
             futex_signal(&pool->threads[i].io_submit->io_tail);
@@ -706,4 +769,5 @@ void tpool_destroy(TPool *pool) {
     }
 
     cuik_free(pool->threads);
+    cuikperf_region_end();
 }

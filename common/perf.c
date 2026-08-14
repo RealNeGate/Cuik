@@ -154,6 +154,10 @@ bool cuikperf_is_active(void) {
     return profiling;
 }
 
+uint64_t cuik_special_time(uint64_t x) {
+    return x * rdtsc_freq;
+}
+
 uint64_t cuik_time_in_nanos(void) {
     #if defined(_AMD64_) || defined(__amd64__)
     return (__rdtsc() - timer_start) * rdtsc_freq;

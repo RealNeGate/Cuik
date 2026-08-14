@@ -173,7 +173,7 @@ int run_link(int argc, const char** argv) {
         #if CUIK_ALLOW_THREADS
         TPool pool;
         if (use_threads) {
-            tpool_init(&pool, 2);
+            tpool_init(&pool, 0);
         }
         TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, use_threads ? &pool : NULL);
         #else

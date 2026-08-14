@@ -349,7 +349,7 @@ void pe_append_module(TPool* pool, void** args) {
             };
 
             if (p->flags & TB_LINKER_PIECE_COMDAT) {
-                s->comdat = TB_LINKER_COMDAT_ANY;
+                s->flags |= TB_LINKER_SYMBOL_COMDAT;
             }
             func_out->parent->super.address = insert_global_symbol(l, s, func_out->parent->super.linkage == TB_LINKAGE_PRIVATE);
         }
@@ -728,6 +728,11 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
     tb_linker_complete_appends(l);
 
+    if (1) {
+        cuikperf_region_end();
+        return false;
+    }
+
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
     dyn_array_for(i, info->merges) {
     NL_Slice to_name = { info->merges[i].to.length, info->merges[i].to.data };
@@ -757,11 +762,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         tb_linker_push_named(l, "_load_config_used");
         tb_linker_push_named(l, "_tls_used");
         tb_linker_mark_live(l);
-    }
-
-    if (0) {
-        cuikperf_region_end();
-        return false;
     }
 
     /* CUIK_TIMED_BLOCK("Merge ops") {

@@ -30,6 +30,45 @@ static int compare_cache_ranges(const void* a, const void* b) {
     return aa->offset - bb->offset;
 }
 
+static void cache_range_sort2(TB_CacheRange* a, size_t left, size_t right, size_t end, TB_CacheRange* b) {
+    size_t i = left;
+    size_t j = right;
+    FOR_N(k, left, end) {
+        if (i < right && (j >= end || a[i].offset <= a[j].offset)) {
+            b[k] = a[i];
+            i = i + 1;
+        } else {
+            b[k] = a[j];
+            j = j + 1;
+        }
+    }
+}
+
+static void cache_range_sort(TB_CacheRange* ranges, size_t n) {
+    TB_CacheRange* dst = ranges;
+
+    // Alloc temp array
+    TB_CacheRange* other = tb_linker_alloc_local(n * sizeof(TB_CacheRange));
+    for (int width = 1; width < n; width *= 2) {
+        for (int i = 0; i < n; i = i + 2*width) {
+            int right = i + width;
+            int end = i + 2*width;
+            if (right > n) { right = n; }
+            if (end > n)   { end   = n; }
+            cache_range_sort2(ranges, i, right, end, other);
+        }
+
+        // swap ranges and other
+        TB_CacheRange* tmp = ranges;
+        ranges = other;
+        other = tmp;
+    }
+
+    if (dst != ranges) {
+        memcpy(dst, ranges, n * sizeof(TB_CacheRange));
+    }
+}
+
 static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
     assert(prefetch.length >= sizeof(COFF_FileHeader));
 
@@ -52,11 +91,11 @@ static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         obj->sections = (uint8_t*) &prefetch.data[sizeof(COFF_FileHeader)];
     } else {
         obj->io_rem = 2;
-        obj->sections = tb_linker_moar_mem(size_of_section_headers);
+        obj->sections = tb_linker_moar_mem(obj, size_of_section_headers);
         tb_linker_read_req(l, file_header_offset + sizeof(COFF_FileHeader), size_of_section_headers, obj->sections, obj);
     }
 
-    obj->symbol_table = tb_linker_moar_mem(symstr_table_size);
+    obj->symbol_table = tb_linker_moar_mem(obj, symstr_table_size);
     tb_linker_read_req(l, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
     return false;
 }
@@ -83,14 +122,11 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
         .data   = &obj->symbol_table[string_table_pos],
     };
 
-    TB_ArenaSavepoint sp = tb_arena_save(&linker_tmp_arena);
     COFF_SectionHeader* sections = (COFF_SectionHeader*) obj->sections;
 
     // Apply all sections (generate lookup for sections based on ordinals)
-    TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
-
-    TB_LinkerSectionPiece** sec2piece = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_LinkerSectionPiece*));
-    COFF_AuxSectionSymbol** comdat_sections = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(COFF_AuxSectionSymbol*));
+    TB_LinkerSectionPiece** sec2piece = tb_linker_alloc_local(parser.section_count * sizeof(TB_LinkerSectionPiece*));
+    COFF_AuxSectionSymbol** comdat_sections = tb_linker_alloc_local(parser.section_count * sizeof(COFF_AuxSectionSymbol*));
 
     size_t cache_lo = SIZE_MAX, cache_hi = 0;
     uint64_t order = obj->time;
@@ -108,7 +144,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 sec2piece[i] = NULL;
 
                 if (sec->raw_data_size != 0) {
-                    uint8_t* buf = tb_linker_moar_mem(sec->raw_data_size);
+                    uint8_t* buf = tb_linker_moar_mem(obj, sec->raw_data_size);
 
                     // Fork out a parallel task
                     l->jobs.count += 1;
@@ -176,14 +212,6 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
 
             if (sec_flags & IMAGE_SCN_LNK_COMDAT) {
                 p->flags |= TB_LINKER_PIECE_COMDAT;
-            } else {
-                if (dollar == 5 && memcmp(s_name.data, ".text", 5) == 0) {
-                    // assert(text_piece == NULL);
-                    text_piece = p;
-                } else if (dollar == 6 && memcmp(s_name.data, ".pdata", 6) == 0) {
-                    // assert(pdata_piece == NULL);
-                    pdata_piece = p;
-                }
             }
         }
     }
@@ -192,7 +220,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     CUIK_TIMED_BLOCK("initialize cache") {
         obj->cache_lo = cache_lo & -FILE_BLOCK_SIZE;
         obj->cache_hi = (cache_hi + FILE_BLOCK_SIZE - 1) & -FILE_BLOCK_SIZE;
-        obj->cache_data = tb_linker_moar_mem(obj->cache_hi - obj->cache_lo);
+        obj->cache_data = tb_linker_moar_mem(obj, obj->cache_hi - obj->cache_lo);
 
         size_t cache_blocks = (obj->cache_hi - obj->cache_lo) / FILE_BLOCK_SIZE;
         if (cache_blocks <= 16) {
@@ -202,7 +230,17 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             tb_linker_read_req2(l, obj->fd, obj->cache_lo, cache_blocks*FILE_BLOCK_SIZE, obj->cache_data, tb_linker_ack_read);
         } else {
             // Sort the ranges
-            qsort(obj->cache_ranges, dyn_array_length(obj->cache_ranges), sizeof(TB_CacheRange), compare_cache_ranges);
+            CUIK_TIMED_BLOCK("sort") {
+                size_t range_count = dyn_array_length(obj->cache_ranges);
+                // cache_range_sort(obj->cache_ranges, range_count);
+                qsort(obj->cache_ranges, range_count, sizeof(TB_CacheRange), compare_cache_ranges);
+
+                #if 0
+                FOR_N(i, 1, range_count) {
+                    assert(obj->cache_ranges[i - 1].offset <= obj->cache_ranges[i].offset);
+                }
+                #endif
+            }
 
             dyn_array_for(i, obj->cache_ranges) {
                 uint32_t page_start = obj->cache_ranges[i].offset / FILE_BLOCK_SIZE;
@@ -213,7 +251,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
 
             // Allocate bitmaps
             obj->bitmap_size = (cache_blocks + 63) / 64;
-            obj->reserve = tb_linker_moar_mem(obj->bitmap_size * sizeof(uint64_t));
+            obj->reserve = tb_linker_moar_mem(obj, obj->bitmap_size * sizeof(uint64_t));
         }
 
         // setup pointers early
@@ -230,14 +268,9 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     // double usage = (reloc_used / (double) (reloc_hi - reloc_lo)) * 100.0;
     // printf("A %.*s %zu %zu %zu (%.2f %%)\n", (int) obj->name.length, obj->name.data, reloc_lo, reloc_hi, (reloc_hi - reloc_lo) / 4096, usage);
 
-    // associate the debug and pdata with the text
-    if (text_piece && pdata_piece) {
-        tb_linker_associate(l, text_piece, pdata_piece);
-    }
-
     // append all symbols
     size_t sym_count = 0;
-    TB_ObjectSymbol* syms = tb_arena_alloc(&linker_tmp_arena, parser.symbol_count * sizeof(TB_ObjectSymbol));
+    TB_ObjectSymbol* syms = tb_linker_alloc_local(parser.symbol_count * sizeof(TB_ObjectSymbol));
 
     static _Thread_local DynArray(PendingCOMDAT) pending_indices = NULL;
     static _Thread_local DynArray(TB_ObjectSymbol*) weak_syms = NULL;
@@ -297,11 +330,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 COFF_AuxSectionSymbol* comdat_aux = comdat_sections[sym->section_num - 1];
                 TB_ASSERT(sym->type != TB_OBJECT_SYMBOL_WEAK_EXTERN);
                 if (!is_section && comdat_aux) {
-                    if (comdat_aux->selection == 1) {
-                        s->comdat = TB_LINKER_COMDAT_NODUP;
-                    } else {
-                        s->comdat = TB_LINKER_COMDAT_ANY;
-                    }
+                    s->flags |= TB_LINKER_SYMBOL_COMDAT;
                     comdat_sections[sym->section_num - 1] = NULL;
 
                     // private COMDATs always win
@@ -328,7 +357,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             // insert into global symbol table
             if (s != NULL && sym->type != TB_OBJECT_SYMBOL_STATIC) {
                 TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s, true);
-                if (s->comdat != TB_LINKER_COMDAT_NONE) {
+                if (s->flags & TB_LINKER_SYMBOL_COMDAT) {
                     TB_LinkerSectionPiece* p = s->normal.piece;
                     assert(s->tag == TB_LINKER_SYMBOL_NORMAL);
                     assert(p->comdat_parent == &UNKNOWN_LEADER);
@@ -400,7 +429,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
         }
         dyn_array_clear(weak_syms);
     }
-    tb_arena_restore(&linker_tmp_arena, sp);
+    tb_linker_clear_local();
 }
 
 ////////////////////////////////
@@ -435,7 +464,7 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
             break;
         }
 
-        // log_info("directive: %e*s", (int) (end - curr), curr);
+        log_debug("directive: %.*s", (int) (end - curr), curr);
         if (strprefix((const char*) curr, "/merge:", end - curr)) {
             curr += sizeof("/merge:")-1;
 

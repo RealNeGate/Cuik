@@ -48,10 +48,10 @@ static bool fetch_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         obj->process          = process_obj_file;
 
         obj->io_rem = 2;
-        obj->sections = tb_linker_moar_mem(size_of_section_headers);
+        obj->sections = tb_linker_moar_mem(obj, size_of_section_headers);
         tb_linker_read_req(l, file_header_offset + sizeof(header), size_of_section_headers, obj->sections, obj);
 
-        obj->symbol_table = tb_linker_moar_mem(symstr_table_size);
+        obj->symbol_table = tb_linker_moar_mem(obj, symstr_table_size);
         tb_linker_read_req(l, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
         return false;
     }
@@ -61,7 +61,7 @@ static bool fetch_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         #if 0
         // read request
         obj->io_rem = 1;
-        obj->file_bottom = tb_linker_moar_mem(import_size);
+        obj->file_bottom = tb_linker_moar_mem(obj, import_size);
         tb_linker_read_req(l, file_header_offset, import_size, obj->file_bottom, obj);
         return false;
         #endif

@@ -267,8 +267,8 @@ else
     end
 
     if true then
-        cflags  = cflags .." -DCUIK_USE_URING -I/home/linuxbrew/.linuxbrew/include"
-        ldflags = ldflags.." -L/home/linuxbrew/.linuxbrew/lib -luring"
+        cflags  = cflags .." -DCUIK_USE_URING"
+        ldflags = ldflags.." -luring"
     end
 	
     if options.shared then

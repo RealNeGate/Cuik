@@ -55,7 +55,7 @@ static void lazy_import_task(TPool* pool, void** args) {
         *s = (TB_LinkerSymbol){
             .name   = { (const uint8_t*) name, (next - j) - 1 },
             .tag    = TB_LINKER_SYMBOL_LAZY,
-            .lazy   = { lib, lib->members[offset_index] },
+            .lazy   = { NULL, lib, lib->members[offset_index] },
         };
         s = tb_linker_symbol_insert(l, s, true);
         i += 1, j = next;
@@ -112,7 +112,7 @@ static bool fetch_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
 
     // Read the archive up until the end of the longnames
     lib->header.io_rem = 1;
-    lib->second_longnames = tb_linker_moar_mem(file_offset - lib->second_base);
+    lib->second_longnames = tb_linker_moar_mem(&lib->header, file_offset - lib->second_base);
     tb_linker_read_req(l, lib->second_base, file_offset - lib->second_base, lib->second_longnames, &lib->header);
     return false;
 }
@@ -159,6 +159,8 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             abort(); // Unreachable
             #endif
         } else {
+            uint64_t start = __rdtsc();
+
             size_t i = 0, j = 0;
             while (i < lib->symbol_count) {
                 uint16_t offset_index = lib->symbols[i] - 1;
@@ -170,11 +172,17 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 *s = (TB_LinkerSymbol){
                     .name   = { (const uint8_t*) name, (next - j) - 1 },
                     .tag    = TB_LINKER_SYMBOL_LAZY,
-                    .lazy   = { lib, lib->members[offset_index] },
+                    .lazy   = { NULL, lib, lib->members[offset_index] },
                 };
                 s = tb_linker_symbol_insert(l, s, true);
                 i += 1, j = next;
             }
+
+            #if 0
+            double elapsed = cuik_special_time(__rdtsc() - start);
+            double iters = lib->symbol_count;
+            printf("Stats %.*s | %.3f iter/ns\n", (int) lib->header.name.length, lib->header.name.data, elapsed / iters);
+            #endif
         }
     }
 }

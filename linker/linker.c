@@ -108,7 +108,32 @@ void tb_linker_read_imm(int fd, size_t offset, size_t size, void* data) {
 static thread_local char* linker_bump_base;
 static thread_local char* linker_bump_mark;
 
-void* tb_linker_moar_mem(size_t size) {
+static thread_local char* linker_tmp_bump_base;
+static thread_local char* linker_tmp_bump_mark;
+
+void tb_linker_clear_local(void) {
+    log_info("CLEAR %.3f KiB", (linker_tmp_bump_mark - linker_tmp_bump_base) / 1024.0);
+    linker_tmp_bump_mark = linker_tmp_bump_base;
+}
+
+enum { TMP_BUFFER_CAP = 32<<20 };
+void* tb_linker_alloc_local(size_t size) {
+    cuikperf_region_start("alloc", NULL);
+    if (linker_tmp_bump_base == NULL) {
+        linker_tmp_bump_base = cuik__valloc(TMP_BUFFER_CAP);
+        linker_tmp_bump_mark = linker_tmp_bump_base;
+    }
+
+    TB_ASSERT(linker_tmp_bump_mark - linker_tmp_bump_base < TMP_BUFFER_CAP);
+    size = (size + 63) & ~63ull;
+
+    char* ptr = linker_tmp_bump_mark;
+    linker_tmp_bump_mark += size;
+    cuikperf_region_end();
+    return ptr;
+}
+
+void* tb_linker_moar_mem(TB_LinkerObject* obj, size_t size) {
     cuikperf_region_start("alloc", NULL);
     if (linker_bump_base == NULL) {
         linker_bump_base = cuik__valloc(8ull << 30ull);
@@ -121,8 +146,6 @@ void* tb_linker_moar_mem(size_t size) {
     char* ptr = linker_bump_mark;
     linker_bump_mark += size;
     cuikperf_region_end();
-
-    log_debug("moar %.3f KiB", size / 1024.0);
     return ptr;
 }
 
@@ -374,7 +397,7 @@ void tb_linker_process_input(TPool* pool, void** args) {
 }
 
 void tb_linker_issue_prefetch(TB_Linker* l, TB_LinkerObject* obj) {
-    obj->prefetch_page = tb_linker_moar_mem(PREFETCH_BLOCK_SIZE);
+    obj->prefetch_page = tb_linker_moar_mem(obj, PREFETCH_BLOCK_SIZE);
 
     cuikperf_region_start("read_req", NULL);
     tpool_io_read(l->jobs.pool, obj->fd, 0, PREFETCH_BLOCK_SIZE, obj->prefetch_page, tb_linker_add_input_resp, l, obj, NULL);
@@ -387,6 +410,7 @@ void tb_linker_forward_input(TPool* pool, void** args) {
     TB_Linker* l = obj->linker;
     const char* file_name = (const char*) obj->name.data;
     tb_linker_worker_init(obj->linker);
+    log_info("Loading input: %s", file_name);
 
     size_t size;
     int fd = open_file(file_name, &size);
@@ -526,6 +550,7 @@ void tb_linker_complete_appends(TB_Linker* l) {
     bool repeat;
     do {
         tb_linker_barrier(l);
+        break;
 
         log_info("LINKER BARRIER!");
 
@@ -650,8 +675,7 @@ TB_LinkerSymbol* tb_linker_root_symbol(TB_Linker* l, TB_LinkerSymbol* sym) {
     //
     // Defined Non-COMDAT symbols can never be redefined so whatever is in the symbol
     // map is the correct answer
-    if (sym == NULL || (sym->flags & TB_LINKER_SYMBOL_GLOBAL) == 0 ||
-        (sym->tag == TB_LINKER_SYMBOL_NORMAL && sym->comdat == TB_LINKER_COMDAT_NONE)) {
+    if (sym == NULL || (sym->flags & TB_LINKER_SYMBOL_GLOBAL) == 0) {
         return sym;
     }
 
@@ -776,28 +800,23 @@ TB_LinkerSymbol* tb_linker_new_symbol(TB_Linker* l, size_t len, const char* name
     return tb_linker_symbol_insert(l, s, true);
 }
 
-void tb__set_weak_sym(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerSymbol* alt) {
-    TB_LinkerSymbol* old = atomic_load_explicit(&sym->weak_alt, memory_order_acquire);
-    if (old == NULL && atomic_compare_exchange_strong(&sym->weak_alt, &old, alt)) {
-        return;
-    }
-
-    // error if it's not what we wanted because that means there's two weak alts
-    if (old != alt) {
-        // TODO(NeGate): write a good error plz
-        abort();
-    }
-}
-
 void tb_linker_symbol_weak(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerSymbol* alt) {
     log_debug("WEAK %.*s", (int) sym->name.length, sym->name.data);
 
-    TB_LinkerSymbol* next = sym;
-    do {
-        sym = next;
-        tb__set_weak_sym(l, sym, alt);
-        next = symhs_get(&l->symbols, &sym->name);
-    } while (next && sym != next);
+    // there's two symbol types which
+    assert(sym->flags & TB_LINKER_SYMBOL_GLOBAL);
+    if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN || sym->tag == TB_LINKER_SYMBOL_LAZY) {
+        TB_LinkerSymbol* old = atomic_load_explicit(&sym->weak_alt, memory_order_acquire);
+        if (old == NULL && atomic_compare_exchange_strong(&sym->weak_alt, &old, alt)) {
+            return;
+        }
+
+        // error if it's not what we wanted because that means there's two weak alts
+        if (old != alt) {
+            // TODO(NeGate): write a good error plz
+            abort();
+        }
+    }
 }
 
 static const char* tag_name(int tag) {
@@ -820,32 +839,31 @@ static bool tb_linker_symbol_merge(TB_Linker* l, TB_LinkerSymbol* a, TB_LinkerSy
         // just take the earlier symbol, this might count as a duplicate sym error ngl
         return false;
     } else if (a->tag == TB_LINKER_SYMBOL_LAZY || b->tag == TB_LINKER_SYMBOL_LAZY) {
-        // If the symbol is already defined, don't load the lazy one.
-        if (is_symbol_defined(a)) {
-            return false;
-        } else if (is_symbol_defined(b)) {
+        // if one side is defined, we'll use that.
+        //
+        // keep the old symbol since we've triggered the move by the transition
+        // by keeping the old symbol we guarentee that a symbol which is LAZY or
+        // UNDEF first is never replaced by the respective copy (thus keeping the
+        // logic of assigning a weak sym a lot simpler).
+        if (a->tag == TB_LINKER_SYMBOL_UNKNOWN && b->tag == TB_LINKER_SYMBOL_LAZY) {
+            tb_linker_lazy_resolve(l, b);
             return true;
+        } else if (a->tag == TB_LINKER_SYMBOL_LAZY && b->tag == TB_LINKER_SYMBOL_UNKNOWN) {
+            tb_linker_lazy_resolve(l, a);
+            return false;
         } else {
-            // Whichever symbol is lazy gets resolved
-            if (b->tag == TB_LINKER_SYMBOL_LAZY) {
-                tb_linker_lazy_resolve(l, b);
-                return true;
-            } else {
-                assert(a->tag == TB_LINKER_SYMBOL_LAZY);
-                tb_linker_lazy_resolve(l, a);
-                return false;
-            }
+            return is_symbol_defined(b);
         }
     } else if (a->tag == TB_LINKER_SYMBOL_UNKNOWN) {
         // if we're both unresolved then we don't need to do shit yet
         return b->tag != TB_LINKER_SYMBOL_UNKNOWN;
     } else if (b->tag == TB_LINKER_SYMBOL_UNKNOWN) {
         return false;
-    } else if (a->comdat != TB_LINKER_COMDAT_NONE || b->comdat != TB_LINKER_COMDAT_NONE) {
+    } else if ((a->flags | b->flags) & TB_LINKER_SYMBOL_COMDAT) {
         // if only one is COMDAT, we always pick the COMDAT one
-        if (a->comdat == TB_LINKER_COMDAT_NONE) {
+        if ((a->flags & TB_LINKER_SYMBOL_COMDAT) == 0) {
             return true;
-        } else if (b->comdat == TB_LINKER_COMDAT_NONE) {
+        } else if ((b->flags & TB_LINKER_SYMBOL_COMDAT) == 0) {
             return false;
         } else {
             // COMDAT, we need to decide which of these lives but for now we don't care.
@@ -876,6 +894,7 @@ static bool tb_linker_symbol_merge(TB_Linker* l, TB_LinkerSymbol* a, TB_LinkerSy
 }
 
 void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym) {
+    cuikperf_region_start("lazy resolve", NULL);
     TB_LinkerArchive* lib = sym->lazy.lib;
     uint32_t offset = sym->lazy.offset;
 
@@ -892,26 +911,20 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym) {
     TB_LinkerObject* k = objhs_intern(&l->objects, obj);
     if (k != obj) {
         tb_arena_free(&linker_perm_arena, k, sizeof(TB_LinkerObject));
+        cuikperf_region_end();
         return;
     }
 
-    log_debug("Load object file at %d:%zu (for %.*s)", lib->header.fd, offset, (int) sym->name.length, sym->name.data);
+    #if 0
+    log_info("Load object file at %d:%zu (for %.*s)", lib->header.fd, offset, (int) sym->name.length, sym->name.data);
 
     l->jobs.count += 1;
     obj->io_rem = 1;
-    obj->prefetch_page = tb_linker_moar_mem(PREFETCH_BLOCK_SIZE);
+    obj->prefetch_page = tb_linker_moar_mem(obj, PREFETCH_BLOCK_SIZE);
     tb_linker_read_req(obj->linker, offset, PREFETCH_BLOCK_SIZE, obj->prefetch_page, obj);
-
-    #if 0
-    size_t slash = 0;
-    FOR_REV_N(i, 0, obj->name.length) {
-        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
-            slash = i + 1;
-            break;
-        }
-    }
-    log_debug("Loaded %.*s for %.*s", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
     #endif
+
+    cuikperf_region_end();
 }
 
 // if owned is true, the sym can be deleted if it's not inserted
@@ -922,10 +935,10 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* new_sym,
     // printf("%.*s    %"PRIx32"\n", (int) sym->name.length, sym->name.data, tb__murmur3_32(sym->name.data, sym->name.length) & 65535);
 
     #if 0 // For debugging
-    static const char sss[] = "__scrt_exe_initialize_mta";
+    static const char sss[] = "?nothrow@std@@3Unothrow_t@1@B";
     if (sym->name.length == sizeof(sss)-1 && memcmp((const char*) sym->name.data, sss, sizeof(sss)-1) == 0) {
         mtx_lock(&l->lock);
-        printf("INSERT %.*s %d (%s)", (int) sym->name.length, sym->name.data, sym->comdat, tag_name(sym->tag));
+        printf("INSERT %.*s (%s)", (int) sym->name.length, sym->name.data, tag_name(sym->tag));
 
         TB_LinkerObject* obj = NULL;
         if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
@@ -950,12 +963,8 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* new_sym,
     }
     #endif
 
-    // cuikperf_region_start("TX", NULL);
     TB_LinkerSymbol* old;
     NBHM_Tx tx = symhs_tx_begin(&l->symbols, new_sym, false);
-
-    new_sym->hash_cache = tx.h;
-
     do {
         // if the merge is false, meaning our new symbol is
         // ordered before the current one, we don't need to
@@ -975,16 +984,9 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* new_sym,
             if (old_root == NULL) {
                 atomic_compare_exchange_strong(&old->root, &old_root, new_sym);
             }
-
-            // migrate the weak alternative up
-            TB_LinkerSymbol* weak_alt = atomic_load_explicit(&old->weak_alt, memory_order_acquire);
-            if (weak_alt != NULL) {
-                tb__set_weak_sym(l, new_sym, weak_alt);
-            }
         }
     } while (!symhs_tx_commit(&tx, new_sym));
     symhs_tx_end(&l->symbols);
-    // cuikperf_region_end();
 
     // I think all calls have the "owned" as true? check that out later and maybe
     // decide we don't need it
@@ -1273,7 +1275,7 @@ bool tb_linker_layout(TB_Linker* l) {
 ////////////////////////////////
 // Mark phase
 ////////////////////////////////
-enum { MARK_WORKLIST_SIZE = 64 };
+enum { MARK_WORKLIST_SIZE = 128 };
 
 typedef struct {
     int top;
@@ -1474,23 +1476,26 @@ static bool tb_linker_read_cached(TB_Linker* l, TB_LinkerSectionPiece* p, size_t
         uint64_t mask = (UINT64_MAX >> (64 - (bits_hi - bits_lo))) << bits_lo;
         // total_requests += __builtin_popcountll(mask);
 
-        // Issue individual block reads on any of the missing blocks, when they're done
-        // they'll trigger the completion task for the piece.
+        // Reserve however much we can at once, then we divvy up block reads.
         uint64_t curr = obj->reserve[i];
         while ((curr & mask) != mask) {
-            uint64_t pending_i = __builtin_ffsll(~curr & mask) - 1;
-            uint64_t next      = curr | (1ull << pending_i);
-            uint64_t block     = i*64 + pending_i;
+            uint64_t next = curr | mask;
             if (atomic_compare_exchange_strong(&obj->reserve[i], &curr, next)) {
-                size_t offset = obj->cache_lo + block*FILE_BLOCK_SIZE;
-                char* buf = &obj->cache_data[block*FILE_BLOCK_SIZE];
+                uint64_t fresh = ~curr & mask;
+                while (fresh) {
+                    size_t j = __builtin_ffsll(fresh) - 1;
+                    uint64_t block = i*64 + j;
 
-                // printf("FILE CACHE READ: %d:%zu (BLK %lu)\n", obj->fd, offset, block);
-                // total_reads += 1;
+                    size_t offset = obj->cache_lo + block*FILE_BLOCK_SIZE;
+                    char* buf = &obj->cache_data[block*FILE_BLOCK_SIZE];
 
-                CUIK_TIMED_BLOCK("issue") {
-                    l->jobs.count += 1;
-                    tb_linker_read_req3(l, obj->fd, offset, FILE_BLOCK_SIZE, buf, tb_linker_read_block, obj, (void*) block);
+                    // printf("FILE CACHE READ: %d:%zu (BLK %lu)\n", obj->fd, offset, block);
+                    // total_reads += 1;
+
+                    CUIK_TIMED_BLOCK("issue") {
+                        l->jobs.count += 1;
+                        tb_linker_read_req3(l, obj->fd, offset, FILE_BLOCK_SIZE, buf, tb_linker_read_block, obj, (void*) block);
+                    }
                 }
             }
         }
@@ -1572,7 +1577,7 @@ static void tb_linker_mark_job(TPool* pool, void** args) {
 
     while (ctx.top > 0) {
         TB_LinkerSectionPiece* p = ctx.elems[--ctx.top];
-        cuikperf_region_start("v", NULL);
+        // cuikperf_region_start("v", NULL);
 
         if (p->flags & TB_LINKER_PIECE_COMDAT) {
             assert(p->comdat_parent == p);
@@ -1628,13 +1633,11 @@ static void tb_linker_mark_job(TPool* pool, void** args) {
 
         // associated section
         if (dyn_array_length(p->assoc)) {
-            cuikperf_region_start("assoc", NULL);
             dyn_array_for(i, p->assoc) {
                 tb_linker_mark_push(&ctx, l, p->assoc[i]);
             }
-            cuikperf_region_end();
         }
-        cuikperf_region_end();
+        // cuikperf_region_end();
     }
 
     cuikperf_region_end();

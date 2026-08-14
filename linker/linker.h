@@ -20,6 +20,16 @@
 #include "../tb/tb_internal.h"
 #endif
 
+#if 0 // CONFIG_HAS_TB
+#define cuikperf_region_start(...) (0)
+#define cuikperf_region_end() (0)
+
+#undef CUIK_TIMED_BLOCK
+#undef CUIK_TIMED_BLOCK_ARGS
+#define CUIK_TIMED_BLOCK(label) for (uint64_t __i = (0); __i < 1; __i++)
+#define CUIK_TIMED_BLOCK_ARGS(label, extra) for (uint64_t __i = (0); __i < 1; __i++)
+#endif
+
 enum {
     // 60 (archive member header) + 20 (COFF header), rounded to the next pow2
     PREFETCH_BLOCK_SIZE = 256,
@@ -288,6 +298,7 @@ typedef enum TB_LinkerSymbolFlags {
     TB_LINKER_SYMBOL_WEAK   = 1,
     TB_LINKER_SYMBOL_USED   = 2,
     TB_LINKER_SYMBOL_GLOBAL = 4,
+    TB_LINKER_SYMBOL_COMDAT = 8,
 } TB_LinkerSymbolFlags;
 
 typedef enum {
@@ -298,8 +309,6 @@ typedef enum {
     // pick whichever (for threading reasons we'll use
     // the piece's order info for consistency).
     TB_LINKER_COMDAT_ANY,
-
-    TB_LINKER_COMDAT_ASSOCATIVE,
 } TB_LinkerComdatRule;
 
 typedef struct {
@@ -316,23 +325,22 @@ typedef struct {
 // these and used for all kinds of relocation resolution.
 struct TB_LinkerSymbol {
     TB_Slice name;
-
-    TB_LinkerSymbolTag  tag;
-    TB_LinkerComdatRule comdat;
+    TB_LinkerSymbolTag tag;
 
     struct {
         _Atomic(TB_LinkerSymbolFlags) flags;
-        _Atomic(TB_LinkerSymbol*) weak_alt;
 
         // cache during the mark and export phase to
         // avoid looking up existing entries again.
         _Atomic(TB_LinkerSymbol*) root;
     };
 
-    // speeding up lookups on the global symbol table
-    uint32_t hash_cache;
-
     union {
+        // for unknown syms (and lazy symbols)
+        struct {
+            _Atomic(TB_LinkerSymbol*) weak_alt;
+        };
+
         // for normal symbols
         struct {
             TB_LinkerSectionPiece* piece;
@@ -343,6 +351,7 @@ struct TB_LinkerSymbol {
         uint32_t imagebase;
 
         struct {
+            _Atomic(TB_LinkerSymbol*) weak_alt;
             TB_LinkerArchive* lib;
             uint32_t offset;
         } lazy;
@@ -522,4 +531,8 @@ void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void*
 void tb_linker_read_req3(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_io_task_proc* fn, void* arg1, void* arg2);
 
 void tb_linker_worker_init(TB_Linker* l);
-void* tb_linker_moar_mem(size_t size);
+void* tb_linker_moar_mem(TB_LinkerObject* obj, size_t size);
+
+void tb_linker_clear_local(void);
+void* tb_linker_alloc_local(size_t size);
+
