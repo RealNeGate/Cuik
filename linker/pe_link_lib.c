@@ -112,8 +112,7 @@ static bool fetch_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
 
     // Read the archive up until the end of the longnames
     lib->header.io_rem = 1;
-    lib->second_longnames = tb_linker_moar_mem(&lib->header, file_offset - lib->second_base);
-    tb_linker_read_req(l, lib->second_base, file_offset - lib->second_base, lib->second_longnames, &lib->header);
+    tb_linker_async_block_read(l, lib->second_base, file_offset - lib->second_base, (void**) &lib->second_longnames, &lib->header);
     return false;
 }
 
@@ -159,7 +158,9 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             abort(); // Unreachable
             #endif
         } else {
-            uint64_t start = __rdtsc();
+            // uint64_t start = __rdtsc();
+            size_t last_page = 0;
+            size_t cache_lo = SIZE_MAX, cache_hi = 0;
 
             size_t i = 0, j = 0;
             while (i < lib->symbol_count) {
@@ -168,11 +169,19 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 size_t next = ideally_fast_skip16(strtab, 1, j);
                 // size_t len = ideally_fast_strlen(name);
 
+                size_t obj_base = lib->members[offset_index];
+                if ((obj_base / 4096) != last_page) {
+                    last_page = (obj_base / 4096);
+
+                    cache_lo = TB_MIN(cache_lo, last_page);
+                    cache_hi = TB_MAX(cache_hi, last_page);
+                }
+
                 TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
                 *s = (TB_LinkerSymbol){
                     .name   = { (const uint8_t*) name, (next - j) - 1 },
                     .tag    = TB_LINKER_SYMBOL_LAZY,
-                    .lazy   = { NULL, lib, lib->members[offset_index] },
+                    .lazy   = { NULL, lib, obj_base },
                 };
                 s = tb_linker_symbol_insert(l, s, true);
                 i += 1, j = next;

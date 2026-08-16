@@ -48,11 +48,8 @@ static bool fetch_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         obj->process          = process_obj_file;
 
         obj->io_rem = 2;
-        obj->sections = tb_linker_moar_mem(obj, size_of_section_headers);
-        tb_linker_read_req(l, file_header_offset + sizeof(header), size_of_section_headers, obj->sections, obj);
-
-        obj->symbol_table = tb_linker_moar_mem(obj, symstr_table_size);
-        tb_linker_read_req(l, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
+        tb_linker_async_block_read(l, file_header_offset + sizeof(header), size_of_section_headers, (void**) &obj->sections, obj);
+        tb_linker_async_block_read(l, file_header_offset + header.symbol_table, symstr_table_size, (void**) &obj->symbol_table, obj);
         return false;
     }
 

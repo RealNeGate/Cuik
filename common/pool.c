@@ -162,6 +162,9 @@ void _tpool_queue_push(TPool *pool, TPool_Queue *queue, tpool_task_proc* fn, int
     ssize_t top                = atomic_load_explicit(&queue->top,    memory_order_acquire);
     TPool_RingBuffer *cur_ring = atomic_load_explicit(&queue->ring,   memory_order_relaxed);
 
+    TPOOL_ATOMIC_FUTEX_INC(pool->tasks_left);
+    TPOOL_ATOMIC_FUTEX_INC(pool->tasks_available);
+
     ssize_t size = bot - top;
     if (size > (cur_ring->size - 1)) {
         // Queue is full
@@ -176,9 +179,6 @@ void _tpool_queue_push(TPool *pool, TPool_Queue *queue, tpool_task_proc* fn, int
 
     atomic_thread_fence(memory_order_release);
     atomic_store_explicit(&queue->bottom, bot + 1, memory_order_relaxed);
-
-    TPOOL_ATOMIC_FUTEX_INC(pool->tasks_left);
-    TPOOL_ATOMIC_FUTEX_INC(pool->tasks_available);
 
     #if 1
     // Only broadcast if there's sleepers, this is probably not the best way to handle ngl
@@ -351,11 +351,23 @@ int _tpool_io_worker(void *ptr) {
         }
 
         // wait for reads to finish
-        cuikperf_region_start("pread", NULL);
+        #if 0
+        cuikperf_region_start("touch", NULL);
         TPool_ReadReq req = queue->entries[h % POOL_IO_DEPTH];
-        pread(req.fd, (void*) req.data, req.size, req.offset);
+        // int res = mprotect(req.data, req.size, PROT_READ);
+        volatile char* ptr = req.data;
+        for (size_t i = 0; i < req.size; i += 4096) {
+            int x = ptr[i];
+        }
         stats_requested_size += req.size, stats_requests += 1;
         cuikperf_region_end();
+        #else
+        cuikperf_region_start("pread", NULL);
+        TPool_ReadReq req = queue->entries[h % POOL_IO_DEPTH];
+        pread(req.fd, req.data, req.size, req.offset);
+        stats_requested_size += req.size, stats_requests += 1;
+        cuikperf_region_end();
+        #endif
 
         queue->io_head += 1;
         futex_signal(&queue->io_head);
@@ -409,7 +421,7 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
         return;
     }
 
-    bool back = false;
+    int64_t tasks_left = TPOOL_LOAD(pool->tasks_left);
 
     TPool_Task task;
     size_t old_finished;
@@ -439,12 +451,15 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
             task.do_work(pool, task.args);
             finished_tasks += 1;
         }
-
-        atomic_fetch_sub(&pool->tasks_left, finished_tasks);
     } while (old_finished != finished_tasks);
 
-    if (finished_tasks > 0 && !TPOOL_LOAD(pool->tasks_left)) {
-        futex_signal(&pool->tasks_left);
+    if (finished_tasks > 0) {
+        tasks_left = atomic_fetch_sub(&pool->tasks_left, finished_tasks) - finished_tasks;
+        assert(tasks_left >= 0);
+
+        if (tasks_left == 0) {
+            futex_signal(&pool->tasks_left);
+        }
     }
 
     // If there's still work somewhere and we don't have it, steal it.
@@ -483,9 +498,7 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
                 }
 
                 task.do_work(pool, task.args);
-                TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
-
-                if (!TPOOL_LOAD(pool->tasks_left)) {
+                if (TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left) == 1) {
                     futex_signal(&pool->tasks_left);
                 }
                 goto work_start;
@@ -558,6 +571,9 @@ void tpool_io_prep(TPool* pool) {
 
 void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, tpool_io_task_proc* fn, void* arg0, void* arg1, void* arg2) {
     tpool_io_prep(pool);
+
+    assert((offset & 511) == 0);
+    assert((size   & 511) == 0);
 
     TPool_Thread* thread = &pool->threads[tpool_current_thread_idx];
     const uint64_t top_bit = 1ull << 63ull;
@@ -661,7 +677,6 @@ void tpool_wait_for_jobs(TPool *pool, Futex* done, Futex* count) {
             break;
         }
 
-        sleep(1);
         // assert(rem_tasks != 0);
         // futex_wait(&pool->tasks_left, rem_tasks);
     }

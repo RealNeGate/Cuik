@@ -776,6 +776,15 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         return false;
     }
 
+    if (0) {
+        tb_linker_print_map(l);
+    }
+
+    if (1) {
+        cuikperf_region_end();
+        return false;
+    }
+
     PE_ImageDataDirectory imp_dir, iat_dir;
     COFF_ImportDirectory* import_dirs;
     CUIK_TIMED_BLOCK("generate imports") {
@@ -856,15 +865,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             l->main_reloc->buffer = relocs.data;
             l->main_reloc->buffer_size = relocs.count;
         }
-    }
-
-    if (0) {
-        tb_linker_print_map(l);
-    }
-
-    if (1) {
-        cuikperf_region_end();
-        return false;
     }
 
     TB_LinkerSegment* text = tb_linker_find_segment(l, ".text");

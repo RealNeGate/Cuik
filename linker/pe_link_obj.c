@@ -9,8 +9,7 @@ static void pe_linker_parse_directives(TPool* pool, void** args);
 static bool pe_linker_parse_import(TB_Linker* l, TB_Slice content);
 
 static void pe_linker_parse_directives_io(TPool* pool, TPool_ReadReq* req) {
-    void* args[3] = { req->args[0], req->data, ((char*)req->data) + req->size };
-    tpool_io_forward(pool, true, pe_linker_parse_directives, 3, args);
+    tpool_io_forward(pool, true, pe_linker_parse_directives, 3, req->args);
 }
 
 static int obj_symbol_cmp(const void* a, const void* b) {
@@ -91,12 +90,10 @@ static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         obj->sections = (uint8_t*) &prefetch.data[sizeof(COFF_FileHeader)];
     } else {
         obj->io_rem = 2;
-        obj->sections = tb_linker_moar_mem(obj, size_of_section_headers);
-        tb_linker_read_req(l, file_header_offset + sizeof(COFF_FileHeader), size_of_section_headers, obj->sections, obj);
+        tb_linker_read_req(l, obj->file, file_header_offset + sizeof(COFF_FileHeader), size_of_section_headers, (void**) &obj->sections, obj);
     }
 
-    obj->symbol_table = tb_linker_moar_mem(obj, symstr_table_size);
-    tb_linker_read_req(l, file_header_offset + header.symbol_table, symstr_table_size, obj->symbol_table, obj);
+    tb_linker_read_req(l, obj->file, file_header_offset + header.symbol_table, symstr_table_size, (void**) &obj->symbol_table, obj);
     return false;
 }
 
@@ -131,6 +128,8 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     size_t cache_lo = SIZE_MAX, cache_hi = 0;
     uint64_t order = obj->time;
     TB_LinkerSymbol** symbol_map = tb_arena_alloc(&linker_perm_arena, parser.symbol_count * sizeof(TB_LinkerSymbol*));
+
+    TB_LinkerSection* last_sec = NULL;
     CUIK_TIMED_BLOCK("parse sections") {
         FOR_N(i, 0, parser.section_count) {
             COFF_SectionHeader* sec = &sections[i];
@@ -144,18 +143,22 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 sec2piece[i] = NULL;
 
                 if (sec->raw_data_size != 0) {
-                    uint8_t* buf = tb_linker_moar_mem(obj, sec->raw_data_size);
-
+                    __builtin_debugtrap();
                     // Fork out a parallel task
-                    l->jobs.count += 1;
-                    tb_linker_read_req2(l, obj->fd, file_header_offset + sec->raw_data_pos, sec->raw_data_size, buf, pe_linker_parse_directives_io);
+                    // l->jobs.count += 1;
+                    // tb_linker_read_req2(l, obj->fd, file_header_offset + sec->raw_data_pos, sec->raw_data_size, NULL, obj, pe_linker_parse_directives_io);
                 }
                 continue;
             }
 
             // remove all the alignment flags, they don't appear in linker sections
             uint32_t sec_flags = sec->characteristics;
-            TB_LinkerSection* ls = tb_linker_find_or_create_section(l, s_name.length, (const char*) s_name.data, sec_flags & ~0x00F00000);
+            uint32_t flags = sec_flags & ~0x00F00000;
+
+            if (last_sec == NULL || last_sec->name.length != s_name.length || memcmp(last_sec->name.data, s_name.data, s_name.length) != 0) {
+                last_sec = tb_linker_find_or_create_section(l, s_name.length, (const char*) s_name.data, flags);
+            }
+            TB_LinkerSection* ls = last_sec;
 
             if (sec_flags & (IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_MEM_DISCARDABLE)) {
                 ls->generic_flags |= TB_LINKER_SECTION_DISCARD;
@@ -218,16 +221,16 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
 
     // Initialize the block cache
     CUIK_TIMED_BLOCK("initialize cache") {
+        uint8_t* raw_map = obj->raw_map;
         obj->cache_lo = cache_lo & -FILE_BLOCK_SIZE;
         obj->cache_hi = (cache_hi + FILE_BLOCK_SIZE - 1) & -FILE_BLOCK_SIZE;
-        obj->cache_data = tb_linker_moar_mem(obj, obj->cache_hi - obj->cache_lo);
+        obj->cache_data = &raw_map[obj->cache_lo];
 
         size_t cache_blocks = (obj->cache_hi - obj->cache_lo) / FILE_BLOCK_SIZE;
         if (cache_blocks <= 16) {
             obj->fully_resident = true;
-
             l->jobs.count += 1;
-            tb_linker_read_req2(l, obj->fd, obj->cache_lo, cache_blocks*FILE_BLOCK_SIZE, obj->cache_data, tb_linker_ack_read);
+            tb_linker_read_req2(l, obj->fd, obj->cache_lo, cache_blocks*FILE_BLOCK_SIZE, NULL, obj, tb_linker_ack_read);
         } else {
             // Sort the ranges
             CUIK_TIMED_BLOCK("sort") {
@@ -259,7 +262,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             TB_LinkerSectionPiece* p = sec2piece[i];
             if (p != NULL) {
                 if (p->reloc_size > 0) {
-                    p->relocs = &obj->cache_data[p->reloc_pos - obj->cache_lo];
+                    p->relocs = &raw_map[p->reloc_pos];
                 }
             }
         }
@@ -464,7 +467,7 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
             break;
         }
 
-        log_debug("directive: %.*s", (int) (end - curr), curr);
+        // log_info("directive: %.*s", (int) (end - curr), curr);
         if (strprefix((const char*) curr, "/merge:", end - curr)) {
             curr += sizeof("/merge:")-1;
 

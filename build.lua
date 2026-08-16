@@ -266,7 +266,7 @@ else
         ldflags = ldflags.." -fsanitize=address"
     end
 
-    if true then
+    if false then
         cflags  = cflags .." -DCUIK_USE_URING"
         ldflags = ldflags.." -luring"
     end

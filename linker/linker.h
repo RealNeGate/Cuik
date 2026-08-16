@@ -43,6 +43,60 @@ typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 typedef struct TB_LinkerObject TB_LinkerObject;
 typedef struct TB_LinkerArchive TB_LinkerArchive;
 
+enum {
+    BCACHE_BUCKET_COUNT = 8,
+    BCACHE_BUCKET_SIZE  = 8,
+};
+
+typedef struct {
+    _Atomic(uint64_t) reserve;
+    _Atomic(uint64_t) commit;
+} BCache_Row;
+
+typedef struct {
+    int fd;
+    size_t size;
+    // Virtual address range for the file, we're managing our own
+    // cache.
+    uint8_t* raw_map;
+    // Track which blocks are ready in this request
+    _Atomic BCache_Row rows[];
+} BCache_File;
+
+// None of our input files are allowed to
+// be bigger than 4GiB at the moment... i think?
+typedef struct {
+    int fd, slot;
+    // Exact range
+    uint32_t offset, size;
+    // Task
+    tpool_io_task_proc* fn;
+    void* arg;
+    // Tally
+    _Atomic int io_rem;
+    // Track which blocks are ready in this request
+    _Atomic uint64_t bits[];
+} BCache_Entry;
+
+typedef struct {
+    _Atomic uint64_t generation;
+    _Atomic uint64_t claimed;
+    _Atomic(BCache_Entry*) entries[BCACHE_BUCKET_SIZE];
+} BCache_Bucket;
+
+// block cache, we're not depending on the OS for file caching so
+// we need an approach to avoiding duplicate block reads.
+typedef struct {
+    // just a set of all blocks we have loaded
+    NBHM resident_blocks;
+
+    // Each bucket is a separate wait list hashed by block
+    // address bits, the hope is that we can quickly enqueue
+    // to the list and do other work while we want for the read
+    // to come back.
+    BCache_Bucket buckets[BCACHE_BUCKET_COUNT];
+} BCache;
+
 typedef struct {
     // relative to the FD
     uint32_t offset;
@@ -68,7 +122,7 @@ struct TB_LinkerObject {
     void (*process)(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset);
 
     struct {
-        int fd;
+        BCache_File* file;
         size_t offset;
         size_t size;
 
@@ -87,6 +141,8 @@ struct TB_LinkerObject {
         size_t section_count;
         size_t symbol_table_pos;
         uint8_t* symbol_table;
+
+        BCache_Entry* request[2];
     };
 
     struct {
@@ -99,7 +155,7 @@ struct TB_LinkerObject {
         // block as another.
         uint64_t cache_lo;
         uint64_t cache_hi;
-        char* cache_data;
+        uint8_t* cache_data;
 
         // Tracks the sorted ranges
         DynArray(TB_CacheRange) cache_ranges;
@@ -162,10 +218,7 @@ typedef struct TB_LinkerReloc {
 // it's a linked list so i can do dumb insertion while parsing the pieces, once
 // we're doing layouting a sorted array will be constructed.
 struct TB_LinkerSectionPiece {
-    union {
-        _Atomic(TB_LinkerSectionPiece*) next;
-        TB_LinkerSectionPiece* next2;
-    };
+    _Atomic(TB_LinkerSectionPiece*) next;
 
     enum {
         // doesn't get written to the image, just describes virtual memory
@@ -180,11 +233,13 @@ struct TB_LinkerSectionPiece {
         PIECE_PDATA,
     } kind;
 
+    _Atomic(TB_LinkerPieceFlags) flags;
+
     TB_LinkerSection* parent;
     TB_LinkerObject* obj;
 
     // offset wrt the final file.
-    size_t offset, size, align_log2;
+    uint32_t offset, size, align_log2;
     // for consistent layout (since we're doing so much parallel stuff)
     uint64_t order;
 
@@ -195,20 +250,15 @@ struct TB_LinkerSectionPiece {
     // mostly compact table from per-file symbol index -> symbol (some
     // indices are NULL because they map to COFF aux data)
     TB_LinkerSymbol** symbol_map;
-    // object-file specific
-    void* section_header;
 
     // points to where the object-file specific relocation data lies
-    size_t reloc_count;
-    size_t reloc_size;
-    size_t reloc_pos;
-
-    void* relocs;
-
+    uint32_t reloc_count;
+    uint32_t reloc_size;
+    uint32_t reloc_pos;
     // how many data bytes
     uint32_t buffer_size;
 
-    _Atomic(TB_LinkerPieceFlags) flags;
+    void* relocs;
 
     union {
         // kind=PIECE_FILE
@@ -454,6 +504,8 @@ struct TB_Linker {
     DynArray(TB_LinkerCmd) alternate_names;
     DynArray(TB_LinkerCmd) merges;
 
+    BCache bcache;
+
     struct {
         TPool* pool;
 
@@ -525,9 +577,10 @@ bool tb_linker_layout(TB_Linker* l);
 void tb_linker_print_map(TB_Linker* l);
 void tb_linker_complete_appends(TB_Linker* l);
 
+void tb_linker_read_req(TB_Linker* l, BCache_File* file, size_t offset, size_t size, void** buffer, TB_LinkerObject* obj);
+
 void tb_linker_read_imm(int fd, size_t offset, size_t count, void* data);
-void tb_linker_read_req(TB_Linker* l, size_t offset, size_t size, void* buffer, TB_LinkerObject* obj);
-void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_io_task_proc* fn);
+void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void** buffer, TB_LinkerObject* obj, tpool_io_task_proc* fn);
 void tb_linker_read_req3(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_io_task_proc* fn, void* arg1, void* arg2);
 
 void tb_linker_worker_init(TB_Linker* l);
