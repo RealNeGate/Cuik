@@ -8,8 +8,13 @@ typedef struct {
 static void pe_linker_parse_directives(TPool* pool, void** args);
 static bool pe_linker_parse_import(TB_Linker* l, TB_Slice content);
 
-static void pe_linker_parse_directives_io(TPool* pool, TPool_ReadReq* req) {
-    tpool_io_forward(pool, true, pe_linker_parse_directives, 3, req->args);
+static void pe_linker_parse_directives_io(TB_Linker* l, void* arg, TB_Slice content, bool io_thread) {
+    void* args[3] = { l, (uint8_t*) content.data, (uint8_t*) content.data + content.length };
+    if (io_thread) {
+        tpool_io_forward(l->jobs.pool, true, pe_linker_parse_directives, 3, args);
+    } else {
+        tpool_add_task2(l->jobs.pool, pe_linker_parse_directives, 3, args);
+    }
 }
 
 static int obj_symbol_cmp(const void* a, const void* b) {
@@ -19,57 +24,9 @@ static int obj_symbol_cmp(const void* a, const void* b) {
     return sym_a->ordinal - sym_b->ordinal;
 }
 
-static void tb_linker_ack_read(TPool* pool, TPool_ReadReq* req) {
-    tb_linker_job_done(req->args[0]);
-}
-
-static int compare_cache_ranges(const void* a, const void* b) {
-    const TB_CacheRange* aa = (const TB_CacheRange*) a;
-    const TB_CacheRange* bb = (const TB_CacheRange*) b;
-    return aa->offset - bb->offset;
-}
-
-static void cache_range_sort2(TB_CacheRange* a, size_t left, size_t right, size_t end, TB_CacheRange* b) {
-    size_t i = left;
-    size_t j = right;
-    FOR_N(k, left, end) {
-        if (i < right && (j >= end || a[i].offset <= a[j].offset)) {
-            b[k] = a[i];
-            i = i + 1;
-        } else {
-            b[k] = a[j];
-            j = j + 1;
-        }
-    }
-}
-
-static void cache_range_sort(TB_CacheRange* ranges, size_t n) {
-    TB_CacheRange* dst = ranges;
-
-    // Alloc temp array
-    TB_CacheRange* other = tb_linker_alloc_local(n * sizeof(TB_CacheRange));
-    for (int width = 1; width < n; width *= 2) {
-        for (int i = 0; i < n; i = i + 2*width) {
-            int right = i + width;
-            int end = i + 2*width;
-            if (right > n) { right = n; }
-            if (end > n)   { end   = n; }
-            cache_range_sort2(ranges, i, right, end, other);
-        }
-
-        // swap ranges and other
-        TB_CacheRange* tmp = ranges;
-        ranges = other;
-        other = tmp;
-    }
-
-    if (dst != ranges) {
-        memcpy(dst, ranges, n * sizeof(TB_CacheRange));
-    }
-}
-
 static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
     assert(prefetch.length >= sizeof(COFF_FileHeader));
+    BCache_File* file = obj->file;
 
     // Object file:
     //   Load symbol table and string table (which takes up the remainder of the
@@ -82,6 +39,7 @@ static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
     obj->symbol_count     = header.symbol_count;
     obj->symbol_table_pos = header.symbol_table;
     obj->section_count    = header.section_count;
+    assert(sizeof(COFF_FileHeader) + size_of_section_headers <= obj->size);
 
     if (sizeof(COFF_FileHeader) + size_of_section_headers <= prefetch.length) {
         // File header & section headers fit within the prefetch? cool, don't
@@ -90,22 +48,20 @@ static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         obj->sections = (uint8_t*) &prefetch.data[sizeof(COFF_FileHeader)];
     } else {
         obj->io_rem = 2;
-        tb_linker_read_req(l, obj->file, file_header_offset + sizeof(COFF_FileHeader), size_of_section_headers, (void**) &obj->sections, obj);
+        tb_linker_read_req(l, file, file_header_offset + sizeof(COFF_FileHeader), size_of_section_headers, (void**) &obj->sections, obj, NULL);
     }
 
-    tb_linker_read_req(l, obj->file, file_header_offset + header.symbol_table, symstr_table_size, (void**) &obj->symbol_table, obj);
+    tb_linker_read_req(l, file, file_header_offset + header.symbol_table, symstr_table_size, (void**) &obj->symbol_table, obj, NULL);
     return false;
 }
 
 static TB_LinkerSectionPiece UNKNOWN_LEADER;
 static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
-    /* if (obj->fetch != fetch_obj_file) {
-    __builtin_debugtrap();
-    } */
+    BCache_File* file = obj->file;
 
     size_t symbol_size      = obj->is_big ? sizeof(COFF_BigSymbol) : sizeof(COFF_Symbol);
     TB_COFF_Parser parser   = { obj->name, .is_big = obj->is_big };
-    size_t string_table_pos = obj->symbol_count * symbol_size;
+    size_t string_table_pos = obj->symbol_table_pos + obj->symbol_count*symbol_size;
 
     parser.symbol_count     = obj->symbol_count;
     parser.symbol_table_pos = obj->symbol_table_pos;
@@ -116,7 +72,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     };
     parser.string_table = (TB_Slice){
         .length = obj->size - string_table_pos,
-        .data   = &obj->symbol_table[string_table_pos],
+        .data   = &obj->symbol_table[parser.symbol_table.length],
     };
 
     COFF_SectionHeader* sections = (COFF_SectionHeader*) obj->sections;
@@ -125,10 +81,10 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
     TB_LinkerSectionPiece** sec2piece = tb_linker_alloc_local(parser.section_count * sizeof(TB_LinkerSectionPiece*));
     COFF_AuxSectionSymbol** comdat_sections = tb_linker_alloc_local(parser.section_count * sizeof(COFF_AuxSectionSymbol*));
 
-    size_t cache_lo = SIZE_MAX, cache_hi = 0;
     uint64_t order = obj->time;
     TB_LinkerSymbol** symbol_map = tb_arena_alloc(&linker_perm_arena, parser.symbol_count * sizeof(TB_LinkerSymbol*));
 
+    uint8_t* raw_map = obj->file->raw_map;
     TB_LinkerSection* last_sec = NULL;
     CUIK_TIMED_BLOCK("parse sections") {
         FOR_N(i, 0, parser.section_count) {
@@ -143,10 +99,9 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 sec2piece[i] = NULL;
 
                 if (sec->raw_data_size != 0) {
-                    __builtin_debugtrap();
                     // Fork out a parallel task
-                    // l->jobs.count += 1;
-                    // tb_linker_read_req2(l, obj->fd, file_header_offset + sec->raw_data_pos, sec->raw_data_size, NULL, obj, pe_linker_parse_directives_io);
+                    l->jobs.count += 1;
+                    tb_linker_read_req(l, file, file_header_offset + sec->raw_data_pos, sec->raw_data_size, NULL, obj, pe_linker_parse_directives_io);
                 }
                 continue;
             }
@@ -174,16 +129,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
                 p->kind        = PIECE_FILE;
                 p->file_offset = file_header_offset + sec->raw_data_pos;
                 p->buffer_size = sec->raw_data_size;
-                p->fd          = obj->fd;
-
-                if (p->buffer_size) {
-                    size_t end_of_data = p->file_offset + p->buffer_size;
-                    cache_lo = TB_MIN(cache_lo, p->file_offset);
-                    cache_hi = TB_MAX(cache_hi, end_of_data);
-
-                    TB_CacheRange r = { p->file_offset, p->buffer_size };
-                    dyn_array_put(obj->cache_ranges, r);
-                }
+                p->file        = obj->file;
             }
             if (sec_flags & 0x00F00000) {
                 // go stare at the table, it'll make sense
@@ -205,12 +151,7 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             p->comdat_parent = &UNKNOWN_LEADER;
 
             if (sec->num_reloc) {
-                size_t end_of_reloc = p->reloc_pos + p->reloc_size;
-                cache_lo = TB_MIN(cache_lo, p->reloc_pos);
-                cache_hi = TB_MAX(cache_hi, end_of_reloc);
-
-                TB_CacheRange r = { p->reloc_pos, p->reloc_size };
-                dyn_array_put(obj->cache_ranges, r);
+                p->relocs = &raw_map[p->reloc_pos];
             }
 
             if (sec_flags & IMAGE_SCN_LNK_COMDAT) {
@@ -218,58 +159,6 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             }
         }
     }
-
-    // Initialize the block cache
-    CUIK_TIMED_BLOCK("initialize cache") {
-        uint8_t* raw_map = obj->raw_map;
-        obj->cache_lo = cache_lo & -FILE_BLOCK_SIZE;
-        obj->cache_hi = (cache_hi + FILE_BLOCK_SIZE - 1) & -FILE_BLOCK_SIZE;
-        obj->cache_data = &raw_map[obj->cache_lo];
-
-        size_t cache_blocks = (obj->cache_hi - obj->cache_lo) / FILE_BLOCK_SIZE;
-        if (cache_blocks <= 16) {
-            obj->fully_resident = true;
-            l->jobs.count += 1;
-            tb_linker_read_req2(l, obj->fd, obj->cache_lo, cache_blocks*FILE_BLOCK_SIZE, NULL, obj, tb_linker_ack_read);
-        } else {
-            // Sort the ranges
-            CUIK_TIMED_BLOCK("sort") {
-                size_t range_count = dyn_array_length(obj->cache_ranges);
-                // cache_range_sort(obj->cache_ranges, range_count);
-                qsort(obj->cache_ranges, range_count, sizeof(TB_CacheRange), compare_cache_ranges);
-
-                #if 0
-                FOR_N(i, 1, range_count) {
-                    assert(obj->cache_ranges[i - 1].offset <= obj->cache_ranges[i].offset);
-                }
-                #endif
-            }
-
-            dyn_array_for(i, obj->cache_ranges) {
-                uint32_t page_start = obj->cache_ranges[i].offset / FILE_BLOCK_SIZE;
-                uint32_t page_end   = (obj->cache_ranges[i].offset + obj->cache_ranges[i].size + FILE_BLOCK_SIZE - 1) / FILE_BLOCK_SIZE;
-
-                obj->cache_ranges[i].io_rem = page_end - page_start;
-            }
-
-            // Allocate bitmaps
-            obj->bitmap_size = (cache_blocks + 63) / 64;
-            obj->reserve = tb_linker_moar_mem(obj, obj->bitmap_size * sizeof(uint64_t));
-        }
-
-        // setup pointers early
-        FOR_N(i, 0, parser.section_count) {
-            TB_LinkerSectionPiece* p = sec2piece[i];
-            if (p != NULL) {
-                if (p->reloc_size > 0) {
-                    p->relocs = &raw_map[p->reloc_pos];
-                }
-            }
-        }
-    }
-
-    // double usage = (reloc_used / (double) (reloc_hi - reloc_lo)) * 100.0;
-    // printf("A %.*s %zu %zu %zu (%.2f %%)\n", (int) obj->name.length, obj->name.data, reloc_lo, reloc_hi, (reloc_hi - reloc_lo) / 4096, usage);
 
     // append all symbols
     size_t sym_count = 0;

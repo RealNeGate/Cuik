@@ -31,10 +31,11 @@
 #endif
 
 enum {
-    // 60 (archive member header) + 20 (COFF header), rounded to the next pow2
-    PREFETCH_BLOCK_SIZE = 256,
+    // should at least be 60 (archive member header) + 20 (COFF header), rounded
+    // to the next pow2.
+    PREFETCH_BLOCK_SIZE = 1024,
 
-    FILE_BLOCK_SIZE = 4*1024,
+    FILE_BLOCK_SIZE = 16*1024,
 };
 
 typedef void TB_LinkerAppendFn(TPool* pool, void** args);
@@ -43,10 +44,14 @@ typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 typedef struct TB_LinkerObject TB_LinkerObject;
 typedef struct TB_LinkerArchive TB_LinkerArchive;
 
+typedef void BCache_Fn(TB_Linker* l, void* arg, TB_Slice content, bool io_thread);
+
 enum {
-    BCACHE_BUCKET_COUNT = 8,
-    BCACHE_BUCKET_SIZE  = 8,
+    BCACHE_BUCKET_COUNT = 16,
+    BCACHE_BUCKET_SIZE  = 32,
 };
+
+// typedef void BCache_Fn(TB_Linker* l, , TB_Slice data, bool is_io_thread);
 
 typedef struct {
     _Atomic(uint64_t) reserve;
@@ -56,11 +61,12 @@ typedef struct {
 typedef struct {
     int fd;
     size_t size;
+    size_t row_count;
     // Virtual address range for the file, we're managing our own
     // cache.
     uint8_t* raw_map;
     // Track which blocks are ready in this request
-    _Atomic BCache_Row rows[];
+    BCache_Row rows[];
 } BCache_File;
 
 // None of our input files are allowed to
@@ -70,8 +76,10 @@ typedef struct {
     // Exact range
     uint32_t offset, size;
     // Task
-    tpool_io_task_proc* fn;
+    BCache_Fn* fn;
     void* arg;
+    // Word range
+    uint32_t first_word, word_count;
     // Tally
     _Atomic int io_rem;
     // Track which blocks are ready in this request
@@ -79,7 +87,6 @@ typedef struct {
 } BCache_Entry;
 
 typedef struct {
-    _Atomic uint64_t generation;
     _Atomic uint64_t claimed;
     _Atomic(BCache_Entry*) entries[BCACHE_BUCKET_SIZE];
 } BCache_Bucket;
@@ -87,9 +94,6 @@ typedef struct {
 // block cache, we're not depending on the OS for file caching so
 // we need an approach to avoiding duplicate block reads.
 typedef struct {
-    // just a set of all blocks we have loaded
-    NBHM resident_blocks;
-
     // Each bucket is a separate wait list hashed by block
     // address bits, the hope is that we can quickly enqueue
     // to the list and do other work while we want for the read
@@ -145,25 +149,6 @@ struct TB_LinkerObject {
         BCache_Entry* request[2];
     };
 
-    struct {
-        // The cache region is completely loaded from the start, because it's small.
-        bool fully_resident;
-        size_t bitmap_size;
-
-        // Cache for the relocations and section data, aka the stuff which is
-        // gonna require grabbing arrays which may or may not share the same file
-        // block as another.
-        uint64_t cache_lo;
-        uint64_t cache_hi;
-        uint8_t* cache_data;
-
-        // Tracks the sorted ranges
-        DynArray(TB_CacheRange) cache_ranges;
-
-        // Track which pages have issued reads
-        _Atomic(uint64_t)* reserve;
-    };
-
     #ifdef CONFIG_HAS_TB
     // if not-NULL, the sections for the are in a TB_Module.
     TB_Module* module;
@@ -180,6 +165,8 @@ struct TB_LinkerObject {
 struct TB_LinkerArchive {
     TB_LinkerObject header;
 
+    size_t prefetch_pos;
+
     // offset to the first byte in the archive member (skipping the header)
     size_t second_base;
     size_t longnames_base;
@@ -187,16 +174,18 @@ struct TB_LinkerArchive {
     size_t second_size;
     size_t longnames_size;
 
-    char* second_longnames;
-
+    uint32_t symbol_base;
     uint32_t symbol_count;
     uint32_t member_count;
+    bool loaded_members;
 
     uint16_t* symbols;
     uint32_t* members;
-    char* symbol_strtab;
+    uint32_t symbol_strtab;
 
-    TB_Slice longnames;
+    // Lazy parser state
+    size_t symbol_i, string_head, string_tail;
+    size_t munch_start, munch_start_sym;
 };
 
 typedef enum {
@@ -263,8 +252,8 @@ struct TB_LinkerSectionPiece {
     union {
         // kind=PIECE_FILE
         struct {
+            BCache_File* file;
             uint32_t file_offset;
-            int fd;
         };
 
         // kind=PIECE_BUFFER
@@ -438,7 +427,7 @@ typedef struct TB_LinkerVtbl {
 
     // if the input file is missing a name or size, we handle that here alongside
     // parsing the header to know what we're even looking at.
-    void (*classify_input)(TB_Linker* l, TB_LinkerObject* obj);
+    bool (*classify_input)(TB_Linker* l, TB_LinkerObject* obj);
 
     void (*parse_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
     bool (*export)(TB_Linker* l, const char* file_name);
@@ -577,15 +566,14 @@ bool tb_linker_layout(TB_Linker* l);
 void tb_linker_print_map(TB_Linker* l);
 void tb_linker_complete_appends(TB_Linker* l);
 
-void tb_linker_read_req(TB_Linker* l, BCache_File* file, size_t offset, size_t size, void** buffer, TB_LinkerObject* obj);
-
-void tb_linker_read_imm(int fd, size_t offset, size_t count, void* data);
-void tb_linker_read_req2(TB_Linker* l, int fd, size_t offset, size_t size, void** buffer, TB_LinkerObject* obj, tpool_io_task_proc* fn);
-void tb_linker_read_req3(TB_Linker* l, int fd, size_t offset, size_t size, void* buffer, tpool_io_task_proc* fn, void* arg1, void* arg2);
+bool tb_linker_read_req_FAST(TB_Linker* l, BCache_File* file, size_t offset, size_t size, void** buffer, void* arg, BCache_Fn* fn);
+void tb_linker_read_req(TB_Linker* l, BCache_File* file, size_t offset, size_t size, void** buffer, void* arg, BCache_Fn* fn);
 
 void tb_linker_worker_init(TB_Linker* l);
 void* tb_linker_moar_mem(TB_LinkerObject* obj, size_t size);
 
 void tb_linker_clear_local(void);
 void* tb_linker_alloc_local(size_t size);
+
+TB_Slice tb_linker_get_base_name(TB_Slice name);
 

@@ -52,6 +52,9 @@ void tpool_io_prep_all(TPool *pool);
 void tpool_io_prep(TPool* pool);
 void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, tpool_io_task_proc* fn, void* arg0, void* arg1, void* arg2);
 
+// Call when we're backed up on IO requests
+void tpool_io_sync(TPool* pool);
+
 // Called within an I/O task to forward tasks to the worker threads
 void tpool_io_forward(TPool *pool, bool hi_prio, tpool_task_proc* fn, int arg_count, void** args);
 

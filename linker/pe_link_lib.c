@@ -1,6 +1,7 @@
 
 enum {
-    LAZY_IMPORT_BATCH_SIZE = 1024
+    LAZY_IMPORT_BATCH_SIZE = 1024,
+    LAZY_IMPORT_STRTAB_MUNCH = 128*1024,
 };
 
 static size_t ideally_fast_skip16(const char* strtab, int limit, size_t str_head) {
@@ -32,9 +33,12 @@ static size_t ideally_fast_skip16(const char* strtab, int limit, size_t str_head
 }
 
 static void lazy_import_task(TPool* pool, void** args) {
-    cuikperf_region_start("lazy parse", NULL);
-
     TB_LinkerArchive* lib = args[0];
+    BCache_File* file = lib->header.file;
+
+    TB_Slice name = tb_linker_get_base_name(lib->header.name);
+    cuikperf_region_start2("lazy parse", name.length, (const char*) name.data);
+
     TB_Linker* l = lib->header.linker;
     tb_linker_worker_init(l);
 
@@ -44,13 +48,19 @@ static void lazy_import_task(TPool* pool, void** args) {
     }
 
     size_t j = (size_t) args[2];
-    char* strtab = lib->symbol_strtab;
+    char* strtab = (char*) &lib->header.file->raw_map[lib->symbol_strtab];
     while (i < limit) {
         uint16_t offset_index = lib->symbols[i] - 1;
         const char* name = &strtab[j];
         size_t next = ideally_fast_skip16(strtab, 1, j);
         // size_t len = ideally_fast_strlen(name);
 
+        #if 0
+        printf("SYMBOL %zu | %d | %d | %s\n", i, offset_index, lib->members[offset_index], name);
+        #endif
+
+        assert(offset_index < lib->member_count);
+        assert(lib->members[offset_index] < lib->header.file->size);
         TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
         *s = (TB_LinkerSymbol){
             .name   = { (const uint8_t*) name, (next - j) - 1 },
@@ -65,43 +75,199 @@ static void lazy_import_task(TPool* pool, void** args) {
     tb_linker_job_done(l);
 }
 
-static const char* LIB_STAGE_NAMES[] = {
-    "fetch_lib", "parse_lib"
-};
-
-static bool fetch_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
+static bool fetch_lazy(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
     TB_LinkerArchive* lib = (TB_LinkerArchive*) obj;
+    BCache_File* file = lib->header.file;
 
-    int fd = lib->header.fd;
-    size_t file_offset = 8; // magic number was already checked
-    COFF_ArchiveMemberHeader first, second, longnames;
+    size_t symbol_i = lib->symbol_i;
+    size_t string_head = lib->string_head;
+    size_t string_tail = lib->string_tail;
+    size_t second_size = lib->second_size;
 
-    // Process first member
-    tb_linker_read_imm(fd, file_offset, sizeof(COFF_ArchiveMemberHeader), &first);
-    if (memcmp(first.name, (char[16]) { "/               " }, 16) != 0) {
-        fprintf(stderr, "TB archive parser: first archive member name is invalid\n");
-        return false;
+    size_t strtab_size = (lib->second_base + second_size) - lib->symbol_strtab;
+    char* strtab = (char*) &lib->header.file->raw_map[lib->symbol_strtab];
+
+    // printf("LAZY %zu blocks\n", (strtab_size + 4095) / 4096);
+    cuikperf_region_start("chunk", NULL);
+
+    bool distribute = l->jobs.pool != NULL && tpool_num_threads(l->jobs.pool) > 1;
+    while (symbol_i < lib->symbol_count) {
+        // Fetch ahead on the string table, the only reason we're even breaking it
+        // up into pieces is to allow avoid stalling all other workers and read requests
+        // while we wait for ours.
+        if (string_tail != strtab_size && string_head + 4096 >= string_tail) {
+            size_t readahead = string_tail + LAZY_IMPORT_STRTAB_MUNCH;
+            if (readahead > strtab_size) {
+                readahead = strtab_size;
+            }
+            assert(readahead == strtab_size || string_head + 4096 < readahead);
+            // printf("READAHEAD %p %zu %zu\n", lib, symbol_i, readahead - string_head);
+
+            // writeback
+            lib->symbol_i    = symbol_i;
+            lib->string_head = string_head;
+            lib->string_tail = string_tail = readahead;
+            lib->header.stage = 1;
+
+            cuikperf_region_end();
+            if (!tb_linker_read_req_FAST(l, file, lib->symbol_strtab + string_head, readahead - string_head, NULL, &lib->header, NULL)) {
+                return false;
+            }
+            cuikperf_region_start("chunk", NULL);
+        }
+
+        assert(string_head < second_size);
+        uint16_t offset_index = lib->symbols[symbol_i] - 1;
+        const char* name = &strtab[string_head];
+        size_t next = ideally_fast_skip16(strtab, 1, string_head);
+
+        #if 0
+        printf("SYMBOL %zu | %d | %d | %s\n", symbol_i, offset_index, lib->members[offset_index], name);
+        #endif
+
+        if (!distribute) {
+            assert(offset_index < lib->member_count);
+            assert(lib->members[offset_index] < lib->header.file->size);
+            TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+            *s = (TB_LinkerSymbol){
+                .name   = { (const uint8_t*) name, (next - string_head) - 1 },
+                .tag    = TB_LINKER_SYMBOL_LAZY,
+                .lazy   = { NULL, lib, lib->members[offset_index] },
+            };
+            s = tb_linker_symbol_insert(l, s, true);
+        }
+
+        assert(next - string_head < LAZY_IMPORT_STRTAB_MUNCH);
+        symbol_i += 1, string_head = next;
+        if (distribute && symbol_i - lib->munch_start == LAZY_IMPORT_BATCH_SIZE) {
+            cuikperf_region_end();
+
+            void* args[3] = { lib, (void*) lib->munch_start, (void*) lib->munch_start_sym };
+            tb_linker_job_submit_N(l, lazy_import_task, 3, args);
+
+            lib->munch_start = symbol_i;
+            lib->munch_start_sym = string_head;
+
+            cuikperf_region_start("chunk", NULL);
+        }
     }
-    size_t first_content_length = tb__parse_decimal_int(sizeof(first.size), first.size);
-    file_offset += sizeof(COFF_ArchiveMemberHeader) + first_content_length;
-    file_offset = (file_offset + 1u) & ~1u;
 
-    // Process second member
-    tb_linker_read_imm(fd, file_offset, sizeof(COFF_ArchiveMemberHeader), &second);
-    if (memcmp(second.name, (char[16]) { "/               " }, 16) != 0) {
-        fprintf(stderr, "TB archive parser: second archive member name is invalid\n");
-        return false;
+    if (distribute && symbol_i != lib->munch_start) {
+        void* args[3] = { lib, (void*) lib->munch_start, (void*) lib->munch_start_sym };
+        tb_linker_job_submit_N(l, lazy_import_task, 3, args);
     }
-    lib->second_base = file_offset + sizeof(COFF_ArchiveMemberHeader);
-    lib->second_size = tb__parse_decimal_int(sizeof(second.size), second.size);
+    cuikperf_region_end();
 
-    // Advance
-    file_offset += sizeof(COFF_ArchiveMemberHeader) + lib->second_size;
-    file_offset = (file_offset + 1u) & ~1u;
+    lib->header.stage = 2;
+    return true;
+}
 
-    // Process long name member
-    lib->longnames_base = file_offset + sizeof(COFF_ArchiveMemberHeader);
-    tb_linker_read_imm(fd, file_offset, sizeof(COFF_ArchiveMemberHeader), &longnames);
+// Called 3 times
+// (1) Process first
+// (2) Process second
+// (3) Process longnames
+static bool fetch_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
+    assert(file_header_offset == 0 && "No nested libs... yet?");
+
+    TB_LinkerArchive* lib = (TB_LinkerArchive*) obj;
+    BCache_File* file = lib->header.file;
+    uint8_t* raw_map = file->raw_map;
+
+    lib->header.stage = 1;
+
+    if (lib->second_base == 0) {
+        COFF_ArchiveMemberHeader first;
+        assert(prefetch.length >= 8 + sizeof(COFF_ArchiveMemberHeader));
+        memcpy(&first, &prefetch.data[8], sizeof(COFF_ArchiveMemberHeader));
+        if (memcmp(first.name, (char[16]) { "/               " }, 16) != 0) {
+            fprintf(stderr, "TB archive parser: first archive member name is invalid\n");
+            return false;
+        }
+        size_t first_content_length = tb__parse_decimal_int(sizeof(first.size), first.size);
+
+        // Advance
+        size_t file_offset = 8 + sizeof(COFF_ArchiveMemberHeader) + first_content_length;
+        file_offset = (file_offset + 1u) & ~1u;
+
+        // Fetch second headeer and member list
+        lib->second_base = file_offset + sizeof(COFF_ArchiveMemberHeader);
+        if (!tb_linker_read_req_FAST(l, file, file_offset, sizeof(COFF_ArchiveMemberHeader) + sizeof(uint32_t), NULL, &lib->header, NULL)) {
+            return false;
+        }
+    }
+
+    // Find placement for longnames and load member list
+    if (lib->longnames_base == 0) {
+        size_t file_offset = lib->second_base - sizeof(COFF_ArchiveMemberHeader);
+        uint8_t* second_data = &raw_map[lib->second_base];
+
+        COFF_ArchiveMemberHeader second;
+        memcpy(&second, &raw_map[file_offset], sizeof(COFF_ArchiveMemberHeader));
+        if (memcmp(second.name, (char[16]) { "/               " }, 16) != 0) {
+            fprintf(stderr, "TB archive parser: second archive member name is invalid\n");
+            return false;
+        }
+        lib->second_size = tb__parse_decimal_int(sizeof(second.size), second.size);
+
+        // Advance
+        file_offset += sizeof(COFF_ArchiveMemberHeader) + lib->second_size;
+        file_offset = (file_offset + 1u) & ~1u;
+        lib->longnames_base = file_offset + sizeof(COFF_ArchiveMemberHeader);
+
+        // TODO(NeGate): better error checking for bad files
+        memcpy(&lib->member_count, second_data, sizeof(uint32_t));
+        lib->members = (uint32_t*) &second_data[4];
+
+        // Fetch symbols
+        lib->symbol_base = lib->second_base + 4 + lib->member_count*sizeof(uint32_t);
+
+        size_t readahead = lib->symbol_base + sizeof(uint32_t);
+        if (readahead < LAZY_IMPORT_STRTAB_MUNCH) {
+            readahead = LAZY_IMPORT_STRTAB_MUNCH;
+        }
+
+        if (readahead > lib->header.file->size) {
+            readahead = lib->header.file->size;
+        }
+        lib->prefetch_pos = readahead;
+
+        if (!tb_linker_read_req_FAST(l, file, lib->second_base, readahead - lib->second_base, NULL, &lib->header, NULL)) {
+            return false;
+        }
+    }
+
+    // Load symbols
+    if (lib->symbols == NULL) {
+        uint8_t* second = &raw_map[lib->second_base];
+
+        // TODO(NeGate): better error checking for bad files
+        memcpy(&lib->symbol_count, &second[4 + lib->member_count*sizeof(uint32_t)], sizeof(uint32_t));
+        lib->symbols = (uint16_t*) &second[8 + lib->member_count*sizeof(uint32_t)];
+
+        size_t file_offset = lib->second_base;
+        file_offset += 4 + lib->member_count*sizeof(uint32_t);
+        file_offset += 4 + lib->symbol_count*sizeof(uint16_t);
+        lib->symbol_strtab = file_offset;
+
+        // Fetch members
+        if (!tb_linker_read_req_FAST(l, file, lib->symbol_base, lib->symbol_strtab - lib->symbol_base, NULL, &lib->header, NULL)) {
+            return false;
+        }
+    }
+
+    if (!lib->loaded_members) {
+        lib->loaded_members = true;
+
+        // Fetch longnames
+        if (!tb_linker_read_req_FAST(l, file, lib->longnames_base, sizeof(COFF_ArchiveMemberHeader), NULL, &lib->header, NULL)) {
+            return false;
+        }
+    }
+
+    size_t file_offset = lib->longnames_base - sizeof(COFF_ArchiveMemberHeader);
+
+    COFF_ArchiveMemberHeader longnames;
+    memcpy(&longnames, &raw_map[file_offset], sizeof(COFF_ArchiveMemberHeader));
     if (memcmp(longnames.name, (char[16]) { "//              " }, 16) == 0) {
         lib->longnames_size = tb__parse_decimal_int(sizeof(longnames.size), longnames.size);
 
@@ -109,36 +275,38 @@ static bool fetch_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         file_offset += sizeof(COFF_ArchiveMemberHeader) + lib->longnames_size;
         file_offset = (file_offset + 1u) & ~1u;
     }
+    // printf("A %zu %zu\n", lib->second_size, lib->longnames_size);
 
+    #if 1
+    if (lib->symbol_count == 0 || lib->member_count == 0) {
+        return true;
+    }
+
+    if (lib->prefetch_pos < lib->symbol_strtab) {
+        lib->string_tail = 0;
+    } else {
+        lib->string_tail = lib->prefetch_pos - lib->symbol_strtab;
+    }
+    lib->header.fetch = fetch_lazy;
+
+    return fetch_lazy(l, obj, prefetch, file_header_offset);
+    #else
     // Read the archive up until the end of the longnames
     lib->header.io_rem = 1;
-    tb_linker_async_block_read(l, lib->second_base, file_offset - lib->second_base, (void**) &lib->second_longnames, &lib->header);
+    lib->header.stage  = 2;
+    tb_linker_read_req(l, file, lib->second_base, lib->second_size, NULL, &lib->header, NULL);
     return false;
+    #endif
 }
 
 static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
+    #if 0
     TB_LinkerArchive* lib = (TB_LinkerArchive*) obj;
-    char* second = lib->second_longnames;
-    if (lib->second_size > 0) {
-        // TODO(NeGate): better error checking for bad files
-        memcpy(&lib->member_count, &second[0], sizeof(uint32_t));
-        memcpy(&lib->symbol_count, &second[4 + lib->member_count*sizeof(uint32_t)], sizeof(uint32_t));
-
-        lib->members = (uint32_t*) &second[4];
-        lib->symbols = (uint16_t*) &second[8 + lib->member_count*sizeof(uint32_t)];
-        lib->symbol_strtab = (char*) &lib->symbols[lib->symbol_count];
-    }
-
-    if (lib->longnames_size > 0) {
-        lib->longnames = (TB_Slice){
-            (const uint8_t*) &lib->second_longnames[lib->longnames_base - lib->second_base],
-            lib->longnames_size
-        };
-    }
+    char* second = (char*) &lib->header.file->raw_map[lib->second_base];
 
     CUIK_TIMED_BLOCK("lazy") {
         uint64_t t = lib->header.time;
-        char* strtab = lib->symbol_strtab;
+        char* strtab = (char*) &lib->header.file->raw_map[lib->symbol_strtab];
 
         if (l->jobs.pool != NULL && tpool_num_threads(l->jobs.pool) > 1) {
             #if CUIK_ALLOW_THREADS
@@ -194,6 +362,7 @@ static void process_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
             #endif
         }
     }
+    #endif
 }
 
 #if 0

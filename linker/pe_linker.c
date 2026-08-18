@@ -192,11 +192,9 @@ static TB_Slice cstr_into_slice(const char* str) {
 #include "pe_link_imp.c"
 #include "pe_link_lib.c"
 
-static const char* STAGE_NAMES[] = {
-    "fetch_input", "parse_input"
-};
+bool pe_classify_input(TB_Linker* l, TB_LinkerObject* obj) {
+    BCache_File* file = obj->file;
 
-void pe_classify_input(TB_Linker* l, TB_LinkerObject* obj) {
     // if this object isn't at the base of the FD then it's an archive's object.
     // this means we'll need to parse the "archive file header".
     TB_Slice content = { obj->prefetch_page, PREFETCH_BLOCK_SIZE };
@@ -205,7 +203,7 @@ void pe_classify_input(TB_Linker* l, TB_LinkerObject* obj) {
         TB_LinkerArchive* lib = (TB_LinkerArchive*) obj->parent;
         COFF_ArchiveMemberHeader* sym = (COFF_ArchiveMemberHeader*) obj->prefetch_page;
 
-        // only extract the name & size the first time around
+        assert(sym->size[0] != 0);
         obj->size = tb__parse_decimal_int(sizeof(sym->size), sym->size);
         obj->name = (TB_Slice){ (uint8_t*) sym->name, strchr(sym->name, ' ') - sym->name };
         if (obj->name.data[0] == '/') {
@@ -213,11 +211,26 @@ void pe_classify_input(TB_Linker* l, TB_LinkerObject* obj) {
             size_t num = tb__parse_decimal_int(obj->name.length - 1, (char*) obj->name.data + 1);
 
             // TODO(NeGate): better error checking for bad files
-            assert(num < lib->longnames.length);
-            obj->name = (TB_Slice){
-                &lib->longnames.data[num],
-                strlen((const char*) &lib->longnames.data[num])
-            };
+            assert(num < lib->longnames_size);
+            size_t str_limit = num + 4096;
+            if (str_limit > lib->longnames_size) {
+                str_limit = lib->longnames_size;
+            }
+
+            // Fetch lazily from longnames
+            obj->stage = 0;
+            if (!tb_linker_read_req_FAST(l, file, lib->longnames_base + num, str_limit - num, NULL, obj, NULL)) {
+                return false;
+            }
+            obj->stage = 1;
+
+            // TODO(NeGate): unsafe approach to it
+            uint8_t* str = &lib->header.file->raw_map[lib->longnames_base + num];
+            size_t str_len = strlen((char*) str);
+            assert(str_len < 4096);
+
+            obj->name.data = str;
+            obj->name.length = str_len;
         }
 
         obj->skip_header = sizeof(COFF_ArchiveMemberHeader);
@@ -246,15 +259,7 @@ void pe_classify_input(TB_Linker* l, TB_LinkerObject* obj) {
     } else {
         assert(0 && "TODO");
     }
-}
-
-static TB_Slice get_base_name(TB_Slice name) {
-    FOR_REV_N(i, 0, name.length) {
-        if (name.data[i] == '/' || name.data[i] == '\\') {
-            return (TB_Slice){ name.data + i + 1, name.length - (i + 1) };
-        }
-    }
-    return name;
+    return true;
 }
 
 void pe_append_module(TPool* pool, void** args) {
@@ -728,11 +733,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
     tb_linker_complete_appends(l);
 
-    if (1) {
-        cuikperf_region_end();
-        return false;
-    }
-
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
     dyn_array_for(i, info->merges) {
     NL_Slice to_name = { info->merges[i].to.length, info->merges[i].to.data };
@@ -780,7 +780,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         tb_linker_print_map(l);
     }
 
-    if (1) {
+    if (0) {
         cuikperf_region_end();
         return false;
     }

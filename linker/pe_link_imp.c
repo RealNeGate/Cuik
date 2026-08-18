@@ -24,6 +24,8 @@ _Static_assert(sizeof(COFF_BigHeader) == 56, "WOAH");
 // These are small files which mostly just hold an import name, DLL path and an
 // ordinal (which is optional but helpful i think?)
 static bool fetch_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
+    BCache_File* file = obj->file;
+
     COFF_ImportHeader import;
     memcpy(&import, prefetch.data, sizeof(import));
 
@@ -48,8 +50,8 @@ static bool fetch_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         obj->process          = process_obj_file;
 
         obj->io_rem = 2;
-        tb_linker_async_block_read(l, file_header_offset + sizeof(header), size_of_section_headers, (void**) &obj->sections, obj);
-        tb_linker_async_block_read(l, file_header_offset + header.symbol_table, symstr_table_size, (void**) &obj->symbol_table, obj);
+        tb_linker_read_req(l, file, file_header_offset + sizeof(header), size_of_section_headers, (void**) &obj->sections, obj, NULL);
+        tb_linker_read_req(l, file, file_header_offset + header.symbol_table, symstr_table_size, (void**) &obj->symbol_table, obj, NULL);
         return false;
     }
 
@@ -59,7 +61,7 @@ static bool fetch_imp_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         // read request
         obj->io_rem = 1;
         obj->file_bottom = tb_linker_moar_mem(obj, import_size);
-        tb_linker_read_req(l, file_header_offset, import_size, obj->file_bottom, obj);
+        tb_linker_read_req(l, file, file_header_offset, import_size, obj->file_bottom, obj, NULL);
         return false;
         #endif
 

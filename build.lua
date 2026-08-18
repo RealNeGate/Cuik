@@ -266,7 +266,7 @@ else
         ldflags = ldflags.." -fsanitize=address"
     end
 
-    if false then
+    if true then
         cflags  = cflags .." -DCUIK_USE_URING"
         ldflags = ldflags.." -luring"
     end
@@ -305,7 +305,7 @@ local function walk(name)
 end
 
 walk("mimalloc")
-walk("cuik_go")
+-- walk("cuik_go")
 
 if options.cuik then
     walk("cuik_c")
@@ -354,8 +354,10 @@ for i,f in ipairs(srcs) do
 end
 table.insert(lines, "")
 
-table.insert(lines, "build bin/objs/checkpoint.o: nasm cuik_go/checkpoint.s\n")
-objs[#objs + 1] = "bin/objs/checkpoint.o"
+if visited["cuik_go"] then
+    table.insert(lines, "build bin/objs/checkpoint.o: nasm cuik_go/checkpoint.s\n")
+    objs[#objs + 1] = "bin/objs/checkpoint.o"
+end
 
 local out = "bin/cuik"
 if is_windows then

@@ -131,6 +131,12 @@ static int open_file(const char* filepath, size_t* out_size) {
     if (fd <= 0 || fstat(fd, &file_stats) < 0) {
         return -1;
     }
+
+    int flags = fcntl(fd, F_GETFL);
+    if (flags != -1) {
+        fcntl(fd, F_SETFL, flags | O_DIRECT);
+    }
+
     *out_size = file_stats.st_size;
     return fd;
 }
