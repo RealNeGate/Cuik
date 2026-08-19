@@ -232,7 +232,7 @@ void push_ipsccp_job(TB_Module* m, TB_Function* f) {
             m->ipsccp_tracker[1] += 1;
 
             void* args[2] = { f };
-            tpool_add_task2(m->ipsccp_pool, func_sccp_task, 2, args);
+            tpool_add_task2(m->ipsccp_pool, false, func_sccp_task, 2, args);
         }
         #else
         abort(); // Unreachable
@@ -304,7 +304,7 @@ static bool run_ipsccp(TB_Module* m, TPool* pool) {
                     m->ipsccp_tracker[1] += 1;
 
                     void* args[2] = { f };
-                    tpool_add_task2(m->ipsccp_pool, func_sccp_rewrite_task, 2, args);
+                    tpool_add_task2(m->ipsccp_pool, false, func_sccp_rewrite_task, 2, args);
                 }
             }
         }

@@ -576,7 +576,7 @@ static void step_submit(Cuik_BuildStep* s, TPool* tp, mtx_t* mutex, bool has_sib
         if (tp != NULL && has_siblings) {
             #if CUIK_ALLOW_THREADS
             log_debug("Punting build step %p to another thread", s);
-            tpool_add_task(tp, (tpool_task_proc*) s->invoke, info);
+            tpool_add_task(tp, false, (tpool_task_proc*) s->invoke, info);
             #else
             abort(); // Unreachable
             #endif
@@ -899,7 +899,7 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
                     .done = &done
                 };
                 task_count++;
-                tpool_add_task(tp, irgen_job, task);
+                tpool_add_task(tp, false, irgen_job, task);
             }
         }
 

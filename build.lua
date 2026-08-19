@@ -75,7 +75,7 @@ local modules = {
     },
     --   Linker
     linker = { srcs={
-            "linker/linker.c",
+            "linker/linker.c"
         }, flags="-DCONFIG_HAS_LINKER", deps={"common", "cuik_pp"}
     },
     -- executables:

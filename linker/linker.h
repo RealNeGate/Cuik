@@ -34,8 +34,7 @@ enum {
     // should at least be 60 (archive member header) + 20 (COFF header), rounded
     // to the next pow2.
     PREFETCH_BLOCK_SIZE = 1024,
-
-    FILE_BLOCK_SIZE = 16*1024,
+    FILE_BLOCK_SIZE     = 16*1024,
 };
 
 typedef void TB_LinkerAppendFn(TPool* pool, void** args);
@@ -47,11 +46,18 @@ typedef struct TB_LinkerArchive TB_LinkerArchive;
 typedef void BCache_Fn(TB_Linker* l, void* arg, TB_Slice content, bool io_thread);
 
 enum {
-    BCACHE_BUCKET_COUNT = 16,
-    BCACHE_BUCKET_SIZE  = 32,
+    BCACHE_BUCKET_COUNT = 8,
+    BCACHE_BUCKET_SIZE  = 256,
 };
 
 // typedef void BCache_Fn(TB_Linker* l, , TB_Slice data, bool is_io_thread);
+
+
+// This is a coroutine that's capable of BCache read requests
+typedef struct {
+    _Atomic(uint64_t) reserve;
+    _Atomic(uint64_t) commit;
+} BCache_Job;
 
 typedef struct {
     _Atomic(uint64_t) reserve;
@@ -71,7 +77,10 @@ typedef struct {
 
 // None of our input files are allowed to
 // be bigger than 4GiB at the moment... i think?
-typedef struct {
+typedef struct BCache_Entry {
+    // chain of waiters to the same range
+    _Atomic(struct BCache_Entry*) next;
+
     int fd, slot;
     // Exact range
     uint32_t offset, size;
@@ -87,7 +96,7 @@ typedef struct {
 } BCache_Entry;
 
 typedef struct {
-    _Atomic uint64_t claimed;
+    _Atomic uint64_t claimed[BCACHE_BUCKET_SIZE / 64];
     _Atomic(BCache_Entry*) entries[BCACHE_BUCKET_SIZE];
 } BCache_Bucket;
 
@@ -233,7 +242,6 @@ struct TB_LinkerSectionPiece {
     uint64_t order;
 
     // mostly for COMDAT associative sections
-    TB_LinkerSectionPiece* comdat_parent;
     DynArray(TB_LinkerSectionPiece*) assoc;
 
     // mostly compact table from per-file symbol index -> symbol (some
@@ -569,10 +577,12 @@ void tb_linker_complete_appends(TB_Linker* l);
 bool tb_linker_read_req_FAST(TB_Linker* l, BCache_File* file, size_t offset, size_t size, void** buffer, void* arg, BCache_Fn* fn);
 void tb_linker_read_req(TB_Linker* l, BCache_File* file, size_t offset, size_t size, void** buffer, void* arg, BCache_Fn* fn);
 
-void tb_linker_worker_init(TB_Linker* l);
-void* tb_linker_moar_mem(TB_LinkerObject* obj, size_t size);
+void  tb_linker_worker_init(TB_Linker* l);
+void* tb_linker_moar_mem(size_t size);
+void  tb_linker_free_mem(void* ptr, size_t size);
 
-void tb_linker_clear_local(void);
+char* tb_linker_local_push(void);
+void  tb_linker_local_pop(char* savepoint);
 void* tb_linker_alloc_local(size_t size);
 
 TB_Slice tb_linker_get_base_name(TB_Slice name);

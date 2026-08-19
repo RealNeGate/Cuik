@@ -58,7 +58,7 @@ void cuiksched_per_function(TPool* tp, CompilationUnit* cu, TB_Module* mod, void
             PerFunction* t = cuik_malloc(sizeof(PerFunction));
             *t = task;
 
-            tpool_add_task(tp, per_func_task, t);
+            tpool_add_task(tp, false, per_func_task, t);
             count++;
         }
 

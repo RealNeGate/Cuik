@@ -57,7 +57,7 @@ typedef ptrdiff_t ssize_t;
 #define __debugbreak() __builtin_debugtrap()
 
 enum {
-    POOL_IO_DEPTH = 256,
+    POOL_IO_DEPTH = 512,
 };
 
 TPool_Thread_Local bool tpool_is_pool_thread = false;
@@ -91,8 +91,11 @@ typedef struct TPool_Thread {
     thrd_t thread;
     int idx;
 
-    TPool_Queue queue;
+    TPool_Queue queue_lo;
+    TPool_Queue queue_hi;
     struct TPool *pool;
+
+    bool nested_wait;
 
     // A pair thread is used to submit async I/O requests to, it's
     // only created whenever that happens because I really only need
@@ -151,7 +154,8 @@ TPool_RingBuffer *tpool_ring_grow(TPool_RingBuffer *ring, ssize_t bottom, ssize_
 }
 
 void _thread_init(TPool *pool, TPool_Thread *thread, int idx) {
-    thread->queue = tpool_queue_make(32);
+    thread->queue_lo = tpool_queue_make(64);
+    thread->queue_hi = tpool_queue_make(64);
     thread->pool = pool;
     thread->idx = idx;
 }
@@ -296,7 +300,7 @@ int _tpool_io_worker(void *ptr) {
 
         struct __kernel_timespec ts;
         ts.tv_sec  = 0;
-        ts.tv_nsec = 100000;
+        ts.tv_nsec = 200000;
 
         // consume and process all the I/O completion responses
         struct io_uring_cqe* cqe;
@@ -461,6 +465,33 @@ static void try_submit_io(TPool* pool, TPool_Thread* thread, bool force) {
     #endif
 }
 
+bool tpool_is_high_io_load(TPool* pool) {
+    TPool_Thread* thread = &pool->threads[tpool_current_thread_idx];
+    uint64_t est = estimate_io_load(thread);
+    return est > (POOL_IO_DEPTH * 3) / 4;
+}
+
+static int grab_tasks(TPool* pool, TPool_Thread* current_thread, TPool_Queue* queue, TPool_Queue* io_comp, size_t n) {
+    TPool_Task task;
+    size_t old_finished;
+    size_t finished_tasks = 0;
+    do {
+        old_finished = finished_tasks;
+
+        if (_tpool_queue_take(queue, &task) == GRAB_SUCCESS) {
+            task.do_work(pool, task.args);
+            finished_tasks += 1;
+        }
+
+        if (_tpool_queue_steal(io_comp, &task) == GRAB_SUCCESS) {
+            task.do_work(pool, task.args);
+            finished_tasks += 1;
+        }
+    } while (finished_tasks < n && old_finished != finished_tasks);
+
+    return finished_tasks;
+}
+
 static void issue_load(TPool* pool, TPool_Thread* current_thread) {
     work_start:
     if (!pool->running) {
@@ -468,10 +499,13 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
     }
 
     int64_t tasks_left = TPOOL_LOAD(pool->tasks_left);
+    bool overloaded = false;
 
     TPool_Task task;
     size_t old_finished;
     size_t finished_tasks = 0;
+
+    int saturate = 0;
     do {
         old_finished = finished_tasks;
 
@@ -482,20 +516,25 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
         // If the I/O thread is currently backed up, don't run high priority tasks
         // since those are meant to issue more requests.
         uint64_t est = estimate_io_load(current_thread);
-        while (est <= (POOL_IO_DEPTH * 3) / 4 && _tpool_queue_steal(&current_thread->io_complete_hi, &task) == GRAB_SUCCESS) {
-            task.do_work(pool, task.args);
-            est = estimate_io_load(current_thread);
-            finished_tasks += 1;
+        bool now_overloaded = est > (POOL_IO_DEPTH * 3) / 4;
+
+        if (overloaded != now_overloaded) {
+            if (overloaded) {
+                // cuikperf_region_end();
+            }
+            overloaded = now_overloaded;
+            if (overloaded) {
+                // char str[32];
+                // snprintf(str, 32, "%ld", est);
+                // cuikperf_region_start("overloaded", str);
+            }
         }
 
-        if (_tpool_queue_take(&current_thread->queue, &task) == GRAB_SUCCESS) {
-            task.do_work(pool, task.args);
-            finished_tasks += 1;
-        }
-
-        if (_tpool_queue_steal(&current_thread->io_complete_lo, &task) == GRAB_SUCCESS) {
-            task.do_work(pool, task.args);
-            finished_tasks += 1;
+        if (!overloaded) {
+            finished_tasks += grab_tasks(pool, current_thread, &current_thread->queue_hi, &current_thread->io_complete_hi, 32);
+            finished_tasks += grab_tasks(pool, current_thread, &current_thread->queue_lo, &current_thread->io_complete_lo, 16);
+        } else {
+            finished_tasks += grab_tasks(pool, current_thread, &current_thread->queue_lo, &current_thread->io_complete_lo, 32);
         }
     } while (old_finished != finished_tasks);
 
@@ -508,8 +547,14 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
         }
     }
 
+    if (overloaded) {
+        // cuikperf_region_end();
+    }
+
     // If there's still work somewhere and we don't have it, steal it.
     if (TPOOL_LOAD(pool->tasks_left)) {
+        // cuikperf_region_start("steal", NULL);
+
         bool dirty;
         do {
             dirty = false;
@@ -524,8 +569,15 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
                 TPool_Thread *thread = &pool->threads[idx];
 
                 TPool_Task task;
-                int ret = _tpool_queue_steal(&thread->queue, &task);
+                int ret;
+
+                ret = _tpool_queue_steal(&thread->queue_hi, &task);
                 dirty |= (ret == GRAB_FAILED);
+
+                if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
+                    ret = _tpool_queue_steal(&thread->queue_lo, &task);
+                    dirty |= (ret == GRAB_FAILED);
+                }
 
                 if (ret == GRAB_FAILED || ret == GRAB_EMPTY) {
                     ret = _tpool_queue_steal(&thread->io_complete_hi, &task);
@@ -547,9 +599,13 @@ static void issue_load(TPool* pool, TPool_Thread* current_thread) {
                 if (TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left) == 1) {
                     futex_signal(&pool->tasks_left);
                 }
+
+                // cuikperf_region_end();
                 goto work_start;
             }
         } while (dirty);
+
+        // cuikperf_region_end();
     }
 
     try_submit_io(pool, current_thread, true);
@@ -617,7 +673,23 @@ void tpool_io_prep(TPool* pool) {
 
 void tpool_io_sync(TPool* pool) {
     assert(tpool_is_pool_thread);
-    try_submit_io(pool, &pool->threads[tpool_current_thread_idx], false);
+    TPool_Thread* thread = &pool->threads[tpool_current_thread_idx];
+
+    #if CUIK_USE_URING
+    if (thread->has_pair) {
+        uint64_t t = cuik_time_in_nanos();
+        uint64_t elapsed = t - thread->last_submit_t;
+
+        if (thread->curr_submit_i != thread->last_submit_i) {
+            cuikperf_region_start("uring_submit", NULL);
+            // io_uring_submit_and_wait(&thread->io_ring, 1);
+            io_uring_submit(&thread->io_ring);
+            thread->last_submit_t = t;
+            thread->last_submit_i = thread->curr_submit_i;
+            cuikperf_region_end();
+        }
+    }
+    #endif
 }
 
 void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, tpool_io_task_proc* fn, void* arg0, void* arg1, void* arg2) {
@@ -709,16 +781,18 @@ void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, 
     #endif
 }
 
-void tpool_add_task(TPool *pool, tpool_task_proc* fn, void* val) {
+void tpool_add_task(TPool *pool, bool hi_prio, tpool_task_proc* fn, void* val) {
     assert(tpool_is_pool_thread);
     TPool_Thread *current_thread = &pool->threads[tpool_current_thread_idx];
-    _tpool_queue_push(pool, &current_thread->queue, fn, 1, &val);
+    TPool_Queue* queue = hi_prio ? &current_thread->queue_hi : &current_thread->queue_lo;
+    _tpool_queue_push(pool, queue, fn, 1, &val);
 }
 
-void tpool_add_task2(TPool *pool, tpool_task_proc* fn, int arg_count, void** args) {
+void tpool_add_task2(TPool *pool, bool hi_prio, tpool_task_proc* fn, int arg_count, void** args) {
     assert(tpool_is_pool_thread);
     TPool_Thread *current_thread = &pool->threads[tpool_current_thread_idx];
-    _tpool_queue_push(pool, &current_thread->queue, fn, arg_count, args);
+    TPool_Queue* queue = hi_prio ? &current_thread->queue_hi : &current_thread->queue_lo;
+    _tpool_queue_push(pool, queue, fn, arg_count, args);
 }
 
 void tpool_io_forward(TPool *pool, bool hi_prio, tpool_task_proc* fn, int arg_count, void** args) {
@@ -763,9 +837,10 @@ void tpool_wait(TPool *pool) {
     TPool_Task task;
     TPool_Thread *current_thread = &pool->threads[tpool_current_thread_idx];
 
+    __builtin_debugtrap();
     while (TPOOL_LOAD(pool->tasks_left)) {
         // if we've got tasks on our queue, run them
-        while (!_tpool_queue_take(&current_thread->queue, &task)) {
+        while (!_tpool_queue_take(&current_thread->queue_lo, &task)) {
             task.do_work(pool, task.args);
             TPOOL_ATOMIC_FUTEX_DEC(pool->tasks_left);
         }
@@ -846,7 +921,8 @@ void tpool_destroy(TPool *pool) {
         thrd_join(pool->threads[0].pair_thread, NULL);
     }
     for (int i = 0; i < pool->thread_count; i++) {
-        tpool_queue_delete(&pool->threads[i].queue);
+        tpool_queue_delete(&pool->threads[i].queue_hi);
+        tpool_queue_delete(&pool->threads[i].queue_lo);
     }
 
     cuik_free(pool->threads);

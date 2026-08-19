@@ -41,8 +41,8 @@ struct TPool {
 };
 
 void tpool_init(TPool *pool, int child_thread_count);
-void tpool_add_task(TPool *pool, tpool_task_proc* fn, void* val);
-void tpool_add_task2(TPool *pool, tpool_task_proc* fn, int arg_count, void** args);
+void tpool_add_task(TPool *pool, bool hi_prio, tpool_task_proc* fn, void* val);
+void tpool_add_task2(TPool *pool, bool hi_prio, tpool_task_proc* fn, int arg_count, void** args);
 void tpool_wait(TPool *pool);
 void tpool_destroy(TPool *pool);
 
@@ -54,6 +54,7 @@ void tpool_io_read(TPool* pool, int fd, size_t offset, size_t size, void* data, 
 
 // Call when we're backed up on IO requests
 void tpool_io_sync(TPool* pool);
+bool tpool_is_high_io_load(TPool* pool);
 
 // Called within an I/O task to forward tasks to the worker threads
 void tpool_io_forward(TPool *pool, bool hi_prio, tpool_task_proc* fn, int arg_count, void** args);

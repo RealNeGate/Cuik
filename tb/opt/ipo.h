@@ -387,7 +387,7 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
                     void* args[2] = { s, tracker };
                     tracker[1] += 1;
 
-                    tpool_add_task2(pool, func_opt_task, 2, args);
+                    tpool_add_task2(pool, false, func_opt_task, 2, args);
                 }
             }
 

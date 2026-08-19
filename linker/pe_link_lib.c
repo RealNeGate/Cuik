@@ -1,7 +1,7 @@
 
 enum {
     LAZY_IMPORT_BATCH_SIZE = 1024,
-    LAZY_IMPORT_STRTAB_MUNCH = 128*1024,
+    LAZY_IMPORT_STRTAB_MUNCH = 256*1024,
 };
 
 static size_t ideally_fast_skip16(const char* strtab, int limit, size_t str_head) {
@@ -88,7 +88,7 @@ static bool fetch_lazy(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, si
     char* strtab = (char*) &lib->header.file->raw_map[lib->symbol_strtab];
 
     // printf("LAZY %zu blocks\n", (strtab_size + 4095) / 4096);
-    cuikperf_region_start("chunk", NULL);
+    // cuikperf_region_start("chunk", NULL);
 
     bool distribute = l->jobs.pool != NULL && tpool_num_threads(l->jobs.pool) > 1;
     while (symbol_i < lib->symbol_count) {
@@ -101,7 +101,7 @@ static bool fetch_lazy(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, si
                 readahead = strtab_size;
             }
             assert(readahead == strtab_size || string_head + 4096 < readahead);
-            // printf("READAHEAD %p %zu %zu\n", lib, symbol_i, readahead - string_head);
+            // printf("READAHEAD %p %zu %zu\n", lib, string_head, readahead - string_head);
 
             // writeback
             lib->symbol_i    = symbol_i;
@@ -109,11 +109,11 @@ static bool fetch_lazy(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, si
             lib->string_tail = string_tail = readahead;
             lib->header.stage = 1;
 
-            cuikperf_region_end();
+            // cuikperf_region_end();
             if (!tb_linker_read_req_FAST(l, file, lib->symbol_strtab + string_head, readahead - string_head, NULL, &lib->header, NULL)) {
                 return false;
             }
-            cuikperf_region_start("chunk", NULL);
+            // cuikperf_region_start("chunk", NULL);
         }
 
         assert(string_head < second_size);
@@ -128,7 +128,7 @@ static bool fetch_lazy(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, si
         if (!distribute) {
             assert(offset_index < lib->member_count);
             assert(lib->members[offset_index] < lib->header.file->size);
-            TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+            TB_LinkerSymbol* s = tb_linker_moar_mem(sizeof(TB_LinkerSymbol));
             *s = (TB_LinkerSymbol){
                 .name   = { (const uint8_t*) name, (next - string_head) - 1 },
                 .tag    = TB_LINKER_SYMBOL_LAZY,
@@ -140,15 +140,16 @@ static bool fetch_lazy(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, si
         assert(next - string_head < LAZY_IMPORT_STRTAB_MUNCH);
         symbol_i += 1, string_head = next;
         if (distribute && symbol_i - lib->munch_start == LAZY_IMPORT_BATCH_SIZE) {
-            cuikperf_region_end();
+            // cuikperf_region_end();
 
             void* args[3] = { lib, (void*) lib->munch_start, (void*) lib->munch_start_sym };
+            l->jobs.count += 1;
             tb_linker_job_submit_N(l, lazy_import_task, 3, args);
 
             lib->munch_start = symbol_i;
             lib->munch_start_sym = string_head;
 
-            cuikperf_region_start("chunk", NULL);
+            // cuikperf_region_start("chunk", NULL);
         }
     }
 
@@ -156,7 +157,7 @@ static bool fetch_lazy(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, si
         void* args[3] = { lib, (void*) lib->munch_start, (void*) lib->munch_start_sym };
         tb_linker_job_submit_N(l, lazy_import_task, 3, args);
     }
-    cuikperf_region_end();
+    // cuikperf_region_end();
 
     lib->header.stage = 2;
     return true;
@@ -222,13 +223,17 @@ static bool fetch_lib_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch
         lib->symbol_base = lib->second_base + 4 + lib->member_count*sizeof(uint32_t);
 
         size_t readahead = lib->symbol_base + sizeof(uint32_t);
-        if (readahead < LAZY_IMPORT_STRTAB_MUNCH) {
-            readahead = LAZY_IMPORT_STRTAB_MUNCH;
+        if (readahead < lib->second_base + lib->second_size) {
+            readahead = lib->second_base + lib->second_size;
         }
 
-        if (readahead > lib->header.file->size) {
-            readahead = lib->header.file->size;
-        }
+        /* if (readahead < LAZY_IMPORT_STRTAB_MUNCH) {
+        readahead = LAZY_IMPORT_STRTAB_MUNCH;
+        } */
+
+        /* if (readahead > lib->header.file->size) {
+        readahead = lib->header.file->size;
+        } */
         lib->prefetch_pos = readahead;
 
         if (!tb_linker_read_req_FAST(l, file, lib->second_base, readahead - lib->second_base, NULL, &lib->header, NULL)) {

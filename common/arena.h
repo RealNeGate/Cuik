@@ -26,7 +26,7 @@ enum {
     // object headers.
     TB_ARENA_ALLOC_HEAD_SLACK = 32,
     // usually chunks are small unless it asks for a lot of memory (big arrays usually)
-    TB_ARENA_NORMAL_CHUNK_SIZE = (32 * 1024),
+    TB_ARENA_NORMAL_CHUNK_SIZE = (64 * 1024),
     // just a decent alignment amount, in practice 8 would prolly be fine
     TB_ARENA_ALIGNMENT  = 16,
 };
