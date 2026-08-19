@@ -70,6 +70,12 @@ typedef struct {
 struct BCache_Job {
     BCache_File* file;
 
+    // Readahead state
+    BCache_File* last_read_file;
+    size_t last_read_start;
+    size_t last_read_end;
+    size_t readahead_dist;
+
     // Wait state
     struct {
         // Defines the commit word we're snooping

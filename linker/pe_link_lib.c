@@ -1,7 +1,7 @@
 
 enum {
     LAZY_IMPORT_BATCH_SIZE = 1024,
-    LAZY_IMPORT_STRTAB_MUNCH = 8*1024,
+    LAZY_IMPORT_STRTAB_MUNCH = 16*1024,
 };
 
 static size_t ideally_fast_skip16(const char* strtab, int limit, size_t str_head) {
@@ -192,7 +192,7 @@ static bool step_lib_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj, T
                         readahead = strtab_size;
                     }
                     assert(readahead == strtab_size || string_head + 4096 < readahead);
-                    printf("READAHEAD %p %08zx %08zx\n", lib, string_head, readahead);
+                    // printf("READAHEAD %p %08zx %08zx\n", lib, string_head, readahead);
 
                     // writeback
                     lib->symbol_i    = symbol_i;

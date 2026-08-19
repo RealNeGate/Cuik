@@ -203,7 +203,7 @@ static void bcache_block_response(TPool* pool, TPool_ReadReq* req) {
     size_t row_i  = block / 64;
 
     uint64_t commit = atomic_fetch_or(&file->rows[row_i].commit, mask) | mask;
-    printf("  COMP %d:[%08lx %08lx]\n", file->fd, offset, offset + req->size - 1);
+    // printf("  COMP %d:[%08lx %08lx]\n", file->fd, offset, offset + req->size - 1);
 
     // notify all snoopers
     uint32_t first = bcache_snoop_hash(file, row_i), i = first;
@@ -222,6 +222,49 @@ static void bcache_block_response(TPool* pool, TPool_ReadReq* req) {
     tb_linker_job_done(l);
 }
 
+static void bcache_issue_raw_read2(TB_Linker* l, BCache_File* file, uint32_t first_block, uint32_t last_block) {
+    size_t first_word = first_block / 64;
+    size_t last_word  = (last_block + 63) / 64;
+
+    FOR_N(i, first_word, last_word) {
+        int bits_lo = first_block - i*64;
+        int bits_hi = last_block  - i*64;
+        if (bits_lo < 0)  { bits_lo = 0;  }
+        if (bits_hi > 64) { bits_hi = 64; }
+
+        uint64_t mask = (UINT64_MAX >> (64 - (bits_hi - bits_lo))) << bits_lo;
+
+        // if reserve is 0, we flip it and issue the read.
+        uint64_t curr = file->rows[i].reserve;
+        while ((curr & mask) != mask) {
+            uint64_t next = curr | mask;
+            if (atomic_compare_exchange_strong(&file->rows[i].reserve, &curr, next)) {
+                uint64_t fresh = ~curr & mask;
+                while (fresh) {
+                    size_t j = __builtin_ffsll(fresh) - 1;
+                    size_t width = fresh == UINT64_MAX ? 64 : __builtin_ffsll(~(fresh >> j)) - 1;
+
+                    uint64_t block = i*64 + j;
+                    uint64_t group_mask = UINT64_MAX >> (64 - width);
+
+                    // issued, clear bit
+                    fresh &= ~(group_mask << j);
+
+                    size_t offset = block*FILE_BLOCK_SIZE;
+                    uint8_t* buf = &file->raw_map[block*FILE_BLOCK_SIZE];
+                    // printf("  READ %d:[%08lx %08lx]\n", file->fd, offset, offset + width*FILE_BLOCK_SIZE - 1);
+
+                    CUIK_TIMED_BLOCK("issue") {
+                        l->jobs.count += 1;
+                        tpool_io_read(l->jobs.pool, file->fd, offset, width*FILE_BLOCK_SIZE, buf, bcache_block_response, l, file, NULL);
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
+
 static int bcache_issue_raw_read(TB_Linker* l, BCache_Job* job, uint32_t first_block, uint32_t last_block) {
     size_t row_i = first_block / 64;
     BCache_File* file = job->file;
@@ -237,7 +280,6 @@ static int bcache_issue_raw_read(TB_Linker* l, BCache_Job* job, uint32_t first_b
     uint64_t mask = (UINT64_MAX >> (64 - (bits_hi - bits_lo))) << bits_lo;
 
     job->wait.snoop_row = row_i;
-    // fence
     job->wait.row_target = mask;
 
     // insert snooper
@@ -254,36 +296,7 @@ static int bcache_issue_raw_read(TB_Linker* l, BCache_Job* job, uint32_t first_b
     } while (first != i);
 
     assert(slot >= 0);
-
-    // if reserve is 0, we flip it and issue the read.
-    uint64_t curr = file->rows[row_i].reserve;
-    while ((curr & mask) != mask) {
-        uint64_t next = curr | mask;
-        if (atomic_compare_exchange_strong(&file->rows[row_i].reserve, &curr, next)) {
-            uint64_t fresh = ~curr & mask;
-            while (fresh) {
-                size_t j = __builtin_ffsll(fresh) - 1;
-                size_t width = fresh == UINT64_MAX ? 64 : __builtin_ffsll(~(fresh >> j)) - 1;
-
-                uint64_t block = row_i*64 + j;
-                uint64_t group_mask = UINT64_MAX >> (64 - width);
-
-                // issued, clear bit
-                fresh &= ~(group_mask << j);
-
-                size_t offset = block*FILE_BLOCK_SIZE;
-                uint8_t* buf = &file->raw_map[block*FILE_BLOCK_SIZE];
-                printf("  READ %d:[%08lx %08lx]\n", file->fd, offset, offset + width*FILE_BLOCK_SIZE - 1);
-
-                CUIK_TIMED_BLOCK("issue") {
-                    l->jobs.count += 1;
-                    tpool_io_read(l->jobs.pool, file->fd, offset, width*FILE_BLOCK_SIZE, buf, bcache_block_response, l, file, NULL);
-                }
-            }
-            break;
-        }
-    }
-
+    bcache_issue_raw_read2(l, file, base + bits_lo, base + bits_hi);
     return slot;
 }
 
@@ -343,7 +356,7 @@ static bool bcache_job_notify(TB_Linker* l, BCache_Job* job, size_t row_i, int s
         uint32_t tail = job->wait.tail;
         if (head == tail) {
             // We've completed the read request, resume
-            printf("NOTIFY %p\n", job->arg);
+            // printf("NOTIFY %p\n", job->arg);
 
             void* args[2] = { l, job };
             bool hi_prio = false;
@@ -418,29 +431,64 @@ bool tb_linker_job_read_FAST(TB_Linker* l, BCache_Job* job, size_t offset, size_
     // Read in aligned blocks
     size_t first_block = offset / FILE_BLOCK_SIZE;
     size_t last_block  = (offset + size + FILE_BLOCK_SIZE - 1) / FILE_BLOCK_SIZE;
+    size_t first_word  = first_block / 64;
+    size_t last_word   = (last_block + 63) / 64;
+
+    // Fast path, check if bits are committed
+    bool ready = true;
+    size_t first_miss = 0;
+    FOR_N(i, first_word, last_word) {
+        int bits_lo = first_block - (i*64);
+        int bits_hi = last_block  - (i*64);
+        if (bits_lo < 0)  { bits_lo = 0;  }
+        if (bits_hi > 64) { bits_hi = 64; }
+        uint64_t mask = (UINT64_MAX >> (64 - (bits_hi - bits_lo))) << bits_lo;
+
+        uint64_t curr = file->rows[i].commit;
+        if ((curr & mask) != mask) {
+            first_miss = i*64 + __builtin_ffsll(~curr & mask) - 1;
+            ready = false;
+            break;
+        }
+    }
+
+    if (ready) {
+        return true;
+    }
 
     // Readahead logic, this works by just issuing loads to file blocks we think
     // we'll be accessing soon.
-    static thread_local BCache_File* last_read_file;
-    static thread_local size_t last_read_start;
-    static thread_local size_t last_read_end;
+    if (job->last_read_file == job->file &&
+        job->last_read_end + job->readahead_dist >= first_block &&
+        job->last_read_end <= first_miss) {
+        // sequential read
+        // printf("  PREF %d:[%08lx %08lx]\n", file->fd, last_block*FILE_BLOCK_SIZE, last_block*FILE_BLOCK_SIZE + readahead_dist*FILE_BLOCK_SIZE - 1);
+        // printf("  PREF %d:%zu\n", file->fd, job->readahead_dist*FILE_BLOCK_SIZE);
+        bcache_issue_raw_read2(l, file, last_block, last_block + job->readahead_dist);
 
-    /* if (last_read_file == ) {
-
+        job->readahead_dist *= 2;
+        if (job->readahead_dist > 64) {
+            job->readahead_dist = 64;
+        }
+        job->last_read_end = last_block;
+    } else {
+        job->readahead_dist = 2;
+        job->last_read_file = job->file;
+        job->last_read_start = first_miss;
+        job->last_read_end = last_block;
     }
-    last_read_file = 0; */
 
     // Issue megablock load
-    job->wait.head = first_block;
+    job->wait.head = first_miss;
     job->wait.tail = last_block;
-    int slot = bcache_issue_raw_read(l, job, first_block, last_block);
+    int slot = bcache_issue_raw_read(l, job, first_miss, last_block);
 
     // If there's in-progress writes to blocks we care about then just snooping
     // won't catch those completions, we need to at least check that the base. If
     // we're late to notifying the first snoop then we can gave up here because whoever
     // saw it clearly... saw it so we can leave him responsible.
-    if (!bcache_job_notify(l, job, first_block / 64, slot, false)) {
-        printf("WAIT %p\n", job->arg);
+    if (!bcache_job_notify(l, job, first_miss / 64, slot, false)) {
+        // printf("WAIT %p\n", job->arg);
         return false;
     }
 
@@ -1177,9 +1225,8 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym) {
         return;
     }
 
-    #if 0
+    #if 1
     log_info("Load object file at %d:%zu (for %.*s)", lib->header.file->fd, offset, (int) sym->name.length, sym->name.data);
-    l->jobs.count += 1;
     tb_linker_issue_prefetch(obj->linker, obj);
     #endif
 
