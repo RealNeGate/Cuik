@@ -1,5 +1,20 @@
 
 typedef struct {
+    uint16_t sig1;
+    uint16_t sig2;
+    uint16_t machine;
+    uint32_t timestamp;
+
+    uint8_t  uuid[16];
+    uint32_t padding[4];
+
+    uint32_t section_count;
+    uint32_t symbol_table;
+    uint32_t symbol_count;
+} COFF_BigHeader;
+_Static_assert(sizeof(COFF_BigHeader) == 56, "WOAH");
+
+typedef struct {
     size_t symbol_idx;
     size_t section_idx;
     TB_ObjectSymbol* sym;
@@ -25,35 +40,56 @@ static int obj_symbol_cmp(const void* a, const void* b) {
     return sym_a->ordinal - sym_b->ordinal;
 }
 
-static bool fetch_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
-    assert(prefetch.length >= sizeof(COFF_FileHeader));
+static void process_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj);
+static bool step_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj, TB_Slice prefetch) {
     BCache_File* file = obj->file;
+    size_t file_header_offset = obj->offset + obj->skip_header;
 
-    // Object file:
-    //   Load symbol table and string table (which takes up the remainder of the
-    //   file after the symbols).
-    COFF_FileHeader header;
-    memcpy(&header, prefetch.data, sizeof(header));
-    size_t size_of_section_headers = header.section_count * sizeof(COFF_SectionHeader);
-    size_t symstr_table_size = obj->size - header.symbol_table;
+    switch (job->state) {
+        case 0: {
+            // Object file:
+            //   Load symbol table and string table (which takes up the remainder of the
+            //   file after the symbols).
+            size_t header_size;
+            if (obj->is_big) {
+                assert(prefetch.length >= sizeof(COFF_BigHeader));
 
-    obj->symbol_count     = header.symbol_count;
-    obj->symbol_table_pos = header.symbol_table;
-    obj->section_count    = header.section_count;
-    assert(sizeof(COFF_FileHeader) + size_of_section_headers <= obj->size);
+                COFF_BigHeader header;
+                memcpy(&header, prefetch.data, sizeof(header));
+                header_size = sizeof(header);
 
-    if (sizeof(COFF_FileHeader) + size_of_section_headers <= prefetch.length) {
-        // File header & section headers fit within the prefetch? cool, don't
-        // read more than we need then. We should tune these factors later
-        obj->io_rem = 1;
-        obj->sections = (uint8_t*) &prefetch.data[sizeof(COFF_FileHeader)];
-    } else {
-        obj->io_rem = 2;
-        tb_linker_read_req(l, file, file_header_offset + sizeof(COFF_FileHeader), size_of_section_headers, (void**) &obj->sections, obj, NULL);
+                obj->symbol_count     = header.symbol_count;
+                obj->symbol_table_pos = header.symbol_table;
+                obj->section_count    = header.section_count;
+            } else {
+                assert(prefetch.length >= sizeof(COFF_FileHeader));
+
+                COFF_FileHeader header;
+                memcpy(&header, prefetch.data, sizeof(header));
+                header_size = sizeof(header);
+
+                obj->symbol_count     = header.symbol_count;
+                obj->symbol_table_pos = header.symbol_table;
+                obj->section_count    = header.section_count;
+            }
+
+            size_t size_of_section_headers = obj->section_count * sizeof(COFF_SectionHeader);
+            assert(header_size + size_of_section_headers <= obj->size);
+            JOB_READ(1, file_header_offset + header_size, size_of_section_headers, (void**) &obj->sections);
+        }
+
+        case 1: {
+            size_t symstr_table_size = obj->size - obj->symbol_table_pos;
+            JOB_READ(2, file_header_offset + obj->symbol_table_pos, symstr_table_size, (void**) &obj->symbol_table);
+        }
+
+        case 2: {
+            process_obj_file(l, job, obj);
+            return true;
+        }
     }
 
-    tb_linker_read_req(l, file, file_header_offset + header.symbol_table, symstr_table_size, (void**) &obj->symbol_table, obj, NULL);
-    return false;
+    tb_todo();
 }
 
 typedef struct {
@@ -111,8 +147,9 @@ static TB_LinkerSectionPiece* load_section_piece(TB_Linker* l, TB_LinkerObject* 
 }
 
 static TB_LinkerSectionPiece UNKNOWN_LEADER;
-static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset) {
+static void process_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj) {
     BCache_File* file = obj->file;
+    size_t file_header_offset = obj->offset + obj->skip_header;
 
     size_t symbol_size      = obj->is_big ? sizeof(COFF_BigSymbol) : sizeof(COFF_Symbol);
     TB_COFF_Parser parser   = { obj->name, .is_big = obj->is_big };
@@ -158,8 +195,9 @@ static void process_obj_file(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefet
 
                 if (sec->raw_data_size != 0) {
                     // Fork out a parallel task
-                    l->jobs.count += 1;
-                    tb_linker_read_req(l, file, file_header_offset + sec->raw_data_pos, sec->raw_data_size, NULL, obj, pe_linker_parse_directives_io);
+                    // __builtin_debugtrap();
+                    // l->jobs.count += 1;
+                    // tb_linker_read_req(l, file, file_header_offset + sec->raw_data_pos, sec->raw_data_size, NULL, obj, pe_linker_parse_directives_io);
                 }
                 continue;
             }

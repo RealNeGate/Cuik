@@ -188,20 +188,27 @@ static TB_Slice cstr_into_slice(const char* str) {
     return (TB_Slice){ (const uint8_t*) str, len };
 }
 
+#define JOB_READ(next, offset, size, buffer) if (job->state = (next), !tb_linker_job_read_FAST(l, job, offset, size, (void**) buffer)) { return false; }
+
 #include "pe_link_obj.c"
 #include "pe_link_imp.c"
 #include "pe_link_lib.c"
 
-bool pe_classify_input(TB_Linker* l, TB_LinkerObject* obj) {
+static const char BIG_OBJ_MAGIC[] = {
+    '\xc7', '\xa1', '\xba', '\xd1', '\xee', '\xba', '\xa9', '\x4b',
+    '\xaf', '\x20', '\xfa', '\xf6', '\x6a', '\xa4', '\xdc', '\xb8',
+};
+
+bool pe_classify_input(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj) {
     BCache_File* file = obj->file;
 
     // if this object isn't at the base of the FD then it's an archive's object.
     // this means we'll need to parse the "archive file header".
-    TB_Slice content = { obj->prefetch_page, PREFETCH_BLOCK_SIZE };
+    TB_Slice content = { &file->raw_map[obj->offset], PREFETCH_BLOCK_SIZE };
     size_t file_header_offset = obj->offset;
     if (obj->offset > 0) {
         TB_LinkerArchive* lib = (TB_LinkerArchive*) obj->parent;
-        COFF_ArchiveMemberHeader* sym = (COFF_ArchiveMemberHeader*) obj->prefetch_page;
+        COFF_ArchiveMemberHeader* sym = (COFF_ArchiveMemberHeader*) content.data;
 
         assert(sym->size[0] != 0);
         obj->size = tb__parse_decimal_int(sizeof(sym->size), sym->size);
@@ -218,11 +225,7 @@ bool pe_classify_input(TB_Linker* l, TB_LinkerObject* obj) {
             }
 
             // Fetch lazily from longnames
-            obj->stage = 0;
-            if (!tb_linker_read_req_FAST(l, file, lib->longnames_base + num, str_limit - num, NULL, obj, NULL)) {
-                return false;
-            }
-            obj->stage = 1;
+            JOB_READ(0, lib->longnames_base + num, str_limit - num, NULL);
 
             // TODO(NeGate): unsafe approach to it
             uint8_t* str = &lib->header.file->raw_map[lib->longnames_base + num];
@@ -243,19 +246,22 @@ bool pe_classify_input(TB_Linker* l, TB_LinkerObject* obj) {
 
     // Classify file from magic numbers
     if (memcmp(content.data, "\0\0\xFF\xFF", 4) == 0) {
-        // Import
-        obj->fetch   = fetch_imp_file;
-        obj->process = process_imp_file;
+        if (content.length >= 12+16 && memcmp(BIG_OBJ_MAGIC, &content.data[12], 16) == 0) {
+            // BigCOFF
+            obj->is_big = true;
+            obj->step = step_obj_file;
+        } else {
+            // Import
+            obj->step = step_imp_file;
+        }
     } else if (memcmp(content.data, "!<arch>\n", 8) == 0) {
         // Library
-        obj->fetch   = fetch_lib_file;
-        obj->process = process_lib_file;
+        obj->step = step_lib_file;
     } else if ((content.data[0] == 0 && content.data[0] == 0) ||
                (content.data[0] == 0x64 && (content.data[1] == 0x86 || content.data[1] == 0xAA))
                ) {
         // Object
-        obj->fetch   = fetch_obj_file;
-        obj->process = process_obj_file;
+        obj->step = step_obj_file;
     } else {
         assert(0 && "TODO");
     }
@@ -733,6 +739,11 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
     tb_linker_complete_appends(l);
 
+    if (1) {
+        cuikperf_region_end();
+        return false;
+    }
+
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
     dyn_array_for(i, info->merges) {
     NL_Slice to_name = { info->merges[i].to.length, info->merges[i].to.data };
@@ -778,11 +789,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 
     if (0) {
         tb_linker_print_map(l);
-    }
-
-    if (0) {
-        cuikperf_region_end();
-        return false;
     }
 
     PE_ImageDataDirectory imp_dir, iat_dir;

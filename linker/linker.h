@@ -34,7 +34,7 @@ enum {
     // should at least be 60 (archive member header) + 20 (COFF header), rounded
     // to the next pow2.
     PREFETCH_BLOCK_SIZE = 1024,
-    FILE_BLOCK_SIZE     = 16*1024,
+    FILE_BLOCK_SIZE     = 4*1024,
 };
 
 typedef void TB_LinkerAppendFn(TPool* pool, void** args);
@@ -43,21 +43,12 @@ typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 typedef struct TB_LinkerObject TB_LinkerObject;
 typedef struct TB_LinkerArchive TB_LinkerArchive;
 
-typedef void BCache_Fn(TB_Linker* l, void* arg, TB_Slice content, bool io_thread);
+typedef struct BCache_Job BCache_Job;
+typedef bool BCache_Fn(TB_Linker* l, BCache_Job* job, void* arg);
 
 enum {
-    BCACHE_BUCKET_COUNT = 8,
-    BCACHE_BUCKET_SIZE  = 256,
+    BCACHE_MAX_SNOOPERS = 1024,
 };
-
-// typedef void BCache_Fn(TB_Linker* l, , TB_Slice data, bool is_io_thread);
-
-
-// This is a coroutine that's capable of BCache read requests
-typedef struct {
-    _Atomic(uint64_t) reserve;
-    _Atomic(uint64_t) commit;
-} BCache_Job;
 
 typedef struct {
     _Atomic(uint64_t) reserve;
@@ -75,52 +66,39 @@ typedef struct {
     BCache_Row rows[];
 } BCache_File;
 
-// None of our input files are allowed to
-// be bigger than 4GiB at the moment... i think?
-typedef struct BCache_Entry {
-    // chain of waiters to the same range
-    _Atomic(struct BCache_Entry*) next;
+// This is a coroutine that's capable of BCache read requests.
+struct BCache_Job {
+    BCache_File* file;
 
-    int fd, slot;
-    // Exact range
-    uint32_t offset, size;
-    // Task
+    // Wait state
+    struct {
+        // Defines the commit word we're snooping
+        uint32_t snoop_row;
+
+        // When doing reads, we only snoop one megablock (64 blocks)
+        // at a time and so we have a system to automatically begin looking
+        // for the next set of blocks when those come back.
+        uint32_t head;
+        uint32_t tail;
+
+        // Represents what we need the block word to look like
+        // for us to wake this task up again.
+        _Atomic uint64_t row_target;
+
+        _Atomic int lock;
+    } wait;
+
+    // Run state
+    int state;
     BCache_Fn* fn;
     void* arg;
-    // Word range
-    uint32_t first_word, word_count;
-    // Tally
-    _Atomic int io_rem;
-    // Track which blocks are ready in this request
-    _Atomic uint64_t bits[];
-} BCache_Entry;
-
-typedef struct {
-    _Atomic uint64_t claimed[BCACHE_BUCKET_SIZE / 64];
-    _Atomic(BCache_Entry*) entries[BCACHE_BUCKET_SIZE];
-} BCache_Bucket;
+};
 
 // block cache, we're not depending on the OS for file caching so
 // we need an approach to avoiding duplicate block reads.
 typedef struct {
-    // Each bucket is a separate wait list hashed by block
-    // address bits, the hope is that we can quickly enqueue
-    // to the list and do other work while we want for the read
-    // to come back.
-    BCache_Bucket buckets[BCACHE_BUCKET_COUNT];
+    _Atomic(BCache_Job*) entries[BCACHE_MAX_SNOOPERS];
 } BCache;
-
-typedef struct {
-    // relative to the FD
-    uint32_t offset;
-    uint32_t size;
-
-    // track how many blocks are missing before we can use this range.
-    _Atomic(int) io_rem;
-
-    // track if we're ready to issue tasks on it.
-    _Atomic(TB_LinkerSectionPiece*) pending;
-} TB_CacheRange;
 
 // basically an object file or a library
 struct TB_LinkerObject {
@@ -130,14 +108,14 @@ struct TB_LinkerObject {
 
     TB_LinkerObject* parent;
 
-    // returns true if we're able to process the input file without extra read requests
-    bool (*fetch)(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset);
-    void (*process)(TB_Linker* l, TB_LinkerObject* obj, TB_Slice prefetch, size_t file_header_offset);
+    // returns true, when the job has completed
+    bool (*step)(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj, TB_Slice prefetch);
 
     struct {
         BCache_File* file;
         size_t offset;
         size_t size;
+        bool classify;
 
         int stage;
 
@@ -145,17 +123,12 @@ struct TB_LinkerObject {
         bool is_big;
         size_t skip_header;
 
-        // this is the first peek, so we can get a look at the magic numbers and
-        // the rest of the header.
-        uint8_t* prefetch_page;
         uint8_t* sections;
 
         size_t symbol_count;
         size_t section_count;
         size_t symbol_table_pos;
         uint8_t* symbol_table;
-
-        BCache_Entry* request[2];
     };
 
     #ifdef CONFIG_HAS_TB
@@ -165,10 +138,6 @@ struct TB_LinkerObject {
 
     // Some section piece was marked that is contained by this object
     _Atomic bool live;
-
-    // Keep track of how many reads we need to complete before advancing, usually
-    // the answer is like 1 or 2.
-    _Atomic int io_rem;
 };
 
 struct TB_LinkerArchive {
@@ -435,7 +404,7 @@ typedef struct TB_LinkerVtbl {
 
     // if the input file is missing a name or size, we handle that here alongside
     // parsing the header to know what we're even looking at.
-    bool (*classify_input)(TB_Linker* l, TB_LinkerObject* obj);
+    bool (*classify_input)(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj);
 
     void (*parse_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
     bool (*export)(TB_Linker* l, const char* file_name);
@@ -574,8 +543,9 @@ bool tb_linker_layout(TB_Linker* l);
 void tb_linker_print_map(TB_Linker* l);
 void tb_linker_complete_appends(TB_Linker* l);
 
-bool tb_linker_read_req_FAST(TB_Linker* l, BCache_File* file, size_t offset, size_t size, void** buffer, void* arg, BCache_Fn* fn);
-void tb_linker_read_req(TB_Linker* l, BCache_File* file, size_t offset, size_t size, void** buffer, void* arg, BCache_Fn* fn);
+BCache_Job* tb_linker_new_job(TB_Linker* l, BCache_File* file, BCache_Fn* fn, void* arg);
+void tb_linker_job_read(TB_Linker* l, BCache_Job* job, size_t offset, size_t size, void** buffer);
+bool tb_linker_job_read_FAST(TB_Linker* l, BCache_Job* job, size_t offset, size_t size, void** buffer);
 
 void  tb_linker_worker_init(TB_Linker* l);
 void* tb_linker_moar_mem(size_t size);
