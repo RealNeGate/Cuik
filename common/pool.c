@@ -350,6 +350,8 @@ int _tpool_io_worker(void *ptr) {
             current_thread->used_entries[req_i / 64] &= ~(1ull << (req_i % 64));
             stats_requested_size += req.size, stats_requests += 1;
 
+            int res = mprotect(req.data, req.size, PROT_READ);
+
             // I/O response
             req.do_work(pool, &req);
             io_uring_cqe_seen(ring, cqe);
@@ -468,7 +470,7 @@ static void try_submit_io(TPool* pool, TPool_Thread* thread, bool force) {
 bool tpool_is_high_io_load(TPool* pool) {
     TPool_Thread* thread = &pool->threads[tpool_current_thread_idx];
     uint64_t est = estimate_io_load(thread);
-    return est > (POOL_IO_DEPTH * 3) / 4;
+    return est > (POOL_IO_DEPTH * 90) / 100;
 }
 
 static int grab_tasks(TPool* pool, TPool_Thread* current_thread, TPool_Queue* queue, TPool_Queue* io_comp, size_t n) {

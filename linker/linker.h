@@ -48,6 +48,7 @@ typedef bool BCache_Fn(TB_Linker* l, BCache_Job* job, void* arg);
 
 enum {
     BCACHE_MAX_SNOOPERS = 1024,
+    BCACHE_MAX_PROBES   = 16,
 };
 
 typedef struct {
@@ -59,6 +60,7 @@ typedef struct {
     int fd;
     size_t size;
     size_t row_count;
+    size_t block_count;
     // Virtual address range for the file, we're managing our own
     // cache.
     uint8_t* raw_map;
@@ -68,7 +70,10 @@ typedef struct {
 
 // This is a coroutine that's capable of BCache read requests.
 struct BCache_Job {
+    int id;
     BCache_File* file;
+
+    uint64_t read_start;
 
     // Readahead state
     BCache_File* last_read_file;
@@ -80,6 +85,9 @@ struct BCache_Job {
     struct {
         // Defines the commit word we're snooping
         uint32_t snoop_row;
+        // Represents what we need the block word to look like
+        // for us to wake this task up again.
+        uint64_t row_target;
 
         // When doing reads, we only snoop one megablock (64 blocks)
         // at a time and so we have a system to automatically begin looking
@@ -87,17 +95,15 @@ struct BCache_Job {
         uint32_t head;
         uint32_t tail;
 
-        // Represents what we need the block word to look like
-        // for us to wake this task up again.
-        _Atomic uint64_t row_target;
-
-        _Atomic int lock;
+        _Atomic Futex lock;
     } wait;
 
     // Run state
     int state;
     BCache_Fn* fn;
     void* arg;
+
+    char extra[];
 };
 
 // block cache, we're not depending on the OS for file caching so
@@ -170,6 +176,14 @@ struct TB_LinkerArchive {
     // Lazy parser state
     size_t symbol_i, string_head, string_tail;
     size_t munch_start, munch_start_sym;
+
+    // String can be interrupted midway through parsing, if so this
+    // value will be non-0 and represent the lastest byte position
+    // after a non-zero char.
+    size_t string_split;
+
+    uint64_t hashes;
+    uint64_t total_time;
 };
 
 typedef enum {
@@ -549,7 +563,9 @@ bool tb_linker_layout(TB_Linker* l);
 void tb_linker_print_map(TB_Linker* l);
 void tb_linker_complete_appends(TB_Linker* l);
 
-BCache_Job* tb_linker_new_job(TB_Linker* l, BCache_File* file, BCache_Fn* fn, void* arg);
+BCache_Job* tb_linker_job_new(TB_Linker* l, BCache_File* file, BCache_Fn* fn, void* arg, size_t extra);
+
+void tb_linker_job_file(BCache_Job* job, BCache_File* file);
 void tb_linker_job_read(TB_Linker* l, BCache_Job* job, size_t offset, size_t size, void** buffer);
 bool tb_linker_job_read_FAST(TB_Linker* l, BCache_Job* job, size_t offset, size_t size, void** buffer);
 

@@ -93,6 +93,11 @@ do {                                                          \
     (arr)[at] = __VA_ARGS__;                                  \
 } while (0)
 
+#define dyn_array_reserve(arr, i)                            \
+do {                                                         \
+    arr = dyn_array_internal_reserve2(arr, sizeof(*arr), i); \
+} while (0)
+
 #define dyn_array_put_uninit(arr, extra)                         \
 do {                                                             \
     size_t extra_ = (extra);                                     \

@@ -232,6 +232,17 @@ void cuikperf_region_start2(const char* label, size_t extra_len, const char* ext
     }
 }
 
+void cuikperf_region_start3(const char* label, int tid, uint64_t t) {
+    if (profiling) {
+        spall_buffer_begin_args(&ctx, &muh_buffer, label, strlen(label), NULL, 0, t, tid, 0);
+    }
+}
+
+void cuikperf_region_end3(int tid, uint64_t t) {
+    if (profiling) {
+        spall_buffer_end_ex(&ctx, &muh_buffer, t, tid, 0);
+    }
+}
 void cuikperf_region_end(void) {
     if (profiling) {
         uint64_t nanos = cuik_time_in_nanos();

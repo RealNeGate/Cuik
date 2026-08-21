@@ -225,6 +225,7 @@ bool pe_classify_input(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj) {
             }
 
             // Fetch lazily from longnames
+            assert(lib->longnames_base + str_limit < lib->header.file->size);
             JOB_READ(0, lib->longnames_base + num, str_limit - num, NULL);
 
             // TODO(NeGate): unsafe approach to it
@@ -740,6 +741,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     tb_linker_complete_appends(l);
 
     if (1) {
+        printf("A %zu\n", nbhm_count(&l->symbols));
         cuikperf_region_end();
         return false;
     }
@@ -1227,10 +1229,13 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         close_file_map(&fm);
     }
 
-    #if 0
-    extern _Atomic int total_reads, total_requests;
-    printf("A %d %d\n", total_reads, total_requests);
-    #endif
+    if (1) {
+        extern _Atomic int track_d;
+        printf("GC TASKS %d\n", track_d);
+
+        cuikperf_region_end();
+        return false;
+    }
 
     cuikperf_region_end();
     return true;

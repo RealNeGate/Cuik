@@ -14,24 +14,7 @@ typedef struct {
 } COFF_BigHeader;
 _Static_assert(sizeof(COFF_BigHeader) == 56, "WOAH");
 
-typedef struct {
-    size_t symbol_idx;
-    size_t section_idx;
-    TB_ObjectSymbol* sym;
-    COFF_AuxSectionSymbol* aux;
-} PendingCOMDAT;
-
-static void pe_linker_parse_directives(TPool* pool, void** args);
-static bool pe_linker_parse_import(TB_Linker* l, TB_Slice content);
-
-static void pe_linker_parse_directives_io(TB_Linker* l, void* arg, TB_Slice content, bool io_thread) {
-    void* args[3] = { l, (uint8_t*) content.data, (uint8_t*) content.data + content.length };
-    if (io_thread) {
-        tpool_io_forward(l->jobs.pool, false, pe_linker_parse_directives, 3, args);
-    } else {
-        tpool_add_task2(l->jobs.pool, false, pe_linker_parse_directives, 3, args);
-    }
-}
+static bool pe_linker_parse_directives(TB_Linker* l, BCache_Job* job, void* arg);
 
 static int obj_symbol_cmp(const void* a, const void* b) {
     const TB_ObjectSymbol* sym_a = (const TB_ObjectSymbol*)a;
@@ -75,12 +58,12 @@ static bool step_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj, T
 
             size_t size_of_section_headers = obj->section_count * sizeof(COFF_SectionHeader);
             assert(header_size + size_of_section_headers <= obj->size);
-            JOB_READ(1, file_header_offset + header_size, size_of_section_headers, (void**) &obj->sections);
+            JOB_READ(1, file_header_offset + header_size, size_of_section_headers, &obj->sections);
         }
 
         case 1: {
             size_t symstr_table_size = obj->size - obj->symbol_table_pos;
-            JOB_READ(2, file_header_offset + obj->symbol_table_pos, symstr_table_size, (void**) &obj->symbol_table);
+            JOB_READ(2, file_header_offset + obj->symbol_table_pos, symstr_table_size, &obj->symbol_table);
         }
 
         case 2: {
@@ -139,9 +122,11 @@ static TB_LinkerSectionPiece* load_section_piece(TB_Linker* l, TB_LinkerObject* 
     p->reloc_pos = parser->file_header_offset + sec->pointer_to_reloc;
     p->reloc_size = sec->num_reloc * sizeof(COFF_ImageReloc);
     p->relocs = NULL;
-
-    if (sec->num_reloc) {
-        p->relocs = &obj->file->raw_map[p->reloc_pos];
+    if (p->reloc_count) {
+        p->relocs = &p->obj->file->raw_map[p->reloc_pos];
+    }
+    if (sec_flags & IMAGE_SCN_LNK_COMDAT) {
+        p->flags |= TB_LINKER_PIECE_COMDAT;
     }
     return p;
 }
@@ -174,7 +159,7 @@ static void process_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj
     COFF_AuxSectionSymbol** comdat_sections = tb_linker_alloc_local(parser.section_count * sizeof(COFF_AuxSectionSymbol*));
 
     uint64_t order = obj->time;
-    TB_LinkerSymbol** symbol_map = tb_arena_alloc(&linker_perm_arena, parser.symbol_count * sizeof(TB_LinkerSymbol*));
+    TB_LinkerSymbol** symbol_map = tb_linker_moar_mem(parser.symbol_count * sizeof(TB_LinkerSymbol*));
 
     SectionParser sec_parser = {
         &parser, file_header_offset, symbol_map
@@ -194,10 +179,13 @@ static void process_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj
                 sec2piece[i] = NULL;
 
                 if (sec->raw_data_size != 0) {
+                    uint8_t* curr = &file->raw_map[file_header_offset + sec->raw_data_pos];
+                    uint8_t* end_directive = curr + sec->raw_data_size;
+
                     // Fork out a parallel task
-                    // __builtin_debugtrap();
-                    // l->jobs.count += 1;
-                    // tb_linker_read_req(l, file, file_header_offset + sec->raw_data_pos, sec->raw_data_size, NULL, obj, pe_linker_parse_directives_io);
+                    BCache_Job* job = tb_linker_job_new(l, obj->file, pe_linker_parse_directives, curr, sizeof(void*));
+                    *((void**) job->extra) = end_directive;
+                    tb_linker_job_read(l, job, file_header_offset + sec->raw_data_pos, sec->raw_data_size, NULL);
                 }
                 continue;
             }
@@ -219,8 +207,12 @@ static void process_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj
     size_t sym_count = 0;
     TB_ObjectSymbol* syms = tb_linker_alloc_local(parser.symbol_count * sizeof(TB_ObjectSymbol));
 
-    static _Thread_local DynArray(PendingCOMDAT) pending_indices = NULL;
+    static _Thread_local DynArray(TB_ObjectSymbol*) pending_indices = NULL;
     static _Thread_local DynArray(TB_ObjectSymbol*) weak_syms = NULL;
+
+    CUIK_TIMED_BLOCK("reserve") {
+        dyn_array_reserve(pending_indices, parser.symbol_count);
+    }
 
     CUIK_TIMED_BLOCK("apply symbols") {
         size_t i = 0;
@@ -269,8 +261,6 @@ static void process_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj
                         sec2piece[section_idx] = s->normal.piece = load_section_piece(l, obj, &sec_parser, sec, order + i);
                     } else {
                         sec2piece[section_idx] = NULL;
-
-                        s->normal.piece = (void*) 0xBAADBAAD;
                         s = new_s;
                     }
                     goto skip;
@@ -281,8 +271,8 @@ static void process_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj
                         comdat_sections[section_idx] = sym->extra;
                     }
 
-                    PendingCOMDAT pending = { i, section_idx, sym, comdat_aux };
-                    dyn_array_put(pending_indices, pending);
+                    assert(sym->ordinal == i);
+                    dyn_array_put(pending_indices, sym);
                     goto skip;
                 } else if (p == NULL) {
                     // If we're not COMDAT bs we should have a section piece
@@ -322,12 +312,20 @@ static void process_obj_file(TB_Linker* l, BCache_Job* job, TB_LinkerObject* obj
     if (dyn_array_length(pending_indices) > 0) {
         cuikperf_region_start("COMDAT", NULL);
 
-        dyn_array_for(i, pending_indices) {
-            size_t symbol_idx = pending_indices[i].symbol_idx;
-            size_t section_idx = pending_indices[i].section_idx;
+        #if 0
+        static const char sss[] = "PassBuilder.cpp.obj";
+        if (obj->name.length == sizeof(sss)-1 && memcmp(obj->name.data, sss, sizeof(sss)-1) == 0) {
+            __builtin_debugtrap();
+            printf("Pending: %zu\n", dyn_array_length(pending_indices));
+        }
+        #endif
 
-            TB_ObjectSymbol* sym = pending_indices[i].sym;
-            COFF_AuxSectionSymbol* comdat_aux = pending_indices[i].aux;
+        dyn_array_for(i, pending_indices) {
+            TB_ObjectSymbol* sym = pending_indices[i];
+            COFF_AuxSectionSymbol* comdat_aux = sym->extra;
+
+            size_t symbol_idx = sym->ordinal;
+            size_t section_idx = sym->section_num - 1;
 
             TB_LinkerSymbol* s = tb_linker_moar_mem(sizeof(TB_LinkerSymbol));
             if (comdat_aux != NULL && comdat_aux->selection == 5) {
@@ -409,13 +407,14 @@ static bool strsuffix(const uint8_t* str, const char* suf, size_t len) {
     return len >= suflen && memcmp(&str[len - suflen], suf, suflen) == 0;
 }
 
-static void pe_linker_parse_directives(TPool* pool, void** args) {
+static bool pe_linker_parse_directives(TB_Linker* l, BCache_Job* job, void* arg) {
+    COFF_SectionHeader* sec = arg;
     cuikperf_region_start("directives", NULL);
-
-    TB_Linker* l = args[0];
-    const uint8_t* curr = args[1];
-    const uint8_t* end_directive = args[2];
     tb_linker_worker_init(l);
+
+    BCache_File* file = job->file;
+    const uint8_t* curr = arg;
+    const uint8_t* end_directive = *((void**) job->extra);
 
     while (curr != end_directive) {
         while (curr != end_directive && *curr == ' ') {
@@ -526,6 +525,6 @@ static void pe_linker_parse_directives(TPool* pool, void** args) {
     }
 
     cuikperf_region_end();
-    tb_linker_job_done(l);
+    return true;
 }
 

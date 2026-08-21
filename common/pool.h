@@ -40,6 +40,8 @@ struct TPool {
     Futex tasks_left;
 };
 
+extern TPool_Thread_Local int tpool_current_thread_idx;
+
 void tpool_init(TPool *pool, int child_thread_count);
 void tpool_add_task(TPool *pool, bool hi_prio, tpool_task_proc* fn, void* val);
 void tpool_add_task2(TPool *pool, bool hi_prio, tpool_task_proc* fn, int arg_count, void** args);

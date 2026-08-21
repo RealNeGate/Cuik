@@ -29,6 +29,10 @@ void cuikperf_region_start(const char* fmt, const char* extra);
 void cuikperf_region_start2(const char* fmt, size_t extra_len, const char* extra);
 void cuikperf_region_end(void);
 
+// Special
+void cuikperf_region_start3(const char* label, int tid, uint64_t t);
+void cuikperf_region_end3(int tid, uint64_t t);
+
 uint64_t cuik_special_time(uint64_t x);
 
 // Usage:
