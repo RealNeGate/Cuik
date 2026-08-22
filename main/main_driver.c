@@ -227,7 +227,9 @@ int main(int argc, const char** argv) {
     }
 
     #if CUIK_ALLOW_THREADS
-    tpool_destroy(&pool);
+    if (args.threads > 0) {
+        tpool_destroy(&pool);
+    }
     #endif
 
     if (args.time_report) {

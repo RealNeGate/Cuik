@@ -168,7 +168,6 @@ typedef struct {
     // for the first token
     TknType type;
     String key;
-    String val;
     SourceRange loc;
 
     // location in the local token cache of the expanded macros
@@ -663,7 +662,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                         push_token(ctx, first);
 
                         cuikperf_region_start2("expand", first.content.length, (const char*) first.content.data);
-                        expand_identifier(ctx, slot, NULL, start, start+1, 0, def, 0, NULL);
+                        expand_identifier(ctx, slot, NULL, start, 0, def, 0, NULL);
                         cuikperf_region_end();
 
                         // classify any newly-generated identifiers

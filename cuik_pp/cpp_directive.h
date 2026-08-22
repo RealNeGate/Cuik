@@ -292,29 +292,36 @@ static DirectiveResult cpp__undef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
 static char* parse_directive_path(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, bool* is_lib_include) {
     int start = dyn_array_length(ctx->tokens.list.tokens);
 
-    // place all the tokens on this line into the buffer to be expanded
-    Token t;
-    for (;;) {
-        t = cpp_lexer_read(slot);
-        if (t.type == 0 || t.hit_line) { break; }
-        push_token(ctx, t);
+    size_t len = 0;
+    char* filename = tb_arena_alloc(&ctx->perm_arena, FILENAME_MAX);
 
-        size_t def_i;
-        if (t.type == TOKEN_IDENTIFIER) {
-            MacroDef* def = find_define(ctx, t.content.data, t.content.length);
-            if (def != NULL) {
-                int head = dyn_array_length(ctx->tokens.list.tokens);
-                expand_identifier(ctx, slot, NULL, head-1, head, 0, def, 0, NULL);
+    Token t = cpp_lexer_read(slot);
+    if (t.type == TOKEN_STRING_DOUBLE_QUOTE || t.type == '<') {
+        // place all the tokens on this line into the buffer to be expanded
+        while (t.type != 0 && !t.hit_line) {
+            push_token(ctx, t);
+            t = cpp_lexer_read(slot);
+        }
+    } else {
+        // place all the tokens on this line into the buffer to be expanded
+        while (t.type != 0 && !t.hit_line) {
+            push_token(ctx, t);
+
+            size_t def_i;
+            if (t.type == TOKEN_IDENTIFIER) {
+                MacroDef* def = find_define(ctx, t.content.data, t.content.length);
+                if (def != NULL) {
+                    int head = dyn_array_length(ctx->tokens.list.tokens);
+                    expand_identifier(ctx, slot, NULL, head-1, 0, def, 0, NULL);
+                }
             }
+            t = cpp_lexer_read(slot);
         }
     }
 
     // revert to before the line
     int end = dyn_array_length(ctx->tokens.list.tokens);
     cpp_lexer_seek(slot, (unsigned char*) t.content.data);
-
-    size_t len = 0;
-    char* filename = tb_arena_alloc(&ctx->perm_arena, FILENAME_MAX);
 
     DynArray(Token) tokens = ctx->tokens.list.tokens;
     if (start == end) {

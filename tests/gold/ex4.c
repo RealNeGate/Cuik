@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <assert.h>
 
-#if 1
+#if 0
 static const char str[] = "Paused my existence sesh to be here";
 int main() {
     uint64_t h = xxh_64(str, sizeof(str)-1, 0);
@@ -34,7 +34,7 @@ uint64_t xxh_64 (const void *key, int len, uint64_t h) {
     uint64_t s64 = (s[2] + p5);
     if (len > 32) {
         s64  = ((s[0] << 1)  | (s[0] >> 63)) + ((s[1] << 7)  | (s[1] >> 57)) +
-        ((s[2] << 12) | (s[2] >> 52)) + ((s[3] << 18) | (s[3] >> 46));
+            ((s[2] << 12) | (s[2] >> 52)) + ((s[3] << 18) | (s[3] >> 46));
         for (int i=0; i<4;i++) {
             uint64_t ps = (((s[i]*p2) << 31) | ((s[i]*p2) >> 33))*p1;
             s64 = (s64 ^ ps)*p1 + p4;

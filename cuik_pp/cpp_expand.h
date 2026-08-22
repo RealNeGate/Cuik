@@ -82,6 +82,8 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
 }
 
 static void dump_tokens(Cuik_CPP* restrict ctx, const char* tag, int start, int end, int depth) {
+    assert(start <= end);
+
     #if 0
     FOR_N(i, 0, depth) {
         printf("  ");
@@ -92,7 +94,10 @@ static void dump_tokens(Cuik_CPP* restrict ctx, const char* tag, int start, int 
         if (t.expanded) {
             printf("\x1b[32m");
         }
-        printf("%.*s ", (int)t.content.length, t.content.data);
+        if (1 || t.has_space) {
+            printf(" ");
+        }
+        printf("%.*s", (int)t.content.length, t.content.data);
         if (t.expanded) {
             printf("\x1b[0m");
         }
@@ -132,7 +137,7 @@ static Token quote_token_array(Cuik_CPP* restrict ctx, SourceLoc loc, int start,
         Token* t = &ctx->tokens.list.tokens[i];
 
         uint32_t pos = t->location.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
-        if (last_pos >= 0 && pos != last_pos) {
+        if (i != start && t->has_space) {
             stringized[str_len++] = ' ';
         }
 
@@ -178,7 +183,7 @@ static InvokeCursor advance(InvokeCursor c) {
 
 static bool invoke_eat(Cuik_CPP* restrict ctx, CPPStackSlot* slot, Token* out_t, InvokeCursor* c, TknType type) {
     InvokeCursor next = advance(*c);
-    if (c->elem == NULL) {
+    if (next.elem == NULL) {
         if (slot == NULL) {
             return false;
         }
@@ -212,13 +217,13 @@ static Token read_one(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeCursor* 
     }
 }
 
-// returns the number of newly inserted tokens at the read_head
-static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeElem* parent, int read_head, int end_token, uint32_t parent_macro, MacroDef* def, int depth, int* out_read_tail) {
+// returns the size of the expanded region which goes at the very end of the token stream
+static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeElem* parent, int read_head, uint32_t parent_macro, MacroDef* def, int depth, int* out_read_tail) {
     if (expand_builtin_idents(ctx, &ctx->tokens.list.tokens[read_head])) {
-        return 0;
+        return 1;
     }
 
-    assert(end_token <= dyn_array_length(ctx->tokens.list.tokens));
+    int end_token = dyn_array_length(ctx->tokens.list.tokens);
     InvokeElem invoke_elem = { parent, read_head, end_token };
     InvokeCursor cursor = { &invoke_elem, read_head };
 
@@ -247,7 +252,6 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
 
     TB_ArenaSavepoint sp = tb_arena_save(&ctx->tmp_arena);
     ArenaArray(MacroArg) args = NULL;
-    ArenaArray(int) args_to_expand = NULL;
     bool has_varargs = false;
 
     int read_tail = read_head+1;
@@ -259,7 +263,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
         Token arg_t;
         if (!invoke_eat(ctx, slot, &arg_t, &cursor, '(')) {
             if (out_read_tail) { *out_read_tail = read_tail; }
-            return 0;
+            return 1;
         }
 
         // Construct substitution table
@@ -329,7 +333,6 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
             } while (arg_head <= end_token);
 
             read_tail = arg_head;
-            dump_tokens(ctx, "With args", read_head, read_tail, depth);
         }
 
         // if the expanded array didn't contain the entire arg list, we'll fill in the remaining bits
@@ -355,6 +358,8 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
             read_tail = dyn_array_length(ctx->tokens.list.tokens);
             end_token = read_tail;
         }
+
+        dump_tokens(ctx, "With args", read_head, read_tail, depth);
         assert(parens == 0);
 
         // token array is stable at the moment, let's cache the pointer
@@ -375,7 +380,6 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
 
             MacroArg a = { .key = arg_t.content };
             args[arg_c].token_start = arg_head - 1;
-            args[arg_c].val.data = arg_t.content.data;
 
             bool is_vararg = has_varargs ? arg_c == aarray_length(args)-1 : false;
             int parens = 0;
@@ -396,13 +400,10 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
             }
             assert(parens == 0);
 
-            args[arg_c].val.length = (arg_t.content.data - args[arg_c].val.data);
             args[arg_c].token_end = arg_head - 1;
             arg_c += 1;
         }
         assert(arg_t.type == ')');
-
-        args_to_expand = aarray_create(&ctx->tmp_arena, int, 8);
     }
 
     if (out_read_tail) {
@@ -411,18 +412,15 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
 
     // special case, the macro is empty
     if (def_str.length == 0) {
-        size_t start = dyn_array_length(ctx->tokens.list.tokens);
-        if (start != read_tail) {
-            memmove(&ctx->tokens.list.tokens[read_head], &ctx->tokens.list.tokens[read_tail], (start - read_tail) * sizeof(Token));
-        }
-        ptrdiff_t diff = -(read_tail - read_head);
-        dyn_array_set_length(ctx->tokens.list.tokens, start + diff);
+        dyn_array_set_length(ctx->tokens.list.tokens, read_head);
         tb_arena_restore(&ctx->tmp_arena, sp);
-        return diff + dt;
+        return 0;
     }
 
-    // Subst & Stringize
+    // Subst & Stringize, because of argument prescan we don't expand tokens
+    // which contribute to # or ##
     bool has_space = t.has_space;
+    bool was_dhash = false;
     size_t start = dyn_array_length(ctx->tokens.list.tokens);
     for (;;) {
         Token def_t = lexer_read(&def_lexer);
@@ -434,6 +432,7 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
             def_t.has_space = true;
             has_space = false;
         }
+
 
         if (def_t.type == TOKEN_HASH) {
             Token next_t = lexer_read(&def_lexer);
@@ -458,22 +457,63 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
             }
         } else if (def_t.type == TOKEN_IDENTIFIER) {
             ptrdiff_t arg = find_arg(args, def_t.content);
+
             if (arg >= 0) {
+                dump_tokens(ctx, "Arg pre-expand", args[arg].token_start, args[arg].token_end, depth + 1);
+
                 if (args[arg].token_start != args[arg].token_end) {
-                    // subst, just paste all the tokens into the final stream
+                    bool block = was_dhash;
+                    if (!block) {
+                        Lexer saved = def_lexer;
+                        Token peek = lexer_read(&saved);
+                        block = (peek.type == TOKEN_DOUBLE_HASH);
+                    }
+
                     size_t first_subst_token = dyn_array_length(ctx->tokens.list.tokens);
-                    aarray_push(args_to_expand, first_subst_token);
-                    FOR_N(i, args[arg].token_start, args[arg].token_end) {
-                        push_token(ctx, ctx->tokens.list.tokens[i]);
+                    if (block) {
+                        FOR_N(i, args[arg].token_start, args[arg].token_end) {
+                            Token t = ctx->tokens.list.tokens[i];
+                            push_token(ctx, t);
+                        }
+                    } else {
+                        // subst & expand arguments
+                        FOR_N(i, args[arg].token_start, args[arg].token_end) {
+                            Token t = ctx->tokens.list.tokens[i];
+                            if (!t.expanded && t.type == TOKEN_IDENTIFIER) {
+                                // if it failed to expand, it can't expand later during the rescan
+                                MacroDef* kid_def = find_define(ctx, t.content.data, t.content.length);
+                                if (kid_def != NULL) {
+                                    int kid_i = dyn_array_length(ctx->tokens.list.tokens);
+                                    push_token(ctx, t);
+
+                                    InvokeElem nested = { parent, i + 1, args[arg].token_end };
+
+                                    int kid_tail;
+                                    int kid_count = expand_identifier(ctx, NULL, &nested, kid_i, macro_id, kid_def, depth + 2, &kid_tail);
+
+                                    assert(kid_count >= 0);
+                                    i += (kid_tail - kid_i) - 1;
+                                    continue;
+                                } else {
+                                    t.expanded = true;
+                                }
+                            }
+                            push_token(ctx, t);
+                        }
                     }
 
                     // first token inherits the leading space from the def_t
-                    ctx->tokens.list.tokens[first_subst_token].has_space = def_t.has_space;
-                    aarray_push(args_to_expand, dyn_array_length(ctx->tokens.list.tokens));
+                    if (first_subst_token < dyn_array_length(ctx->tokens.list.tokens)) {
+                        ctx->tokens.list.tokens[first_subst_token].has_space = def_t.has_space;
+                    }
+
+                    dump_tokens(ctx, "Arg post-expand", first_subst_token, dyn_array_length(ctx->tokens.list.tokens), depth + 1);
                 }
                 continue;
             }
         }
+
+        was_dhash = (def_t.type == TOKEN_DOUBLE_HASH);
 
         // convert token location into macro relative
         if ((def_t.location.raw & SourceLoc_IsMacro) == 0) {
@@ -483,13 +523,16 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
         push_token(ctx, def_t);
     }
 
+    dump_tokens(ctx, "Post-subst", start, dyn_array_length(ctx->tokens.list.tokens), depth);
+
     // Concat tokens
     size_t end = dyn_array_length(ctx->tokens.list.tokens);
     size_t j = start;
     for (size_t i = start; i < end;) {
         Token* t = &ctx->tokens.list.tokens[i];
-        if (t->type == TOKEN_DOUBLE_HASH) {
+        if (!t->expanded && t->type == TOKEN_DOUBLE_HASH) {
             if (j > start && i+1 < end) {
+                bool has_space = ctx->tokens.list.tokens[j-1].has_space;
                 String a = ctx->tokens.list.tokens[j-1].content;
                 String b = ctx->tokens.list.tokens[i+1].content;
 
@@ -503,16 +546,15 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
                 Lexer scratch = { 0, 0, out, out };
                 Token joined = lexer_read(&scratch);
                 joined.location = ctx->tokens.list.tokens[i].location;
+                joined.has_space = has_space;
+
+                if (joined.type == TOKEN_DOUBLE_HASH) {
+                    joined.expanded = true;
+                }
 
                 // shrink the token list
                 ctx->tokens.list.tokens[j-1] = joined;
                 i += 2;
-
-                // the resulting token can be expanded
-                if (args_to_expand) {
-                    aarray_push(args_to_expand, j-1);
-                    aarray_push(args_to_expand, j);
-                }
             } else {
                 // We can join a with "nothing", just skip the double hash and leave the rest of the
                 // tokens alone
@@ -532,57 +574,58 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
     }
 
     dump_tokens(ctx, "Pre-expand", start, end, depth);
-
-    // Expand arguments
-    if (args_to_expand) {
-        int shift = 0;
-        FOR_N(i, 0, aarray_length(args_to_expand)/2) {
-            int local_start = shift+args_to_expand[i*2 + 0];
-            int local_end   = shift+args_to_expand[i*2 + 1];
-            for (int j = local_start; j < local_end;) {
-                Token* t = &ctx->tokens.list.tokens[j];
-
-                if (!t->expanded && t->type == TOKEN_IDENTIFIER) {
-                    // if it failed to expand, it can't expand later during the rescan
-                    MacroDef* kid_def = find_define(ctx, t->content.data, t->content.length);
-                    if (kid_def != NULL) {
-                        int old_top = dyn_array_length(ctx->tokens.list.tokens);
-
-                        int kid_read_tail;
-                        ptrdiff_t kid_dt = expand_identifier(ctx, NULL, NULL, j, local_end, macro_id, kid_def, depth+1, &kid_read_tail);
-                        end += kid_dt;
-                        local_end += kid_dt;
-                        shift += kid_dt;
-                        assert(end >= start);
-                        assert(dyn_array_length(ctx->tokens.list.tokens) == old_top + kid_dt);
-
-                        j = kid_read_tail + kid_dt;
-                        continue;
-                    } else {
-                        t->expanded = true;
-                    }
-                }
-                j += 1;
-            }
-        }
-    }
-
     size_t hidden = hide_macro(ctx, def);
 
     // Rescanning
     for (int i = start; i < end;) {
         Token* t = &ctx->tokens.list.tokens[i];
+        push_token(ctx, *t);
 
         size_t def_i;
         if (!t->expanded && t->type == TOKEN_IDENTIFIER) {
             MacroDef* kid_def = find_define(ctx, t->content.data, t->content.length);
             if (kid_def != NULL) {
-                int kid_read_tail;
-                ptrdiff_t kid_dt = expand_identifier(ctx, slot, &invoke_elem, i, end, macro_id, kid_def, depth+1, &kid_read_tail);
-                end += kid_dt;
-                assert(end >= start);
+                size_t kid_i = dyn_array_length(ctx->tokens.list.tokens) - 1;
+                InvokeElem nested = { parent, i + 1, end }; // { parent, read_head, end_token };
 
-                i = kid_read_tail + kid_dt;
+                // push ident to the end, we'll replace it and then copy it down
+                int kid_tail;
+                int kid_count = expand_identifier(ctx, slot, &nested, kid_i, macro_id, kid_def, depth+1, &kid_tail);
+
+                DynArray(Token) tokens = ctx->tokens.list.tokens;
+                size_t top = dyn_array_length(tokens);
+                dump_tokens(ctx, "Pre", start, top, depth);
+
+                assert(kid_i == top - kid_count);
+                size_t old_size = (kid_tail - kid_i);
+                dump_tokens(ctx, "Old", i, i + old_size, depth);
+                dump_tokens(ctx, "New", kid_i, kid_i + kid_count, depth);
+
+                size_t shift = 0;
+                if (kid_count > old_size) {
+                    shift = kid_count - old_size;
+
+                    // shift up entries at i up
+                    dyn_array_put_uninit(tokens, shift);
+                    FOR_REV_N(j, 0, dyn_array_length(tokens) - (i + shift)) {
+                        tokens[i + j + shift] = tokens[i + j];
+                    }
+                }
+                dump_tokens(ctx, "Mid", start, dyn_array_length(tokens), depth);
+
+                // copy expanded tokens into their place
+                FOR_N(j, 0, kid_count) {
+                    tokens[i + j] = tokens[kid_i + shift + j];
+                }
+
+                size_t new_len = (kid_i + kid_count) - old_size;
+                dyn_array_set_length(tokens, new_len);
+                ctx->tokens.list.tokens = tokens;
+                dump_tokens(ctx, "Insert", start, dyn_array_length(tokens), depth);
+
+                // skip expanded tokens
+                end += kid_count - old_size;
+                i   += kid_count;
                 continue;
             } else if (string_equals(&macro_name, &t->content)) {
                 t->expanded = true;
@@ -596,35 +639,14 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
     dump_tokens(ctx, "Copying into", read_head, read_tail, depth);
     assert(end >= start);
 
-    // Fast path, replacing a single token with a single token
-    ptrdiff_t len = dyn_array_length(ctx->tokens.list.tokens);
-    ptrdiff_t diff = (end - start) - (read_tail - read_head);
-    if ((end - start) == 1 && (read_tail - read_head) == 1) {
-        ctx->tokens.list.tokens[read_head] = ctx->tokens.list.tokens[start];
-    } else {
-        // Replace the tokens at the read_head
-        int old = read_tail - read_head;
-        int new = end - start;
-        if (old >= new) {
-            // we're shrinking, just copy the end piece into the middle and shift everyone
-            // down to fit.
-            int leftover = old - new;
-            memcpy(&ctx->tokens.list.tokens[read_head], &ctx->tokens.list.tokens[start], new * sizeof(Token));
-            if (start != read_tail) {
-                memmove(&ctx->tokens.list.tokens[read_head + new], &ctx->tokens.list.tokens[read_tail], (start - read_tail) * sizeof(Token));
-            }
-        } else {
-            int extra = new - old;
-            dyn_array_put_uninit(ctx->tokens.list.tokens, extra);
-
-            // shift up and then insert the entries
-            memmove(&ctx->tokens.list.tokens[read_tail + extra], &ctx->tokens.list.tokens[read_tail], (len - read_tail) * sizeof(Token));
-            memmove(&ctx->tokens.list.tokens[read_head], &ctx->tokens.list.tokens[start + extra], new * sizeof(Token));
-        }
+    // We're replacing the token at read_head
+    size_t new_len = read_head + (end - start);
+    FOR_N(i, 0, end - start) {
+        ctx->tokens.list.tokens[read_head + i] = ctx->tokens.list.tokens[start + i];
     }
+    dyn_array_set_length(ctx->tokens.list.tokens, new_len);
 
-    dyn_array_set_length(ctx->tokens.list.tokens, start + diff);
-    dump_tokens(ctx, "Copied", 0, dyn_array_length(ctx->tokens.list.tokens), depth);
+    dump_tokens(ctx, "Copied", read_head, dyn_array_length(ctx->tokens.list.tokens), depth);
     tb_arena_restore(&ctx->tmp_arena, sp);
-    return dt + diff;
+    return end - start;
 }

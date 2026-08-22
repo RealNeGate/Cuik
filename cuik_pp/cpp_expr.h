@@ -10,17 +10,20 @@ static intmax_t eval_ternary(Cuik_CPP* restrict c, ExprParser* in);
 static intmax_t eval_ternary_safe(Cuik_CPP* restrict c, ExprParser* in);
 
 static intmax_t eval(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot) {
-    DynArray(Token) tokens = ctx->tokens.list.tokens;
-    int start = dyn_array_length(tokens);
+    int start = dyn_array_length(ctx->tokens.list.tokens);
 
     // place all the tokens on this line into the buffer to be expanded
     Token t;
     for (;;) {
         t = cpp_lexer_read(slot);
         if (t.type == 0 || t.hit_line) { break; }
+
+        // We're caching it here for convenience but pointer invalidation is a
+        // really easy bug to fall into here... i would know
         push_token(ctx, t);
 
         size_t def_i;
+        DynArray(Token) tokens = ctx->tokens.list.tokens;
         if (t.type == TOKEN_IDENTIFIER) {
             SourceLoc loc = t.location;
             int head = dyn_array_length(tokens) - 1;
@@ -52,7 +55,8 @@ static intmax_t eval(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot) {
             } else {
                 MacroDef* def = find_define(ctx, t.content.data, t.content.length);
                 if (def != NULL) {
-                    expand_identifier(ctx, slot, NULL, head, head+1, 0, def, 0, NULL);
+                    expand_identifier(ctx, slot, NULL, head, 0, def, 0, NULL);
+                    tokens = ctx->tokens.list.tokens;
                 }
             }
 
@@ -70,15 +74,14 @@ static intmax_t eval(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot) {
     // EOL token
     push_token(ctx, (Token){ 0 });
 
-    ctx->tokens.list.tokens = tokens;
-    ExprParser p = { tokens, start };
+    // read-only use of the tokens
+    ExprParser p = { ctx->tokens.list.tokens, start };
     intmax_t result = eval_ternary_safe(ctx, &p);
-    dyn_array_set_length(tokens, start);
+    dyn_array_set_length(ctx->tokens.list.tokens, start);
     return result;
 
     error:
-    dyn_array_set_length(tokens, start);
-    ctx->tokens.list.tokens = tokens;
+    dyn_array_set_length(ctx->tokens.list.tokens, start);
     return 0;
 }
 
