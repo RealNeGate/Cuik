@@ -78,7 +78,7 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
     if ((src->type == TB_CMP_SLT || src->type == TB_CMP_ULT) &&
         src->inputs[1]->type == TB_ICONST &&
         src->inputs[2]->type != TB_ICONST
-    ) {
+        ) {
         TB_Node* new_cmp = tb_alloc_node(f, src->type == TB_CMP_SLT ? TB_CMP_SLE : TB_CMP_ULE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
         set_input(f, new_cmp, src->inputs[2], 1);
         set_input(f, new_cmp, src->inputs[1], 2);
@@ -94,7 +94,7 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
     if ((src->type == TB_CMP_SLE || src->type == TB_CMP_ULE) &&
         src->inputs[1]->type == TB_ICONST &&
         src->inputs[2]->type != TB_ICONST
-    ) {
+        ) {
         TB_Node* new_cmp = tb_alloc_node(f, src->type == TB_CMP_SLE ? TB_CMP_SLT : TB_CMP_ULT, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
         set_input(f, new_cmp, src->inputs[2], 1);
         set_input(f, new_cmp, src->inputs[1], 2);

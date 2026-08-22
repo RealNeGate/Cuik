@@ -1159,8 +1159,6 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
     }
 
     TB_OPTDEBUG(LOOP)(tb_print(f));
-    TB_OPTDEBUG(LOOP)(__debugbreak());
-
     return true;
 }
 

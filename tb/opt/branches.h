@@ -446,12 +446,12 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
 
     /* if (br->succ_count == 2) {
-        TB_NodeBranchProj* if_br = cfg_if_branch(n);
-        if (if_br && if_br->key == 0) {
-            TB_Node* cmp_node = n->inputs[1];
-            TB_NodeTypeEnum cmp_type = cmp_node->type;
+    TB_NodeBranchProj* if_br = cfg_if_branch(n);
+    if (if_br && if_br->key == 0) {
+    TB_Node* cmp_node = n->inputs[1];
+    TB_NodeTypeEnum cmp_type = cmp_node->type;
 
-        }
+    }
     } */
 
     return NULL;
@@ -481,7 +481,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
         if (
             target->tag == LATTICE_PTRCON &&
             target->_ptr->tag == TB_SYMBOL_FUNCTION
-        ) {
+            ) {
             // the IPSCCP rets are stored in the shape of the root node's type
             callee = (TB_Function*) target->_ptr;
             rets = callee->ipsccp_ret;
@@ -630,6 +630,51 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
         return n;
     }
 
+    // if (select(x < Y, x < Z, 0)) => if(x < select(Y < Z, Y, Z))
+    //
+    // this seems bigger but in practice it'll optimize better since we're
+    // more likely to be able to hoist the bound
+    if (cmp->type == TB_SELECT) {
+        TB_Node* pred_pred = cmp->inputs[1];
+
+        uint64_t comparand;
+        if ((pred_pred->type == TB_CMP_SLT || pred_pred->type == TB_CMP_ULT) &&
+            cmp->inputs[2]->type == pred_pred->type &&
+            cmp->inputs[1]->inputs[1] == cmp->inputs[2]->inputs[1] &&
+            get_int_const(cmp->inputs[3], &comparand) &&
+            comparand == 0) {
+            // LHS_a = LHS_b, RHS = min(RHS_a, RHS_b)
+            TB_Node* lhs   = cmp->inputs[1]->inputs[1];
+            TB_Node* rhs_a = cmp->inputs[1]->inputs[2];
+            TB_Node* rhs_b = cmp->inputs[2]->inputs[2];
+            TB_NodeTypeEnum op = pred_pred->type == TB_CMP_SLT ? TB_CMP_SLT : TB_CMP_ULT;
+
+            // rhs_a < rhs_b
+            TB_Node* min_cmp = tb_alloc_node(f, op, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+            set_input(f, min_cmp, rhs_a, 1);
+            set_input(f, min_cmp, rhs_b, 2);
+            TB_NODE_SET_EXTRA(min_cmp, TB_NodeCompare, .cmp_dt = lhs->dt);
+
+            // rhs = min(rhs_a, rhs_b)
+            TB_Node* rhs = tb_alloc_node(f, TB_SELECT, lhs->dt, 4, 0);
+            set_input(f, rhs, min_cmp, 1);
+            set_input(f, rhs, rhs_a,   2);
+            set_input(f, rhs, rhs_b,   3);
+
+            TB_Node* new_cmp = tb_alloc_node(f, op, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+            set_input(f, new_cmp, lhs, 1);
+            set_input(f, new_cmp, rhs, 2);
+            TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = lhs->dt);
+
+            set_input(f, n, new_cmp, 1);
+
+            mark_node(f, min_cmp);
+            mark_node(f, rhs);
+            mark_node(f, new_cmp);
+            return n;
+        }
+    }
+
     // If-conversion
     //   (a && b) => (a ? b : 0)
     //   (a || b) => (a ? 1 : b)
@@ -656,7 +701,7 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
                 n->inputs[0]->user_count == 1 &&
                 USERN(other_proj)->user_count == 1 &&
                 USERN(other_proj2)->user_count == 1
-            ) {
+                ) {
                 TB_ASSERT(NODE_ISA(shared_edge, REGION));
                 int shared_i  = USERI(USERN(other_proj)->users);
                 int shared_i2 = USERI(USERN(other_proj2)->users);
@@ -693,15 +738,15 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
                     set_input(f, n, before, 0);
 
                     TB_Node* selector = tb_alloc_node(f, TB_SELECT, n->inputs[1]->dt, 4, 0);
-                    TB_Node* false_node = make_int_node(f, n->inputs[1]->dt, 0);
                     if (index) {
-                        // TB_Node* true_node = make_int_node(f, n->inputs[1]->dt, 1);
-                        // a ? 0 : b
+                        // a ? 1 : b
+                        TB_Node* true_node = make_int_node(f, n->inputs[1]->dt, 1);
                         set_input(f, selector, cmp,          1);
-                        set_input(f, selector, false_node,   2);
+                        set_input(f, selector, true_node,    2);
                         set_input(f, selector, n->inputs[1], 3);
                     } else {
                         // a ? b : 0
+                        TB_Node* false_node = make_int_node(f, n->inputs[1]->dt, 0);
                         set_input(f, selector, cmp,          1);
                         set_input(f, selector, n->inputs[1], 2);
                         set_input(f, selector, false_node,   3);
@@ -779,23 +824,23 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
     } else {
         // check for redundant conditions
         /* FOR_USERS(u, n->inputs[1]) {
-            if (USERN(u)->type != TB_BRANCH || USERI(u) != 1 || USERN(u) == n) {
-                continue;
-            }
+        if (USERN(u)->type != TB_BRANCH || USERI(u) != 1 || USERN(u) == n) {
+        continue;
+        }
 
-            TB_Node* end = USERN(u);
-            if (same_sorta_branch(end, n)) {
-                FOR_USERS(succ_user, end) {
-                    assert(USERN(succ_user)->type == TB_BRANCH_PROJ);
-                    int index = TB_NODE_GET_EXTRA_T(USERN(succ_user), TB_NodeProj)->index;
-                    TB_Node* succ = cfg_next_bb_after_cproj(USERN(succ_user));
+        TB_Node* end = USERN(u);
+        if (same_sorta_branch(end, n)) {
+        FOR_USERS(succ_user, end) {
+        assert(USERN(succ_user)->type == TB_BRANCH_PROJ);
+        int index = TB_NODE_GET_EXTRA_T(USERN(succ_user), TB_NodeProj)->index;
+        TB_Node* succ = cfg_next_bb_after_cproj(USERN(succ_user));
 
-                    // we must be dominating for this to work
-                    if (fast_dommy(succ, n)) {
-                        return lattice_branch_goto(f, br->succ_count, index);
-                    }
-                }
-            }
+        // we must be dominating for this to work
+        if (fast_dommy(succ, n)) {
+        return lattice_branch_goto(f, br->succ_count, index);
+        }
+        }
+        }
         } */
     }
 

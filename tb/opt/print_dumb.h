@@ -198,6 +198,17 @@ void tb_print_dumb_raw(TB_Function* f, OutStream* s, bool use_fancy_types) {
     s_writef(s, "=======================================\n");
 }
 
+void tb_print_dumb_nodes(Lattice** types, TB_Node* n, int depth) {
+    if (depth > 0) {
+        FOR_N(i, 0, n->input_cap) if (n->inputs[i]) {
+            tb_print_dumb_nodes(NULL, n->inputs[i], depth - 1);
+        }
+    }
+
+    tb_print_dumb_node_raw(types, n, &OUT_STREAM_DEFAULT);
+    printf("\n");
+}
+
 void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     tb_print_dumb_node_raw(types, n, &OUT_STREAM_DEFAULT);
 }

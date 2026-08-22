@@ -402,6 +402,7 @@ Lattice* latuni_get(TB_Function* f, TB_Node* n);
 float tb_edge_prob(TB_Node* n);
 
 void tb__print_regmask(OutStream* s, RegMask* mask);
+void tb_print_dumb_nodes(Lattice** types, TB_Node* n, int depth);
 
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
