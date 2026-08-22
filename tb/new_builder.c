@@ -483,6 +483,16 @@ TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t offset
     return g->peep(f, n);
 }
 
+TB_Node* tb_builder_ptr_diff(TB_GraphBuilder* g, TB_Node* a, TB_Node* b) {
+    TB_ASSERT(a->dt.raw == b->dt.raw && "datatype mismatch");
+
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_PTR_DIFF, TB_TYPE_I64, 3, 0);
+    set_input(f, n, a, 1);
+    set_input(f, n, b, 2);
+    return g->peep(f, n);
+}
+
 int tb_builder_split_mem(TB_GraphBuilder* g, int in_mem, int split_count, TB_Node** out_split) {
     TB_Function* f = g->f;
 
@@ -947,7 +957,7 @@ void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file, int li
         old_mem->type == TB_PROJ  && old_mem->inputs[0] == old_ctrl->inputs[0] &&
         // if it's the first debug location, we wanna keep that one because it's placed above the prologue
         old_ctrl->inputs[0]->inputs[0] != f->params[0]
-    ) {
+        ) {
         return;
     }
 

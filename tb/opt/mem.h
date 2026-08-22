@@ -123,12 +123,12 @@ static SimpleMemRef find_simple_mem_ref(TB_Function* f, LocalSplitter* ctx, TB_N
             base   = base->inputs[1];
         }
         /* if (curr->type == TB_ADD && curr->inputs[2]->type == TB_ICONST) {
-            offset = TB_NODE_GET_EXTRA_T(curr->inputs[2], TB_NodeInt)->value;
-            index  = curr->inputs[1];
-            base   = base->inputs[1];
+        offset = TB_NODE_GET_EXTRA_T(curr->inputs[2], TB_NodeInt)->value;
+        index  = curr->inputs[1];
+        base   = base->inputs[1];
         } else {
-            index  = base->inputs[2];
-            base   = base->inputs[1];
+        index  = base->inputs[2];
+        base   = base->inputs[1];
         } */
     }
 
@@ -182,12 +182,15 @@ static void memory_set_insert(TB_Function* f, NL_Table* non_aliasing, MemorySet*
     set->cnt += 1;
 }
 
-static void memory_set_clear_except(NL_Table* non_aliasing, MemorySet* ignore) {
+static bool memory_set_clear_except(NL_Table* non_aliasing, MemorySet* ignore) {
+    bool hit = false;
     nl_table_for(e, non_aliasing) {
         if (e->v != ignore) {
             nl_table_remove(non_aliasing, e->k);
+            hit = true;
         }
     }
+    return hit;
 }
 
 static NL_Table memory_set_clone(TB_Function* f, NL_Table* non_aliasing, bool speculative) {
@@ -366,6 +369,109 @@ static MemoryState* start_of_memory_sese(NL_Table* sese2set, TB_Node* n) {
     }
 }
 
+static bool process_loop_idioms(TB_Function* f, NL_Table* sese2set, LocalSplitter* restrict ctx, MemoryState* state, TB_Node* header, TB_Node* base, MemorySet* set) {
+    // im not even sure this is possible here?
+    if (set->cnt == 0) {
+        return false;
+    }
+
+    uint8_t pattern_zero = 0;
+    uint8_t pattern_one  = 0;
+
+    size_t offset = 0;
+    size_t inner_stride = 0;
+    FOR_N(i, 0, set->cnt) {
+        if (set->stores[i].offset != inner_stride) {
+            // gaps in the stores, cannot simplify into bulk memop
+            return false;
+        }
+        inner_stride = set->stores[i].offset + set->stores[i].size;
+
+        // compute the pattern we can guarentee per byte
+        TB_Node* val = set->stores[i].mem->inputs[3];
+        if (val->type == TB_ICONST) {
+            uint64_t con = TB_NODE_GET_EXTRA_T(val, TB_NodeInt)->value;
+            FOR_N(i, 0, set->stores[i].size) {
+                pattern_one  |=  (con >> (i*8)) & 0xFF;
+                pattern_zero |= (~con >> (i*8)) & 0xFF;
+            }
+        } else {
+            pattern_one  = 0xFF;
+            pattern_zero = 0xFF;
+        }
+    }
+
+    TB_Node* latch = affine_loop_latch(header);
+    if (latch == NULL || !TB_IS_INT_OR_PTR(base->dt)) {
+        return false;
+    }
+
+    TB_Node* base_ptr = base;
+    TB_Node* ptr_iv   = base;
+    if (base->type == TB_PTR_OFFSET) {
+        ptr_iv   = base->inputs[2];
+        base_ptr = base->inputs[1];
+    }
+
+    // check that there's no gaps between iterations as well.
+    uint64_t trips_min = 1, trips_max = UINT64_MAX;
+    uint64_t* step_ptr = find_affine_indvar(ptr_iv, header);
+    if (step_ptr == NULL || *step_ptr != inner_stride) {
+        return false;
+    }
+
+    TB_InductionVar latch_var;
+    if (!find_latch_indvar(header, latch, &latch_var)) {
+        return false;
+    }
+
+    // we have a byte pattern, that means we can convert to a memset
+    if ((~pattern_one & 0xFF) == pattern_zero) {
+        if (base_ptr == ptr_iv) {
+            // BasePtr is the IV itself, use the initial value
+            TB_ASSERT(base_ptr->type == TB_PHI);
+            base_ptr = base_ptr->inputs[1];
+        } else {
+            TB_ASSERT(ptr_iv->type == TB_PHI);
+            base_ptr = make_ptr_offset(f, base_ptr, ptr_iv->inputs[1]);
+        }
+
+        TB_Node* trips = generate_loop_trip_count(f, latch_var);
+        TB_Node* addr = set->stores[0].mem->inputs[2];
+        int cat = find_local_idx(ctx, addr);
+
+        FOR_N(i, 0, set->cnt) {
+            TB_Node* st_mem = set->stores[i].mem;
+            st_mem->type = TB_DEAD_STORE;
+            worklist_push(ctx->dead_worklist, st_mem);
+        }
+
+        TB_Node* phi = cat == 0 ? state->start : state->phis[cat - 1];
+        TB_ASSERT(phi != NULL);
+
+        TB_Node* val  = make_int_node(f, TB_TYPE_I8, pattern_one);
+        TB_Node* size = make_int_binop(f, TB_MUL, trips, make_int_node(f, TB_TYPE_I64, *step_ptr));
+
+        MemoryState* pred = start_of_memory_sese(sese2set, phi->inputs[1]);
+        TB_Node* prev_mem = pred->latest[cat];
+
+        TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
+        set_input(f, n, header->inputs[0], 0); // ctrl
+        set_input(f, n, prev_mem, 1);          // mem
+        set_input(f, n, base_ptr, 2);          // dst
+        set_input(f, n, val,  3);              // val
+        set_input(f, n, size, 4);              // size
+        TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = 1);
+        mark_node(f, n);
+
+        // since we're on our first walk of a loop, we'll be filling phis later
+        pred->latest[cat] = n;
+        return true;
+    }
+
+    return false;
+}
+
 // Perform renaming until we reach a fork
 static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* restrict ctx, TB_Node* curr, MemoryState* state, NL_Table* non_aliasing) {
     TB_Node** latest = state->walked_once ? NULL : state->latest;
@@ -395,8 +501,8 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                 // only values which are live-in can be alive "around", so
                 // if we know what those are we're good.
                 /*if (dom_pred && dom_pred->latest[1 + i] == NULL) {
-                    phis[i] = latest[1 + i] = NULL;
-                    continue;
+                phis[i] = latest[1 + i] = NULL;
+                continue;
                 }*/
 
                 TB_Node* new_phi = tb_alloc_node(f, TB_PHI, ctx->renames[i].dt, curr->input_count, 0);
@@ -496,15 +602,15 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
         state->sealed = true;
     }
 
-    #if TB_OPTDEBUG_MEMORY
-    if (f->enable_log) {
+    IF_OPT(MEMORY) {
         printf("  INIT   [ ");
         print_memory_state(non_aliasing);
         printf("]\n");
         print_var_state(ctx, state);
     }
-    #endif
 
+    // loop idioms care about unclobbered basic blocks
+    bool clobbered = false;
     for (;;) {
         int load_count = 0;
         TB_Node** loads = tb_arena_alloc(&f->tmp_arena, curr->user_count * sizeof(TB_Node*));
@@ -537,11 +643,11 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             }
         }
 
-        #if TB_OPTDEBUG_MEM2REG
-        printf("  WALK %%%u [ ", curr->gvn);
-        print_memory_state(non_aliasing);
-        printf("]\n");
-        #endif
+        IF_OPTLOG(MEMORY) {
+            printf("  WALK %%%u [ ", curr->gvn);
+            print_memory_state(non_aliasing);
+            printf("]\n");
+        }
 
         // TODO(NeGate): classify the effect
         int cat = 0;
@@ -554,14 +660,15 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
 
                 MemorySet* set = memory_set_find_or_create(f, non_aliasing, base);
                 if (set->cnt == 0) {
-                    TB_OPTLOG(MEMORY, printf("  INVALIDATE ALL!\n"));
-
                     // first time constructing this set, previous writes to different bases
                     // might alias so they should be cleared.
                     //
                     // if we know the "object" that the pointer is referring to then we can strictly
                     // talk about aliasing.
-                    memory_set_clear_except(non_aliasing, set);
+                    if (memory_set_clear_except(non_aliasing, set)) {
+                        TB_OPTLOG(MEMORY, printf("  INVALIDATE ALL!\n"));
+                        clobbered = true;
+                    }
                     memory_set_insert(f, non_aliasing, set, 0, ref);
                 } else {
                     // check if we clobbered any stores
@@ -573,7 +680,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                         ref.index == set->stores[idx].index &&
                         ref.offset >= set->stores[idx].offset &&
                         set->stores[idx].offset + set->stores[idx].size <= ref.offset + ref.size
-                    ) {
+                        ) {
                         TB_Node* st_mem = set->stores[idx].mem;
 
                         // the entire previous write is eaten up by this write
@@ -598,6 +705,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                             memory_set_insert(f, non_aliasing, set, idx, ref);
                         } else {
                             TB_OPTLOG(MEMORY, printf("    CLOBBER\n"));
+                            clobbered = true;
 
                             memory_set_clear_except(non_aliasing, set);
                             memory_set_insert(f, non_aliasing, set, 0, ref);
@@ -623,9 +731,9 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                     // get rid of the store, we don't need it
                     latest[cat] = curr->inputs[3];
 
-                    #if TB_OPTDEBUG_MEM2REG
-                    printf("      STORE [cat=%d] = %%%u (KILLED %%%u)\n", cat, latest[cat]->gvn, curr->gvn);
-                    #endif
+                    IF_OPTLOG(MEMORY) {
+                        printf("      STORE [cat=%d] = %%%u (KILLED %%%u)\n", cat, latest[cat]->gvn, curr->gvn);
+                    }
 
                     curr->type = TB_DEAD_STORE;
                     set_input(f, curr, NULL, 2);
@@ -747,7 +855,6 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
         }
         curr = next;
     }
-    state->walked_once = true;
 
     IF_OPT(MEMORY) {
         printf("  FINAL  [ ");
@@ -755,6 +862,25 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
         printf("]\n");
         print_var_state(ctx, state);
     }
+
+    // Look for affine loops with only one block, no branching, and no
+    // clobbering. These are the candidates for our memset/memcpy idioms
+    if (!clobbered && !state->walked_once) {
+        TB_Node* phi = state->start;
+        if (phi->type == TB_PHI && phi->inputs[0]->type == TB_AFFINE_LOOP) {
+            // It's a single block if the latch points directly to the header
+            TB_Node* header = phi->inputs[0];
+            if (header->inputs[1]->type == TB_PROJ &&
+                header->inputs[1]->inputs[0]->type == TB_AFFINE_LATCH &&
+                header->inputs[1]->inputs[0]->inputs[0] == header) {
+                // Check for gapless non-aliasing stores
+                nl_table_for(e, non_aliasing) {
+                    process_loop_idioms(f, sese2set, ctx, state, header, e->k, e->v);
+                }
+            }
+        }
+    }
+    state->walked_once = true;
 
     // Copy out the memory state
     nl_table_clear(&state->non_aliasing);
@@ -975,7 +1101,6 @@ int tb_opt_locals(TB_Function* f) {
 
         // tb_print(f);
         TB_OPTLOG(MEMORY, tb_print(f));
-        TB_OPTLOG(MEMORY, __debugbreak());
         // __debugbreak();
 
         TB_Worklist sese_worklist;
@@ -1013,7 +1138,7 @@ int tb_opt_locals(TB_Function* f) {
                     if (state->order >= pred->order &&
                         // we wanna make sure the loop_tail is the "last" loop pred we see
                         (loop_tail == NULL || pred->order < loop_tail->order)
-                    ) {
+                        ) {
                         loop_tail = pred;
                     }
                 }
@@ -1125,26 +1250,26 @@ int tb_opt_locals(TB_Function* f) {
             }
 
             /* for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-                TB_Node* n = ws->items[i];
-                if (n->type == TB_PHI && uf[n->gvn]) {
-                    TB_Node* same = node_uf_find(uf, n);
-                    TB_ASSERT(same == uf[n->gvn]);
+            TB_Node* n = ws->items[i];
+            if (n->type == TB_PHI && uf[n->gvn]) {
+            TB_Node* same = node_uf_find(uf, n);
+            TB_ASSERT(same == uf[n->gvn]);
 
-                    tb_print_dumb_node(NULL, n);
-                    printf(" => ");
-                    tb_print_dumb_node(NULL, same);
-                    printf("\n");
+            tb_print_dumb_node(NULL, n);
+            printf(" => ");
+            tb_print_dumb_node(NULL, same);
+            printf("\n");
 
-                }
+            }
             } */
 
             /* TB_Node* n;
             while (n = worklist_pop(&sese_worklist), n) {
-                if (n->type == TB_PHI || n->type == TB_DEAD_STORE) {
-                    subsume_node(f, n, n->inputs[1]);
-                } else {
-                    tb_kill_node(f, n);
-                }
+            if (n->type == TB_PHI || n->type == TB_DEAD_STORE) {
+            subsume_node(f, n, n->inputs[1]);
+            } else {
+            tb_kill_node(f, n);
+            }
             }
             __debugbreak();*/
         }
@@ -1177,6 +1302,7 @@ int tb_opt_locals(TB_Function* f) {
             }
         }
 
+        TB_OPTLOG(MEMORY, tb_print(f));
         worklist_free(&sese_worklist);
     }
 

@@ -1423,7 +1423,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
-    /* if (0 && strcmp(f->super.name, "foo") == 0) {
+    /* f->enable_log = true;
+    if (0 && strcmp(f->super.name, "foo") == 0) {
     f->enable_log = true;
     } */
 
@@ -1521,7 +1522,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
         // avoids bloating up my arenas with freed nodes
         float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
-        if (dead_factor > 0.2f) {
+        if (tb_arena_current_size(&f->arena) > 10*1024 && dead_factor > 0.2f) {
             TB_OPTLOG(PEEP, printf("=== COMPACT ===\n"));
             STATS_ENTER(COMPACT);
             size_t old = tb_arena_current_size(&f->arena);

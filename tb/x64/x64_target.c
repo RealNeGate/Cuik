@@ -467,22 +467,6 @@ static float edge_prob(TB_Node* n) {
     }
 }
 
-/* static uint32_t node_flags(TB_Node* n) {
-if (n->type == TB_x86_jcc) {
-return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_IF | NODE_MEMORY_IN;
-} else if (n->type == TB_x86_jmp_MULTI) {
-return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL;
-} else if (n->type == x86_call) {
-return NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT | NODE_EFFECT;
-}
-
-uint32_t flags = n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_PINNED) : NODE_MEMORY_IN;
-if (n->type == x86_cmp || n->type == x86_test) {
-flags |= NODE_ALWAYS_SINK;
-}
-return flags;
-}*/
-
 static void print_extra(OutStream* s, TB_Node* n) {
     static const char* modes[] = { "reg", "ld", "st" };
 
@@ -960,6 +944,10 @@ static bool try_for_imm32(TB_DataType dt, TB_Node* n, int32_t* out_x) {
 // we do 0 instead of -1 because when we want it to
 // alias with it's inputs as if there's a move before
 // the op.
+//
+//         0    1   2    3     4
+// (x86_op ctrl mem rm   rx       ...)
+// (x86_op ctrl mem base index rx ...)
 static int node_2addr(TB_Node* n) {
     switch (n->type) {
         case TB_x86_add: case TB_x86_or: case TB_x86_and: case TB_x86_sub: case TB_x86_xor: case TB_x86_imul:
@@ -971,11 +959,12 @@ static int node_2addr(TB_Node* n) {
             if (op->mode == MODE_LD) {
                 return op->flags & OP_INDEXED ? 4 : 3;
             }
+            // Where the rx field would go
             return n->input_count - 1;
         }
 
         case TB_x86_cmovcc: case TB_x86_adc:
-        return 2;
+        return n->input_count - 2;
 
         case TB_x86_shl: case TB_x86_shr: case TB_x86_sar:
         case TB_x86_rol: case TB_x86_ror: {
@@ -2376,7 +2365,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
             if (op->mode == MODE_ST) {
                 __(op_type, dt, &rm, &rx);
-            } else if (n->type == TB_x86_cmovcc || (op->flags & OP_IMMEDIATE)) {
+            } else if (op->flags & OP_IMMEDIATE) {
                 Val dst = op_at(ctx, n);
                 if (!is_value_match(&dst, &rm)) {
                     __(MOV, dt, &dst, &rm);

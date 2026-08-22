@@ -946,6 +946,8 @@ TB_API TB_Node* tb_builder_cmp(TB_GraphBuilder* g, int type, TB_Node* a, TB_Node
 TB_API TB_Node* tb_builder_ptr_array(TB_GraphBuilder* g, TB_Node* base, TB_Node* index, int64_t stride);
 //   base + offset
 TB_API TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t offset);
+//   a - b
+TB_API TB_Node* tb_builder_ptr_diff(TB_GraphBuilder* g, TB_Node* a, TB_Node* b);
 
 // memory
 TB_API TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_Node* addr, TB_CharUnits align, bool is_volatile);

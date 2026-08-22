@@ -582,6 +582,10 @@ static const char* ind_pred_names[] = { "ne", "slt", "sle", "ult", "ule" };
 //
 //   i = phi(init, i2)
 //   n = i + step where step is constant
+//
+// TODO(NeGate): support for more casting in this setup, it'll break if the
+// add is separated from everything else by even one sign/zero extend and the
+// code which would normally clean that up is the affine IV stuff.
 static TB_Node* affine_indvar(TB_Node* n, TB_Node* header) {
     if (n->type == TB_PHI && n->inputs[0] == header) {
         n = n->inputs[2];
@@ -598,7 +602,7 @@ static TB_Node* affine_indvar(TB_Node* n, TB_Node* header) {
 static uint64_t* find_affine_indvar(TB_Node* n, TB_Node* header) {
     if (n->type == TB_PHI &&
         n->inputs[0] == header &&
-        n->inputs[2]->type == TB_ADD &&
+        (n->inputs[2]->type == TB_ADD || n->inputs[2]->type == TB_PTR_OFFSET) &&
         n->inputs[2]->inputs[1] == n &&
         n->inputs[2]->inputs[2]->type == TB_ICONST) {
         return &TB_NODE_GET_EXTRA_T(n->inputs[2]->inputs[2], TB_NodeInt)->value;
@@ -741,22 +745,37 @@ static TB_Node* generate_loop_trip_count(TB_Function* f, TB_InductionVar var) {
     // on this:
     //
     // range = end - start
+    TB_DataType dt = var.phi->dt;
+    if (dt.type == TB_TAG_PTR) {
+        dt = TB_TYPE_I64;
+    }
+
     Lattice* start = latuni_get(f, var.phi->inputs[1]);
     TB_Node* range = NULL;
     if (var.end_cond) {
         if (lattice_is_izero(start)) {
             range = var.end_cond;
         } else {
-            range = make_int_binop(f, TB_SUB, var.end_cond, var.phi->inputs[1]);
+            TB_Node* lhs = var.end_cond;
+            TB_Node* rhs = var.phi->inputs[1];
+
+            // if lhs has the same base as rhs, then subtract integers
+            if (lhs->type == TB_PTR_OFFSET && lhs->inputs[1] == rhs) {
+                range = lhs->inputs[2];
+            } else if (lhs->dt.type == TB_TAG_PTR) {
+                range = make_int_binop(f, TB_PTR_DIFF, lhs, rhs);
+            } else {
+                range = make_int_binop(f, TB_SUB, lhs, rhs);
+            }
         }
     } else {
         // we can probably fold this case
         Lattice* end = lattice_int_const(f, var.end_const);
-        Lattice* sub = value_arith_raw(f, TB_SUB, var.phi->dt, end, start, false, false);
+        Lattice* sub = value_arith_raw(f, TB_SUB, dt, end, start, false, false);
         if (lattice_is_iconst(sub)) {
             range = make_int_node(f, var.phi->dt, sub->_int.min);
         } else {
-            TB_Node* end_cond = make_int_node(f, var.phi->dt, end->_int.min);
+            TB_Node* end_cond = make_int_node(f, dt, end->_int.min);
             range = make_int_binop(f, TB_SUB, end_cond, var.phi->inputs[1]);
         }
     }
@@ -765,19 +784,24 @@ static TB_Node* generate_loop_trip_count(TB_Function* f, TB_InductionVar var) {
     int64_t extra = var.pred == IND_NE || var.pred == IND_SLT || var.pred == IND_ULT ? (var.step > 0 ? 1 : -1) : 0;
     Lattice* pad = lattice_int_const(f, var.step - extra);
     if (!lattice_is_izero(pad)) {
-        Lattice* range_ty = latuni_get(f, range);
-        Lattice* add = value_arith_raw(f, TB_ADD, var.phi->dt, range_ty, pad, false, false);
-        if (lattice_is_iconst(add)) {
-            range = make_int_node(f, var.phi->dt, add->_int.min);
-        } else {
-            TB_Node* addend = make_int_node(f, var.phi->dt, pad->_int.min);
+        if (var.phi->dt.type == TB_TAG_PTR) {
+            TB_Node* addend = make_int_node(f, dt, pad->_int.min);
             range = make_int_binop(f, TB_ADD, range, addend);
+        } else {
+            Lattice* range_ty = latuni_get(f, range);
+            Lattice* add = value_arith_raw(f, TB_ADD, dt, range_ty, pad, false, false);
+            if (lattice_is_iconst(add)) {
+                range = make_int_node(f, dt, add->_int.min);
+            } else {
+                TB_Node* addend = make_int_node(f, dt, pad->_int.min);
+                range = make_int_binop(f, TB_ADD, range, addend);
+            }
         }
     }
 
     bool is_signed = var.pred == IND_NE || var.pred == IND_SLT || var.pred == IND_SLE;
     if (var.step != 1) {
-        TB_Node* step = make_int_node(f, var.phi->dt, var.step);
+        TB_Node* step = make_int_node(f, dt, var.step);
         return make_int_binop(f, is_signed ? TB_SDIV : TB_UDIV, range, step);
     }
 
@@ -810,23 +834,23 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
             continue;
         }
 
-        #if TB_OPTDEBUG_LOOP
-        printf("IV: ");
-        tb_print_dumb_node(NULL, n);
-        printf("\n");
-        FOR_USERS(u2, n) {
-            printf("  ");
-            tb_print_dumb_node(NULL, USERN(u2));
+        IF_OPT(LOOP) {
+            printf("IV: ");
+            tb_print_dumb_node(NULL, n);
             printf("\n");
-        }
-        tb_print_dumb_node(NULL, n->inputs[2]);
-        printf("\n");
-        FOR_USERS(u2, n->inputs[2]) {
-            printf("  ");
-            tb_print_dumb_node(NULL, USERN(u2));
+            FOR_USERS(u2, n) {
+                printf("  ");
+                tb_print_dumb_node(NULL, USERN(u2));
+                printf("\n");
+            }
+            tb_print_dumb_node(NULL, n->inputs[2]);
             printf("\n");
+            FOR_USERS(u2, n->inputs[2]) {
+                printf("  ");
+                tb_print_dumb_node(NULL, USERN(u2));
+                printf("\n");
+            }
         }
-        #endif
 
         if (n->user_count <= 1) {
             continue;
@@ -861,19 +885,19 @@ static bool loop_strength_reduce(TB_Function* f, TB_Node* header) {
         LSRVar* var = &vars[i];
         TB_Node* n = var->node;
 
-        #if TB_OPTDEBUG_LOOP
-        printf("[%zu] %%%u: ", i, var->node->gvn);
-        print_type(&OUT_STREAM_DEFAULT, var->node->dt);
+        IF_OPT(LOOP) {
+            printf("[%zu] %%%u: ", i, var->node->gvn);
+            print_type(&OUT_STREAM_DEFAULT, var->node->dt);
 
-        Lattice* init = value_of(f, var->init);
-        if (init->_int.min == init->_int.max) {
-            printf(" = %"PRId64" ", init->_int.min);
-        } else {
-            printf(" = %%%u ", var->init->gvn);
+            Lattice* init = value_of(f, var->init);
+            if (init->_int.min == init->_int.max) {
+                printf(" = %"PRId64" ", init->_int.min);
+            } else {
+                printf(" = %%%u ", var->init->gvn);
+            }
+
+            printf(" + %"PRId64"*x (%d uses)\n", var->step->_int.min, var->uses);
         }
-
-        printf(" + %"PRId64"*x (%d uses)\n", var->step->_int.min, var->uses);
-        #endif
 
         TB_Node* stepper = var->stepper;
         TB_Node* reduce = NULL;
@@ -1689,39 +1713,39 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
                     uint64_t* init = iconst(var.phi->inputs[1]);
                     uint64_t* end  = var.end_cond ? iconst(var.end_cond) : &var.end_const;
 
-                    #if TB_OPTDEBUG_LOOP
-                    TB_Node *phi = var.phi, *cond = var.cond;
-                    int64_t step = var.step;
+                    IF_OPT(LOOP) {
+                        TB_Node *phi = var.phi, *cond = var.cond;
+                        int64_t step = var.step;
 
-                    if (init) {
-                        printf("  affine loop: %%%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init);
-                    } else {
-                        printf("  affine loop: %%%u = %"PRId64"*x + %%%u\n", phi->gvn, step, phi->inputs[1]->gvn);
-                    }
-
-                    if (end) {
-                        printf("        latch: %s(%%%u, %"PRId64, ind_pred_names[var.pred], phi->gvn, *end);
-                    } else {
-                        printf("        latch: %s(%%%u, %%%u", ind_pred_names[var.pred], phi->gvn, var.end_cond->gvn);
-                    }
-
-                    if (var.backwards) {
-                        printf(", flipped");
-                    }
-                    printf(")\n");
-
-                    // fixed trip count loops aren't *uncommon*
-                    if (init && end) {
-                        int64_t pad = step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
-                        uint64_t trips = (*end - *init + pad) / step;
-                        uint64_t rem   = (*end - *init + pad) % step;
-                        if (rem != 0 && var.pred == IND_NE) {
-                            printf("        trips: overshoot\n");
+                        if (init) {
+                            printf("  affine loop: %%%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init);
                         } else {
-                            printf("        trips: %"PRId64" (%"PRId64" ... %"PRId64")\n", trips, *init, *end);
+                            printf("  affine loop: %%%u = %"PRId64"*x + %%%u\n", phi->gvn, step, phi->inputs[1]->gvn);
+                        }
+
+                        if (end) {
+                            printf("        latch: %s(%%%u, %"PRId64, ind_pred_names[var.pred], phi->gvn, *end);
+                        } else {
+                            printf("        latch: %s(%%%u, %%%u", ind_pred_names[var.pred], phi->gvn, var.end_cond->gvn);
+                        }
+
+                        if (var.backwards) {
+                            printf(", flipped");
+                        }
+                        printf(")\n");
+
+                        // fixed trip count loops aren't *uncommon*
+                        if (init && end) {
+                            int64_t pad = step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
+                            uint64_t trips = (*end - *init + pad) / step;
+                            uint64_t rem   = (*end - *init + pad) % step;
+                            if (rem != 0 && var.pred == IND_NE) {
+                                printf("        trips: overshoot\n");
+                            } else {
+                                printf("        trips: %"PRId64" (%"PRId64" ... %"PRId64")\n", trips, *init, *end);
+                            }
                         }
                     }
-                    #endif
                 }
             }
 
@@ -1760,3 +1784,191 @@ static bool loop_opt_canonicalize(TB_Function* f, LoopOpt* ctx, TB_Worklist* tmp
 
     return progress;
 }
+
+#if 0
+typedef struct {
+    uint32_t offset;
+    uint32_t size;
+    TB_Node* node;
+} IdiomStore;
+
+bool loop_opt_idiom(TB_Function* f, LoopOpt* ctx, TB_Worklist* ws, TB_LoopTree* loop) {
+    assert(loop->header->type == TB_AFFINE_LOOP);
+
+    if (
+        // This optimization only works for leaf loops
+        loop->kid != NULL ||
+        // We also need this to be a single block
+        loop->header->inputs[1]->type != TB_PROJ ||
+        loop->header->inputs[1]->inputs[0]->type != TB_AFFINE_LATCH ||
+        loop->header->inputs[1]->inputs[0]->inputs[0] != loop->header
+        ) {
+        return false;
+    }
+
+    tb_print(f);
+
+    IdiomStore istore[64];
+    TB_Node* header = loop->header;
+    FOR_USERS(u, header) {
+        if (USERN(u)->type == TB_PHI && USERN(u)->dt.type == TB_TAG_MEMORY) {
+            TB_Node* head = USERN(u);
+            TB_Node* tail = head;
+
+            // Walk the trace, looking for a shared "base address"
+            size_t address_lo = 0, address_hi = 0;
+            TB_Node* address_leader = NULL;
+
+            // each bit set is a byte we know is written to
+            uint64_t byte_mask  = 0;
+            // each bit set defines the starting offset of a write, each
+            // bit has a corresponding IdiomStore
+            uint64_t store_mask = 0;
+            // we store the IdiomStores in a packed form to keep complexity
+            // down in the common case where you're likely failing this function
+            int istore_cnt = 0;
+
+            printf("BEGIN\n");
+            do {
+                printf("  ");
+                tb_print_dumb_node(NULL, tail);
+                printf("\n");
+
+                if (tail->type == TB_STORE) {
+                    TB_Node* base = tail->inputs[2];
+                    int64_t offset = 0;
+                    if (base->type == TB_PTR_OFFSET && base->inputs[2]->type == TB_ICONST) {
+                        offset = TB_NODE_GET_EXTRA_T(base->inputs[2], TB_NodeInt)->value;
+                        base   = base->inputs[1];
+                    }
+                    size_t size = tb_data_type_byte_size(f->super.module, tail->inputs[3]->dt.type);
+
+                    // either create an address leader or check
+                    // if we're compatible with it
+                    if (address_leader == NULL) {
+                        address_leader = base;
+                        address_lo     = offset;
+                        address_hi     = offset + size;
+
+                        istore[istore_cnt++] = (IdiomStore){ 0, size, tail };
+                        byte_mask  = UINT64_MAX >> (64 - size);
+                        store_mask |= 1;
+                    } else if (address_leader == base) {
+                        // union ranges
+                        size_t new_min = TB_MIN(offset,      address_lo);
+                        size_t new_max = TB_MAX(offset+size, address_hi);
+
+                        // Too big of a stencil, closing it out
+                        if ((new_max - new_min) > 64) {
+                            address_leader = NULL;
+                            break;
+                        }
+
+                        if (new_min < address_lo) {
+                            // shift up
+                            size_t shift = address_lo - new_min;
+                            byte_mask  <<= shift;
+                            store_mask <<= shift;
+
+                            FOR_REV_N(i, 0, istore_cnt) {
+                                istore[i + 1] = istore[i];
+                                istore[i + 1].offset += shift;
+                            }
+                        }
+
+                        // Check for store conflicts, we can't have overlapping
+                        // writes since that'll confuse the analysis.
+                        uint64_t insert_mask = (UINT64_MAX >> (64 - size)) << (offset - new_min);
+                        if ((byte_mask ^ insert_mask) != (byte_mask | insert_mask)) {
+                            address_leader = NULL;
+                            continue;
+                        }
+                        assert(istore_cnt < 64);
+
+                        size_t i = 0;
+                        if (new_min >= address_lo) {
+                            // insert into the middle
+                            for (; i < istore_cnt; i++) {
+                                if (istore[i].offset >= offset - new_min) {
+                                    break;
+                                }
+                            }
+
+                            FOR_REV_N(j, i, istore_cnt) {
+                                istore[j + 1] = istore[j];
+                            }
+                        }
+                        istore[i] = (IdiomStore){ offset - new_min, size, tail };
+                        istore_cnt++;
+
+                        // insert new store
+                        byte_mask  |= insert_mask;
+                        store_mask |= 1ull << (offset - new_min);
+
+                        address_lo = new_min;
+                        address_hi = new_max;
+                    } else {
+                        address_leader = NULL;
+                        break;
+                    }
+
+                    printf("  STATE %%%-4u [%5zu, %5zu): ", address_leader->gvn, address_lo, address_hi);
+                    FOR_REV_N(i, 0, address_hi - address_lo) {
+                        printf("%c", (byte_mask >> i) & 1 ? 'x' : '_');
+                    }
+                    printf("\n                              ");
+                    FOR_REV_N(i, 0, address_hi - address_lo) {
+                        printf("%c", (store_mask >> i) & 1 ? 'x' : '_');
+                    }
+                    printf("\n\n");
+                }
+
+                // find loads and the next mem op
+                TB_Node* leader = NULL;
+                FOR_USERS(u2, tail) {
+                    TB_Node* use_n = USERN(u2);
+                    int use_i = USERI(u2);
+
+                    if (use_n->type == TB_PHI && use_n->inputs[0] != header) {
+                        continue;
+                    }
+
+                    if (tb_node_is_memory_out(use_n)) {
+                        if (leader == NULL) { leader = use_n; continue; }
+                        else { use_n = NULL; break; }
+                    }
+
+                    printf("* ");
+                    tb_print_dumb_node(NULL, use_n);
+                    printf("\n");
+                }
+
+                tail = leader;
+            } while (tail != NULL && head != tail);
+
+            if (address_leader == NULL) {
+                printf("  FAIL! no consistent stencil region.\n");
+                continue;
+            }
+
+            // check for a contiguous write region
+            size_t write_stride = tb_popcount64(byte_mask);
+            uint64_t stride_mask = UINT64_MAX >> (64 - write_stride);
+            if (byte_mask != stride_mask) {
+                printf("  FAIL! stencil doesn't have a contiguous shape.\n");
+                continue;
+            }
+
+            // Check for consistent memset or memcpy patterns
+            FOR_N(i, 0, istore_cnt) {
+
+            }
+
+            __builtin_debugtrap();
+        }
+    }
+
+    tb_print_dumb_nodes(NULL, loop->header, 5);
+    return false;
+}
+#endif

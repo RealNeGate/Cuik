@@ -207,8 +207,8 @@
     pat (x86_COND $cmp cond=$cond) => (x86_setcc dt=TB_TYPE_I8 ___ ___ $cmp cond=$cond)
 
     (node cmovcc extra=X86MemOp)
-    pat (SELECT dt=$dt ___ $pred $a $b) => (x86_cmovcc dt=$dt ___ ___ $b $a (x86_test dt=TB_TYPE_I64 ___ ___ $pred $pred extra_dt="n->inputs[1]->dt") cond=NE)
-    pat (SELECT dt=$dt ___ (COND $cmp cond=$cond) $a $b) => (x86_cmovcc dt=$dt ___ ___ $b $a $cmp cond=$cond)
+    pat (SELECT dt=$dt ___ $pred $a $b) => (x86_cmovcc dt=$dt ___ ___ $a $b (x86_test dt=TB_TYPE_I64 ___ ___ $pred $pred extra_dt="n->inputs[1]->dt") cond=NE)
+    pat (SELECT dt=$dt ___ (COND $cmp cond=$cond) $a $b) => (x86_cmovcc dt=$dt ___ ___ $a $b $cmp cond=$cond)
 
     (node bt extra=X86MemOp)
     pat (AND dt=$dt ___ (SHL ___ ($con: ICONST ...) $y) $x) where "as_int32($con) == 1" => (x86_COND dt=TB_TYPE_I8 (x86_bt dt=TB_TYPE_I64 ___ ___ $y $x extra_dt=$dt) cond=B)

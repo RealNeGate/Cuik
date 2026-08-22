@@ -131,6 +131,7 @@
     (node SYMBOL extra=TB_NodeSymbol)      // () & (node Symbol* -> Ptr
     //   offsets pointer by byte amount (handles all ptr math you actually want)
     (node PTR_OFFSET)    // (Ptr, Int) -> Ptr
+    (node PTR_DIFF)      // (Ptr, Ptr) -> Int
 
     // Conversions
     (node TRUNCATE)
