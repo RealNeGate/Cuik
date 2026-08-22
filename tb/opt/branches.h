@@ -223,6 +223,12 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
             if (closed && find_latch_indvar(n, latch, &var) && !var.backwards) {
                 TB_Node* trip_node = generate_loop_trip_count(f, var);
 
+                // force the latch to exit since we know that it won't be needed anymore
+                assert(n->inputs[1]->type == TB_PROJ);
+                int loop_index = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeProj)->index;
+                TB_Node* con = make_int_node(f, latch->inputs[1]->dt, loop_index);
+                set_input(f, latch, con, 1);
+
                 // replace with closed-form equations
                 for (size_t i = 0; i < n->user_count;) {
                     TB_Node* un = USERN(&n->users[i]);
@@ -232,15 +238,26 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                         TB_ASSERT(lattice_is_iconst(step));
 
                         TB_Node* casted_trip_node = trip_node;
-                        TB_ASSERT(un->dt.raw == trip_node->dt.raw);
-
                         TB_Node* closed_form = casted_trip_node;
-                        if (lattice_int_ne(step, 1)) {
-                            closed_form = make_int_binop(f, TB_MUL, closed_form, un->inputs[2]->inputs[2]);
-                        }
+                        if (un->dt.type == TB_TAG_PTR) {
+                            if (lattice_int_ne(step, 1)) {
+                                closed_form = make_int_binop(f, TB_MUL, closed_form, un->inputs[2]->inputs[2]);
+                            }
 
-                        if (!lattice_is_izero(init)) {
-                            closed_form = make_int_binop(f, TB_ADD, un->inputs[1], closed_form);
+                            TB_Node* ptr = tb_alloc_node(f, TB_PTR_OFFSET, un->dt, 3, 0);
+                            set_input(f, ptr, un->inputs[1], 1);
+                            set_input(f, ptr, closed_form, 2);
+                            closed_form = ptr;
+                        } else {
+                            TB_ASSERT(un->dt.raw == trip_node->dt.raw);
+
+                            if (lattice_int_ne(step, 1)) {
+                                closed_form = make_int_binop(f, TB_MUL, closed_form, un->inputs[2]->inputs[2]);
+                            }
+
+                            if (!lattice_is_izero(init)) {
+                                closed_form = make_int_binop(f, TB_ADD, un->inputs[1], closed_form);
+                            }
                         }
 
                         set_input(f, un, NULL, 0);
@@ -600,6 +617,18 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
         return n;
     }
 
+    // for unsigned compares (we should extend it to signed
+    // compares given range analysis):
+    //   if (0 < x) => if (x)
+    uint64_t comparand;
+    if (cmp_type == TB_CMP_ULT &&
+        cmp->inputs[1]->type == TB_ICONST &&
+        get_int_const(cmp->inputs[1], &comparand) &&
+        comparand == 0) {
+        set_input(f, n, cmp->inputs[2], 1);
+        return n;
+    }
+
     // if (x != 0) => if (x)
     // if (x == 0) => if (x) (FLIPPED)
     if ((cmp_type == TB_CMP_NE || cmp_type == TB_CMP_EQ) && cmp->inputs[2]->type == TB_ICONST) {
@@ -625,7 +654,7 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
     }
 
     // zero and sign extension doesn't change the "falsey-ness" of a value, 0 will still be zero.
-    if (cmp->type == TB_ZERO_EXT || cmp->type == TB_SIGN_EXT) {
+    if (cmp_type == TB_ZERO_EXT || cmp_type == TB_SIGN_EXT) {
         set_input(f, n, cmp->inputs[1], 1);
         return n;
     }
@@ -634,7 +663,7 @@ static TB_Node* ideal_if(TB_Function* f, TB_Node* n) {
     //
     // this seems bigger but in practice it'll optimize better since we're
     // more likely to be able to hoist the bound
-    if (cmp->type == TB_SELECT) {
+    if (cmp_type == TB_SELECT) {
         TB_Node* pred_pred = cmp->inputs[1];
 
         uint64_t comparand;
