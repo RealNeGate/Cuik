@@ -1505,12 +1505,10 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             }
             #endif
 
-            // locals scans the TB_LOCAL nodes, it might introduce peephole
-            // work when it returns true.
-            TB_OPTDEBUG(PASSES)(printf("      * Locals\n"));
-            TB_OPTLOG(PEEP, printf("=== LOCALS ===\n"));
+            TB_OPTDEBUG(PASSES)(printf("      * Memory\n"));
+            TB_OPTLOG(PEEP, printf("=== MEMORY ===\n"));
             STATS_ENTER(MEMORY);
-            if (k = tb_opt_locals(f), k > 0) {
+            if (k = tb_opt_memory(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
                 dirty |= ALL_DIRTY;
             }

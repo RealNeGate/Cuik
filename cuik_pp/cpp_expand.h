@@ -81,10 +81,12 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
     }
 }
 
+static int DUMP_TIMER = 0;
 static void dump_tokens(Cuik_CPP* restrict ctx, const char* tag, int start, int end, int depth) {
     assert(start <= end);
 
     #if 0
+    printf("%6d ", DUMP_TIMER++);
     FOR_N(i, 0, depth) {
         printf("  ");
     }
@@ -531,7 +533,10 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
     for (size_t i = start; i < end;) {
         Token* t = &ctx->tokens.list.tokens[i];
         if (!t->expanded && t->type == TOKEN_DOUBLE_HASH) {
-            if (j > start && i+1 < end) {
+            if (i+1 == end) {
+                // concat against nothing, just kill the double hash
+                break;
+            } else if (j > start) {
                 bool has_space = ctx->tokens.list.tokens[j-1].has_space;
                 String a = ctx->tokens.list.tokens[j-1].content;
                 String b = ctx->tokens.list.tokens[i+1].content;
@@ -568,22 +573,22 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
         }
     }
 
-    if (end != j) {
-        dyn_array_set_length(ctx->tokens.list.tokens, j);
-        end = j;
-    }
+    dyn_array_set_length(ctx->tokens.list.tokens, j);
+    end = j;
 
     dump_tokens(ctx, "Pre-expand", start, end, depth);
     size_t hidden = hide_macro(ctx, def);
+    size_t new_start = end;
 
-    // Rescanning
+    // Rescanning, will build up expansions at the end of the token buffer
+    // and then insert them between [start, end)
     for (int i = start; i < end;) {
-        Token* t = &ctx->tokens.list.tokens[i];
-        push_token(ctx, *t);
+        Token t = ctx->tokens.list.tokens[i];
+        push_token(ctx, t);
 
         size_t def_i;
-        if (!t->expanded && t->type == TOKEN_IDENTIFIER) {
-            MacroDef* kid_def = find_define(ctx, t->content.data, t->content.length);
+        if (!t.expanded && t.type == TOKEN_IDENTIFIER) {
+            MacroDef* kid_def = find_define(ctx, t.content.data, t.content.length);
             if (kid_def != NULL) {
                 size_t kid_i = dyn_array_length(ctx->tokens.list.tokens) - 1;
                 InvokeElem nested = { parent, i + 1, end }; // { parent, read_head, end_token };
@@ -591,48 +596,20 @@ static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeE
                 // push ident to the end, we'll replace it and then copy it down
                 int kid_tail;
                 int kid_count = expand_identifier(ctx, slot, &nested, kid_i, macro_id, kid_def, depth+1, &kid_tail);
-
-                DynArray(Token) tokens = ctx->tokens.list.tokens;
-                size_t top = dyn_array_length(tokens);
-                dump_tokens(ctx, "Pre", start, top, depth);
-
-                assert(kid_i == top - kid_count);
-                size_t old_size = (kid_tail - kid_i);
-                dump_tokens(ctx, "Old", i, i + old_size, depth);
-                dump_tokens(ctx, "New", kid_i, kid_i + kid_count, depth);
-
-                size_t shift = 0;
-                if (kid_count > old_size) {
-                    shift = kid_count - old_size;
-
-                    // shift up entries at i up
-                    dyn_array_put_uninit(tokens, shift);
-                    FOR_REV_N(j, 0, dyn_array_length(tokens) - (i + shift)) {
-                        tokens[i + j + shift] = tokens[i + j];
-                    }
-                }
-                dump_tokens(ctx, "Mid", start, dyn_array_length(tokens), depth);
-
-                // copy expanded tokens into their place
-                FOR_N(j, 0, kid_count) {
-                    tokens[i + j] = tokens[kid_i + shift + j];
-                }
-
-                size_t new_len = (kid_i + kid_count) - old_size;
-                dyn_array_set_length(tokens, new_len);
-                ctx->tokens.list.tokens = tokens;
-                dump_tokens(ctx, "Insert", start, dyn_array_length(tokens), depth);
+                size_t top = dyn_array_length(ctx->tokens.list.tokens);
 
                 // skip expanded tokens
-                end += kid_count - old_size;
-                i   += kid_count;
+                i += kid_tail - kid_i;
+                dump_tokens(ctx, "Expand", new_start, top, depth);
                 continue;
-            } else if (string_equals(&macro_name, &t->content)) {
-                t->expanded = true;
+            } else if (string_equals(&macro_name, &t.content)) {
+                t.expanded = true;
             }
         }
         i += 1;
     }
+    start = new_start;
+    end   = dyn_array_length(ctx->tokens.list.tokens);
     unhide_macro(ctx, def, hidden);
 
     dump_tokens(ctx, "Post-expand", start, end, depth);

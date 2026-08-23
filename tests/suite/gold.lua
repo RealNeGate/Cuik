@@ -58,7 +58,7 @@ function process_test(i)
 
     -- Generate golden test results, if these fail then we skip the test later
     local g = os.execute(string.format("clang %s %s -lm -O1 && %s %s > clang.txt", x[i], includes, exe_name, args))
-    if g ~= 0 then
+    if g ~= true and g ~= 0 then
         skips[#skips + 1] = x[i]
         return
     end
@@ -71,9 +71,9 @@ function process_test(i)
     for j=1,#configs do
         local cmd = string.format("../../bin/cuik %s %s %s && %s %s", x[i], configs[j], includes, exe_name, args)
         code = os.execute(cmd.." > cuik.txt")
-        if code == 0 then
+        if code == true or code == 0 then
             local diff = os.execute("git diff --color-words clang.txt cuik.txt")
-            if diff ~= 0 then
+            if diff ~= true and diff ~= 0 then
                 r[j] = "DIFF"
                 repros[#repros + 1] = cmd
                 pass = false

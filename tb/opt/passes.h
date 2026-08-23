@@ -393,7 +393,7 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
 // makes arch-friendly IR
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);
 int tb_opt_peeps(TB_Function* f);
-int tb_opt_locals(TB_Function* f);
+int tb_opt_memory(TB_Function* f);
 
 void push_ipsccp_job(TB_Module* m, TB_Function* f);
 

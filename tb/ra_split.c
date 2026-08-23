@@ -1112,8 +1112,11 @@ static void tb__insert_splits(Ctx* ctx, Rogers* restrict ra, SplitDecision* spli
         uint64_t should_spill = splitter.live_out[bb_id] & W & delay_spill;
         if (should_spill) {
             FOR_N(j, 0, num_spills) {
-                if (((should_spill >> j) & 1) && bb_defs[j]) {
-                    bb_defs[j] = insert_spill(ctx, ra, &splitter, bb, bb_defs[j], j, NULL);
+                TB_Node* n = bb_defs[j];
+                if (((should_spill >> j) & 1) && n != NULL) {
+                    if (!can_remat(ctx, n)) {
+                        bb_defs[j] = insert_spill(ctx, ra, &splitter, bb, n, j, NULL);
+                    }
                 }
             }
         }

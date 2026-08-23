@@ -958,8 +958,8 @@ static TB_Node* node_uf_find(TB_Node** uf, TB_Node* n) {
     return leader;
 }
 
-int tb_opt_locals(TB_Function* f) {
-    cuikperf_region_start("locals", NULL);
+int tb_opt_memory(TB_Function* f) {
+    cuikperf_region_start("memory", NULL);
     TB_ASSERT(dyn_array_length(f->worklist->items) == 0);
 
     bool needs_to_rewrite = false;
@@ -1037,7 +1037,6 @@ int tb_opt_locals(TB_Function* f) {
             j += 1;
         }
     }
-
     ctx.local_count = j;
 
     // let's rewrite values & memory
@@ -1248,30 +1247,6 @@ int tb_opt_locals(TB_Function* f) {
                     id++;
                 }
             }
-
-            /* for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-            TB_Node* n = ws->items[i];
-            if (n->type == TB_PHI && uf[n->gvn]) {
-            TB_Node* same = node_uf_find(uf, n);
-            TB_ASSERT(same == uf[n->gvn]);
-
-            tb_print_dumb_node(NULL, n);
-            printf(" => ");
-            tb_print_dumb_node(NULL, same);
-            printf("\n");
-
-            }
-            } */
-
-            /* TB_Node* n;
-            while (n = worklist_pop(&sese_worklist), n) {
-            if (n->type == TB_PHI || n->type == TB_DEAD_STORE) {
-            subsume_node(f, n, n->inputs[1]);
-            } else {
-            tb_kill_node(f, n);
-            }
-            }
-            __debugbreak();*/
         }
 
         CUIK_TIMED_BLOCK("kill nodes") {
