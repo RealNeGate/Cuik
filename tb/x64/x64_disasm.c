@@ -3,7 +3,7 @@
 
 // this is used to parse ModRM and SIB
 #define UNPACK_233(a, b, c, src) \
-(a = (src >> 6), b = (src >> 3) & 7, c = (src & 7))
+    (a = (src >> 6), b = (src >> 3) & 7, c = (src & 7))
 
 #define READ16(x)   (memcpy(&(x), &data[current], 2), current += 2, x)
 #define READ32(x)   (memcpy(&(x), &data[current], 4), current += 4, x)
@@ -231,6 +231,9 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         _0F(0x11)        = OP_MODRM | OP_SSE,
         // nop r/m
         _0F(0x1F)        = OP_MODRM,
+        // SSE: cvt
+        _0F(0x2A)        = OP_MODRM | OP_SSE | OP_DIR,
+        _0F(0x2C)        = OP_MODRM | OP_SSE | OP_DIR,
         // SSE: ucomi
         _0F(0x2E)        = OP_MODRM | OP_SSE | OP_DIR | OP_SCALAR,
         // shufps
@@ -511,8 +514,8 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case _0F(0x5E): return "div";
         case _0F(0x5F): return "max";
         case _0F(0xC2): return "cmp";
-        case _0F(0x2A): return "cvtsi";
-        case _0F(0x2C): return "cvtsi";
+        case _0F(0x2A): return "cvtsi2";
+        case _0F(0x2C): return "cvtsi2";
         case _0F(0x2E): return "ucomi";
         case _0F(0x51): return "sqrt";
         case _0F(0x52): return "rsqrt";

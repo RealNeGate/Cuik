@@ -1178,8 +1178,16 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         dyn_array_for(i, ctx.debug_stack_slots) {
             TB_StackSlot* s = &ctx.debug_stack_slots[i];
 
+            int64_t offset = s->storage.offset;
+            if (offset < 0) {
+                // "negative" stack offsets are actually talking about the top of the stack
+                offset = ctx.stack_usage + ctx.stack_header + (-offset - 8);
+            } else {
+                offset += ctx.call_usage*8;
+            }
+
             TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[32m"));
-            EMITA(&ctx.emit, "// %s = [rsp + %d]\n", s->name, (ctx.stack_usage - ctx.stack_header) + s->storage.offset);
+            EMITA(&ctx.emit, "// %s = [rsp + %ld]\n", s->name, offset);
             TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[0m"));
         }
         if (func_out->safepoints) {

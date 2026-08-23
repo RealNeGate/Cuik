@@ -200,10 +200,7 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             tokens_next(s);
             SourceLoc loc = tokens_get_location(s);
 
-            Token* t = tokens_get(s);
-            Atom name = atoms_put(t->content.length, t->content.data);
-            tokens_next(s);
-
+            Atom name = as_atom(s, "initializer member name");
             if (current == NULL) {
                 current = head = make_init_node(parser, s, INIT_MEMBER);
             } else {

@@ -551,10 +551,12 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const 
 
     TB_Symbol* s = tb_arena_alloc(&info->perm_arena, size);
     s->tag = tag;
+    s->info = NULL;
     s->linkage = linkage;
     s->name_length = len;
     s->name = tb__arena_strdup(m, len, name);
     s->module = m;
+    s->address = NULL;
     if (size > sizeof(TB_Symbol)) {
         memset(&s[1], 0, size - sizeof(TB_Symbol));
     }
@@ -576,6 +578,14 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const 
     }
 
     cuikperf_region_end();
+    return s;
+}
+
+TB_Symbol* tb_symbol_resolve(TB_Module* m, TB_Symbol* s) {
+    if (s->tag == TB_SYMBOL_EXTERNAL) {
+        TB_Symbol* resolved = atomic_load_explicit(&((TB_External*) s)->resolved, memory_order_relaxed);
+        if (resolved) { return resolved; }
+    }
     return s;
 }
 

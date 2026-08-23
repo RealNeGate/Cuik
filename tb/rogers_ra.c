@@ -867,7 +867,41 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
         if (done) {
             // printf("STATS: %d\n", stats_aaa);
-            TB_OPTDEBUG(REGALLOC3)(rogers_dump_sched(ctx, f->node_count));
+
+            #if 0
+            printf("======== RA BRUTE VERIFICATION (1) ========\n");
+            rogers_dump_sched(ctx, f->node_count);
+            printf("======== RA BRUTE VERIFICATION (2) ========\n");
+            printf("======== RA BRUTE VERIFICATION     ========\n");
+            // collect all live nodes with an associated vreg
+            DynArray(TB_Node*) all_nodes = NULL;
+            FOR_N(i, 0, ctx->bb_count) {
+                TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+                FOR_N(j, 0, aarray_length(bb->items)) {
+                    if (ctx->vreg_map[bb->items[j]->gvn]) {
+                        dyn_array_put(all_nodes, bb->items[j]);
+                    }
+                }
+            }
+
+            FOR_N(i, 0, dyn_array_length(all_nodes)) {
+                TB_Node* x = all_nodes[i];
+                FOR_N(j, i + 1, dyn_array_length(all_nodes)) {
+                    TB_Node* y = all_nodes[j];
+                    if (interfere(ctx, &ra, x, y)) {
+                        VReg* xv = &ctx->vregs[ctx->vreg_map[x->gvn]];
+                        VReg* yv = &ctx->vregs[ctx->vreg_map[y->gvn]];
+
+                        if (xv->class == yv->class && xv->assigned == yv->assigned) {
+                            printf("V%u (%%%u) interfering with V%u (%%%u): ", ctx->vreg_map[x->gvn], x->gvn, ctx->vreg_map[y->gvn], y->gvn);
+                            print_reg_name(xv->class, xv->assigned);
+                            printf("\n");
+                        }
+                    }
+                }
+            }
+            printf("===========================================\n");
+            #endif
 
             tb_arena_restore(arena, sp);
             cuikperf_region_end();
@@ -875,28 +909,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             cuik_free(ra.uf);
             cuik_free(ra.uf_size);
             nl_table_free(ra.coalesce_set);
-
-            #if 0
-            // dump_sched(ctx);
-            FOR_N(i, 0, f->node_count) {
-                int x = ctx->vreg_map[i];
-                if (x > 0) {
-                    TB_Node* xn = ra.gvn2node[i];
-                    FOR_N(j, i+1, f->node_count) {
-                        int y = ctx->vreg_map[j];
-                        TB_Node* yn = ra.gvn2node[j];
-
-                        if (y > 0 && interfere(ctx, &ra, xn, yn)) {
-                            if (ctx->vregs[x].class == ctx->vregs[y].class && ctx->vregs[x].assigned == ctx->vregs[y].assigned) {
-                                printf("V%u (%%%u) interfering with V%u (%%%u): ", x, xn->gvn, y, yn->gvn);
-                                print_reg_name(ctx->vregs[x].class, ctx->vregs[x].assigned);
-                                printf("\n");
-                            }
-                        }
-                    }
-                }
-            }
-            #endif
 
             if (ctx->features.gen & TB_FEATURE_STACK_MAPS) {
                 CUIK_TIMED_BLOCK("build stack maps") {
@@ -1581,6 +1593,7 @@ static void compute_ordinals(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* a
     // just give the root node a fake ordinal
     TB_ASSERT(ctx->f->root_node->gvn == 0);
     ra->order[0] = 1;
+    ra->gvn2node[0] = NULL;
 
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
@@ -1605,6 +1618,7 @@ static void compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
     // just give the root node a fake ordinal
     TB_ASSERT(ctx->f->root_node->gvn == 0);
     ra->order[0] = 1;
+    ra->gvn2node[0] = NULL;
     ra->is_vreg = tb_arena_alloc(arena, ((node_count + 63) / 64) * sizeof(uint64_t));
 
     CUIK_TIMED_BLOCK("areas") {

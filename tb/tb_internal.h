@@ -734,6 +734,7 @@ void tb_node_clear_extras(TB_Function* f, TB_Node* n);
 TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra);
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, TB_Linkage linkage, size_t size);
+TB_Symbol* tb_symbol_resolve(TB_Module* m, TB_Symbol* s);
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos, TB_ObjectRelocType type);
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data);

@@ -6,6 +6,9 @@
 //
 // * SSA construction from locals, if it's not possible to lower into phis we'll split the
 //   locals' memory effects if it never escapes.
+//
+// * Loop idioms, certain loops can have their ops converted to primitives like
+//   memcpy and memset.
 typedef enum {
     // we had some escape so we can't rewrite
     RENAME_NONE,

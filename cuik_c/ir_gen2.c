@@ -126,14 +126,31 @@ TB_Node* as_rval(TranslationUnit* tu, TB_GraphBuilder* g, const ValDesc* v) {
 
             n = tb_builder_load(g, 0, true, dt, n, src->align, false);
 
-            if (v->bits.offset) {
-                TB_Node* con = tb_builder_uint(g, dt, v->bits.offset);
-                n = tb_builder_binop_int(g, TB_SHR, n, con, 0);
-            }
+            if (src->is_unsigned) {
+                if (v->bits.offset) {
+                    TB_Node* con = tb_builder_uint(g, dt, v->bits.offset);
+                    n = tb_builder_binop_int(g, TB_SHR, n, con, 0);
+                }
 
-            if (v->bits.width != (src->size * 8)) {
-                TB_Node* con = tb_builder_uint(g, dt, mask);
-                n = tb_builder_binop_int(g, TB_AND, n, con, 0);
+                if (v->bits.width != (src->size * 8)) {
+                    TB_Node* con = tb_builder_uint(g, dt, mask);
+                    n = tb_builder_binop_int(g, TB_AND, n, con, 0);
+                }
+            } else {
+                // shift up such that the top bit of the bitfield is
+                // the MSB, then SAR back down
+                size_t src_bits = src->size * 8;
+                size_t shl_up   = src_bits - (v->bits.offset + v->bits.width);
+                size_t sar_down = shl_up + v->bits.offset;
+                if (shl_up) {
+                    TB_Node* con = tb_builder_uint(g, dt, shl_up);
+                    n = tb_builder_binop_int(g, TB_SHL, n, con, 0);
+                }
+
+                if (sar_down) {
+                    TB_Node* con = tb_builder_uint(g, dt, sar_down);
+                    n = tb_builder_binop_int(g, TB_SAR, n, con, 0);
+                }
             }
             break;
         }
@@ -712,9 +729,17 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 // * Unsupported size (we defer to a library call with a dumb lock).
                 TODO();
             } else if (e->op == EXPR_ASSIGN) {
-                TB_Node* rhs = as_rval(tu, g, &args[1]);
-                assign_to_lval(g, type, &args[0], rhs, is_volatile);
-                return (ValDesc){ RVALUE, .n = rhs };
+                if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+                    assert(args[0].kind == LVALUE);
+                    assert(args[1].kind == LVALUE);
+                    tb_builder_memcpy(g, 0, true, args[0].n, args[1].n, tb_builder_uint(g, TB_TYPE_I64, type->size), type->align, false);
+                    return args[0];
+                } else {
+                    assert(type->size <= 8);
+                    TB_Node* rhs = as_rval(tu, g, &args[1]);
+                    assign_to_lval(g, type, &args[0], rhs, is_volatile);
+                    return (ValDesc){ RVALUE, .n = rhs };
+                }
             } else {
                 TB_Node* lhs = as_rval(tu, g, &args[0]);
 
