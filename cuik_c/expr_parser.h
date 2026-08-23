@@ -80,12 +80,23 @@ static Subexpr* push_expr(Cuik_Parser* parser) {
 static Atom as_atom(TokenStream* restrict s, const char* failure_reason) {
     Token* t = tokens_get(s);
     if (t->type != TOKEN_IDENTIFIER) {
+        assert(failure_reason != NULL);
         diag_err(s, tokens_get_range(s), "Expected identifier for %s", failure_reason);
         return NULL;
     }
 
     tokens_next(s);
     return atoms_put(t->content.length, t->content.data);
+}
+
+static _Thread_local Atom C_va_arg;
+static _Thread_local Atom C_func;
+
+static bool atom_eq_cached(Atom src, Atom* cache, const char* exp) {
+    if (*cache == NULL) {
+        *cache = atoms_putc(exp);
+    }
+    return src == *cache;
 }
 
 // younger me was actually more scared of macros for the sake of shrinking
@@ -101,8 +112,12 @@ static SourceRange push_expr2(Cuik_Parser* parser, TokenStream* restrict s, Sour
         };
     }
 
+    // by the time we call this we've just advanced past whatever token
+    assert(s->list.current >= 2);
+    SourceLoc end_loc = get_end_location(&s->list.tokens[s->list.current - 2]);
+
     se.op  = op;
-    se.loc = (SourceRange){ loc, tokens_get_last_location(s) };
+    se.loc = (SourceRange){ loc, end_loc };
     aarray_push(parser->expr->exprs, se);
     return se.loc;
 }
@@ -271,7 +286,7 @@ static void parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cui
     E_PUSH(EXPR_INITIALIZER, .init = { type, root });
 }
 
-static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, Subexpr* e) {
+static Atom parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, bool is_wide) {
     size_t saved_lexer_pos = s->list.current;
     size_t total_len = 0;
     while (!tokens_eof(s)) {
@@ -315,7 +330,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     }
 
     size_t out_i = 0, in_i = 0;
-    if (e->op == EXPR_WSTR) {
+    if (is_wide) {
         wchar_t* out = tb_arena_alloc(parser->arena, total_len + 1);
         while (in_i < curr) {
             int ch;
@@ -327,7 +342,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
             out[out_i++] = ch;
             in_i += distance;
         }
-        e->str = atoms_put(out_i*sizeof(wchar_t), (const unsigned char*) out);
+        return atoms_put(out_i*sizeof(wchar_t), (const unsigned char*) out);
     } else {
         // Since the input stream will always be ahead of the output stream, we can use the
         // same array and just mutate it
@@ -341,7 +356,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
             buffer[out_i++] = ch;
             in_i += distance;
         }
-        e->str = atoms_put(out_i, buffer);
+        return atoms_put(out_i, buffer);
     }
 }
 
@@ -372,95 +387,64 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
         return;
     }
 
-    Subexpr* e = NULL;
-    SourceLoc start_loc = tokens_get_location(s);
-
+    SourceLoc loc = tokens_get_location(s);
     switch (t->type) {
         case TOKEN_IDENTIFIER: {
-            if (string_equals_cstr(&t->content, "__va_arg")) {
-                tokens_next(s);
-
+            Atom name = as_atom(s, NULL);
+            if (atom_eq_cached(name, &C_va_arg, "__va_arg")) {
                 expect_char(s, '(');
                 parse_assignment(parser, s);
                 expect_char(s, ',');
                 Cuik_QualType type = parse_typename2(parser, s);
                 expect_char(s, ')');
 
-                tokens_prev(s);
-
-                e = push_expr(parser);
-                *e = (Subexpr){
-                    .op = EXPR_VA_ARG,
-                    .va_arg_ = { type },
-                };
+                E_PUSH(EXPR_VA_ARG, .va_arg_ = { type });
                 break;
-            } else if (!parser->is_in_global_scope && string_equals_cstr(&t->content, "__func__")) {
+            } else if (!parser->is_in_global_scope && atom_eq_cached(name, &C_func, "__func__")) {
                 Atom name = cuik__sema_function_stmt->decl.name;
-
-                e = push_expr(parser);
-                *e = (Subexpr){
-                    .op  = EXPR_STR,
-                    .str = atoms_putc(name),
-                };
+                E_PUSH(EXPR_STR, .str = name);
                 break;
             }
 
-            e = push_expr(parser);
-
-            Token* t = tokens_get(s);
-            Atom name = atoms_put(t->content.length, t->content.data);
-
-            Symbol* sym = NULL;
             ptrdiff_t builtin_search = nl_map_get_cstr(parser->target->builtin_func_map, name);
             if (builtin_search >= 0) {
-                *e = (Subexpr){
-                    .op = EXPR_BUILTIN_SYMBOL,
-                    .builtin_sym = { name },
-                };
+                E_PUSH(EXPR_BUILTIN_SYMBOL, .builtin_sym = { name });
             } else {
-                sym = cuik_symtab_lookup(parser->symbols, name);
+                Symbol* sym = cuik_symtab_lookup(parser->symbols, name);
                 if (sym != NULL) {
                     if (sym->storage_class == STORAGE_PARAM) {
-                        *e = (Subexpr){
-                            .op = EXPR_PARAM,
-                            .param_num = sym->param_num
-                        };
+                        E_PUSH(EXPR_PARAM, .param_num = sym->param_num);
                     } else if (sym->storage_class == STORAGE_ENUM) {
-                        *e = (Subexpr){
-                            .op = EXPR_ENUM,
-                            .enum_val = { sym->type, &cuik_canonical_type(sym->type)->enumerator.entries[sym->enum_value] },
-                        };
+                        EnumEntry* entry = &cuik_canonical_type(sym->type)->enumerator.entries[sym->enum_value];
+                        E_PUSH(EXPR_ENUM, .enum_val = { sym->type, entry });
                     } else {
                         assert(sym->stmt != NULL);
-                        *e = (Subexpr){
-                            .op = EXPR_SYMBOL,
-                            .sym = { sym->stmt },
-                        };
+                        E_PUSH(EXPR_SYMBOL, .sym = { sym->stmt });
                     }
                 } else {
-                    diag_unresolved_symbol(parser, name, start_loc);
-
-                    *e = (Subexpr){
-                        .op = EXPR_UNKNOWN_SYMBOL,
-                        .unknown_sym = { name },
-                    };
+                    diag_unresolved_symbol(parser, name, loc);
+                    E_PUSH(EXPR_UNKNOWN_SYMBOL, .unknown_sym = { name });
                 }
-            }
 
-            // only known symbols participate in the global collection phase,
-            // and if it's an EXPR_SYMBOL then sym != NULL so we don't check
-            // that here
-            if (e->op == EXPR_SYMBOL && sym->storage_class != STORAGE_PARAM && sym->storage_class != STORAGE_ENUM && sym->storage_class != STORAGE_TYPEDEF && sym->storage_class != STORAGE_LOCAL) {
-                // append to list inside of the expression
-                ptrdiff_t i = e - parser->expr->exprs;
-                e->sym.next_symbol = parser->expr->first_symbol;
-                parser->expr->first_symbol = i;
+                // only known symbols participate in the global collection phase,
+                // and if it's an EXPR_SYMBOL then sym != NULL so we don't check
+                // that here
+                Subexpr* e = &aarray_top(parser->expr->exprs);
+                if (e->op == EXPR_SYMBOL &&
+                    sym->storage_class != STORAGE_PARAM &&
+                    sym->storage_class != STORAGE_ENUM &&
+                    sym->storage_class != STORAGE_TYPEDEF &&
+                    sym->storage_class != STORAGE_LOCAL) {
+                    // append to list inside of the expression
+                    ptrdiff_t i = e - parser->expr->exprs;
+                    e->sym.next_symbol = parser->expr->first_symbol;
+                    parser->expr->first_symbol = i;
+                }
             }
             break;
         }
 
         case TOKEN_FLOAT: {
-            Token* t = tokens_get(s);
             bool is_float32 = t->content.data[t->content.length - 1] == 'f';
 
             char* end;
@@ -471,16 +455,12 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 }
             }
 
-            e = push_expr(parser);
-            *e = (Subexpr){
-                .op = is_float32 ? EXPR_FLOAT32 : EXPR_FLOAT64,
-                .float_lit = f,
-            };
+            tokens_next(s);
+            E_PUSH(is_float32 ? EXPR_FLOAT32 : EXPR_FLOAT64, .float_lit = f);
             break;
         }
 
         case TOKEN_INTEGER: {
-            Token* t = tokens_get(s);
             Cuik_IntSuffix suffix;
             uint64_t i = parse_int(t->content.length, (const char*) t->content.data, &suffix);
 
@@ -490,61 +470,29 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 suffix = INT_SUFFIX_U;
             }
 
-            e = push_expr(parser);
-            *e = (Subexpr){
-                .op = EXPR_INT,
-                .int_lit = { i, suffix },
-            };
+            tokens_next(s);
+            E_PUSH(EXPR_INT, .int_lit = { i, suffix });
             break;
         }
 
         case TOKEN_STRING_SINGLE_QUOTE:
         case TOKEN_STRING_WIDE_SINGLE_QUOTE: {
-            Token* t = tokens_get(s);
-
             int ch = 0;
             ptrdiff_t distance = parse_char(t->content.length - 2, (const char*) &t->content.data[1], &ch);
             if (distance < 0) {
                 diag_err(s, get_token_range(t), "invalid character literal");
             }
 
-            e = push_expr(parser);
-            *e = (Subexpr){
-                .op = t->type == TOKEN_STRING_SINGLE_QUOTE ? EXPR_CHAR : EXPR_WCHAR,
-                .char_lit = ch,
-            };
-            break;
-        }
-
-        case TOKEN_MAGIC_EMBED_STRING: {
-            SourceLoc opening_loc = tokens_get_location(s);
-            String content = tokens_get(s)->content;
-
-            Cuik_QualType char_type = cuik_uncanonical_type(&parser->target->signed_ints[CUIK_BUILTIN_CHAR]);
-
-            e = push_expr(parser);
-            *e = (Subexpr){
-                .op = EXPR_STR,
-                .has_visited = true,
-                .str = atoms_put(content.length, content.data),
-            };
-
-            expect_closing_paren(s, opening_loc);
-            tokens_prev(s);
+            tokens_next(s);
+            E_PUSH(t->type == TOKEN_STRING_SINGLE_QUOTE ? EXPR_CHAR : EXPR_WCHAR, .char_lit = ch);
             break;
         }
 
         case TOKEN_STRING_DOUBLE_QUOTE:
         case TOKEN_STRING_WIDE_DOUBLE_QUOTE: {
             bool is_wide = (tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE);
-
-            e = push_expr(parser);
-            *e = (Subexpr){
-                .op = is_wide ? EXPR_WSTR : EXPR_STR,
-            };
-
-            parse_string_literal(parser, s, e);
-            tokens_prev(s);
+            Atom str = parse_string_literal(parser, s, is_wide);
+            E_PUSH(is_wide ? EXPR_WSTR : EXPR_STR, .str = str);
             break;
         }
 
@@ -556,9 +504,6 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
             // controlling expression followed by a comma
             parse_assignment(parser, s);
-
-            e = push_expr(parser);
-            *e = (Subexpr){ .op = EXPR_GENERIC };
 
             expect_char(s, ',');
 
@@ -592,24 +537,19 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 if (tokens_get(s)->type != ',') break;
                 tokens_next(s);
             }
-            e->generic_.cases = entries;
+            E_PUSH(EXPR_GENERIC, .generic_ = { entries });
 
             expect_closing_paren(s, opening_loc);
-            tokens_prev(s);
             break;
         }
 
         default:
         diag_err(s, tokens_get_range(s), "could not parse expression");
+        tokens_next(s);
 
-        e = push_expr(parser);
-        *e = (Subexpr){ .op = EXPR_NONE };
+        E_PUSH(EXPR_NONE);
         return;
     }
-    tokens_next(s);
-
-    e->loc.start = start_loc;
-    e->loc.end = tokens_get_last_location(s);
 }
 
 static void parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof) {
@@ -1060,3 +1000,6 @@ static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
     return value.i;
 }
+
+#undef E_PUSH
+#undef E_ERR
