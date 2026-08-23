@@ -77,6 +77,36 @@ static Subexpr* push_expr(Cuik_Parser* parser) {
     return aarray_grab(parser->expr->exprs);
 }
 
+static Atom as_atom(TokenStream* restrict s, const char* failure_reason) {
+    Token* t = tokens_get(s);
+    if (t->type != TOKEN_IDENTIFIER) {
+        diag_err(s, tokens_get_range(s), "Expected identifier for %s", failure_reason);
+        return NULL;
+    }
+
+    tokens_next(s);
+    return atoms_put(t->content.length, t->content.data);
+}
+
+// younger me was actually more scared of macros for the sake of shrinking
+// code like this, i got old
+#define E_PUSH(op, ...) push_expr2(parser, s, loc, op, (Subexpr){ __VA_ARGS__ })
+#define E_ERR(...)      diag_err(s, aarray_top(parser->expr->exprs).loc, __VA_ARGS__)
+static SourceRange push_expr2(Cuik_Parser* parser, TokenStream* restrict s, SourceLoc loc, ExprOp op, Subexpr se) {
+    if (parser->expr == NULL) {
+        parser->expr = TB_ARENA_ALLOC(parser->arena, Cuik_Expr);
+        *parser->expr = (Cuik_Expr){
+            .first_symbol = -1,
+            .exprs = aarray_create(parser->arena, Subexpr, 4),
+        };
+    }
+
+    se.op  = op;
+    se.loc = (SourceRange){ loc, tokens_get_last_location(s) };
+    aarray_push(parser->expr->exprs, se);
+    return se.loc;
+}
+
 static Subexpr* peek_expr(Cuik_Parser* parser) {
     assert(parser->expr != NULL);
     return &aarray_top(parser->expr->exprs);
@@ -238,12 +268,7 @@ static void parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cui
         }
     }
     expect_char(s, '}');
-
-    *push_expr(parser) = (Subexpr){
-        .op = EXPR_INITIALIZER,
-        .loc = { loc, tokens_get_last_location(s) },
-        .init = { type, root },
-    };
+    E_PUSH(EXPR_INITIALIZER, .init = { type, root });
 }
 
 static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, Subexpr* e) {
@@ -537,14 +562,13 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
             expect_char(s, ',');
 
-            size_t entry_count = 0;
-            C11GenericEntry* entries = tls_save();
-
+            ArenaArray(C11GenericEntry) entries = aarray_create(parser->arena, C11GenericEntry, 4);
             SourceRange default_loc = { 0 };
             while (!tokens_eof(s) && tokens_get(s)->type != ')') {
                 Cuik_Expr* hide = parser->expr;
                 parser->expr = NULL;
 
+                Cuik_QualType type = CUIK_QUAL_TYPE_NULL;
                 if (tokens_get(s)->type == TOKEN_KW_default) {
                     if (default_loc.start.raw != 0) {
                         diag_err(s, tokens_get_range(s), "multiple default cases on _Generic");
@@ -552,48 +576,25 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                     }
 
                     default_loc = tokens_get_range(s);
-                    expect_char(s, ':');
-
-                    parse_assignment(parser, s);
-                    Cuik_Expr* expr = complete_expr(parser);
-
-                    // the default case is like a normal entry but without a type :p
-                    tls_push(sizeof(C11GenericEntry));
-                    entries[entry_count++] = (C11GenericEntry){
-                        .key = CUIK_QUAL_TYPE_NULL,
-                        .value = expr,
-                    };
                 } else {
-                    Cuik_QualType type = parse_typename2(parser, s);
+                    type = parse_typename2(parser, s);
                     assert(!CUIK_QUAL_TYPE_IS_NULL(type) && "TODO: error recovery");
-                    expect_char(s, ':');
-
-                    parse_assignment(parser, s);
-                    Cuik_Expr* expr = complete_expr(parser);
-
-                    tls_push(sizeof(C11GenericEntry));
-                    entries[entry_count++] = (C11GenericEntry){
-                        .key = type,
-                        .value = expr,
-                    };
                 }
+                expect_char(s, ':');
+
+                parse_assignment(parser, s);
+                Cuik_Expr* expr = complete_expr(parser);
+
+                aarray_push(entries, (C11GenericEntry){ type, expr });
                 parser->expr = hide;
 
                 // exit if it's not a comma
                 if (tokens_get(s)->type != ',') break;
                 tokens_next(s);
             }
+            e->generic_.cases = entries;
 
             expect_closing_paren(s, opening_loc);
-
-            // move it to a more permanent storage
-            C11GenericEntry* dst = tb_arena_alloc(parser->arena, entry_count * sizeof(C11GenericEntry));
-            memcpy(dst, entries, entry_count * sizeof(C11GenericEntry));
-
-            e->generic_.case_count = entry_count;
-            e->generic_.cases = dst;
-
-            tls_restore(entries);
             tokens_prev(s);
             break;
         }
@@ -612,7 +613,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 }
 
 static void parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof) {
-    SourceLoc start_loc = tokens_get_location(s);
+    SourceLoc loc = tokens_get_location(s);
     bool has_expr = false;
 
     // initializer list handling:
@@ -629,20 +630,14 @@ static void parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s,
         }
 
         Cuik_QualType type = parse_typename2(parser, s);
-        expect_closing_paren(s, start_loc);
+        expect_closing_paren(s, loc);
 
         if (tokens_get(s)->type != '{') {
             if (in_sizeof) {
                 // HACKY but it does get us to the 'sizeof' as opposed to the paren
-                start_loc = s->list.tokens[s->list.current - 4].location;
-
+                loc = s->list.tokens[s->list.current - 4].location;
                 // resolve as sizeof (T)
-                SourceLoc end_loc = tokens_get_last_location(s);
-                *push_expr(parser) = (Subexpr){
-                    .op = EXPR_SIZEOF_T,
-                    .loc = { start_loc, end_loc },
-                    .x_of_type = { type },
-                };
+                E_PUSH(EXPR_SIZEOF_T, .x_of_type = { type });
                 return;
             } else {
                 s->list.current = fallback;
@@ -656,145 +651,76 @@ static void parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s,
     }
 
     normal_path:
-    start_loc = tokens_get_location(s);
+    loc = tokens_get_location(s);
 
     bool use_constructor = false;
     if (!has_expr) {
         if (parser->version == CUIK_VERSION_GLSL && is_typename(parser, s)) {
-            Cuik_Type* type = parse_glsl_type(parser, s);
-            SourceLoc end_loc = tokens_get_last_location(s);
-
-            Subexpr* e = push_expr(parser);
-            *e = (Subexpr){
-                .op = EXPR_CONSTRUCTOR,
-                .loc = { start_loc, end_loc },
-                .constructor = { type },
-            };
+            Cuik_Type* type   = parse_glsl_type(parser, s);
+            SourceRange range = E_PUSH(EXPR_CONSTRUCTOR, .constructor = { type });
 
             if (tokens_get(s)->type != '(') {
-                diag_err(s, e->loc, "Expected parenthesis after constructor name");
+                diag_err(s, range, "Expected parenthesis after constructor name");
             }
         } else {
             parse_primary_expr(parser, s);
         }
     }
 
-    // after any of the: [] () . ->
-    // it'll restart and take a shot at matching another
-    // piece of the expression.
-    try_again: {
-        if (tokens_get(s)->type == '[') {
-            tokens_next(s);
-            parse_expr(parser, s);
-            expect_char(s, ']');
+    // [] () . -> ++ --
+    for (;;) {
+        SourceLoc op_loc = tokens_get_location(s);
+        TknType type = tokens_post_inc(s)->type;
+        switch (type) {
+            case '[': {
+                parse_expr(parser, s);
+                expect_char(s, ']');
 
-            SourceLoc end_loc = tokens_get_last_location(s);
-            *push_expr(parser) = (Subexpr){
-                .op = EXPR_SUBSCRIPT,
-                .loc = { start_loc, end_loc },
-            };
-
-            if (use_constructor) {
-                diag_err(s, (SourceRange){ start_loc, end_loc }, "Cannot get element of type");
-            }
-            goto try_again;
-        }
-
-        // Pointer member access
-        if (tokens_get(s)->type == TOKEN_ARROW) {
-            tokens_next(s);
-            if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
-                diag_err(s, tokens_get_range(s), "Expected identifier after member access a.b");
+                E_PUSH(EXPR_SUBSCRIPT);
+                if (use_constructor) {
+                    E_ERR("Cannot get element of type");
+                }
+                break;
             }
 
-            Token* t = tokens_get(s);
-            Atom name = atoms_put(t->content.length, t->content.data);
-            tokens_next(s);
-
-            SourceLoc end_loc = tokens_get_last_location(s);
-            *push_expr(parser) = (Subexpr){
-                .op = EXPR_ARROW,
-                .loc = { start_loc, end_loc },
-                .dot_arrow = { .name = name },
-            };
-
-            if (use_constructor) {
-                diag_err(s, (SourceRange){ start_loc, end_loc }, "Cannot get member of type");
-            }
-            goto try_again;
-        }
-
-        // Member access
-        if (tokens_get(s)->type == '.') {
-            tokens_next(s);
-            if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
-                diag_err(s, tokens_get_range(s), "Expected identifier after member access a.b");
+            case '.':
+            case TOKEN_ARROW: {
+                ExprOp op = type == '.' ? EXPR_DOT : EXPR_ARROW;
+                Atom name = as_atom(s, "member access a.b");
+                E_PUSH(op, .dot_arrow = { .name = name });
+                if (use_constructor) {
+                    E_ERR("We can't know the base type for the member access since it's an untyped constructor");
+                }
+                break;
             }
 
-            Token* t = tokens_get(s);
-            Atom name = atoms_put(t->content.length, t->content.data);
-            tokens_next(s);
-
-            SourceLoc end_loc = tokens_get_last_location(s);
-            *push_expr(parser) = (Subexpr){
-                .op = EXPR_DOT,
-                .loc = { start_loc, end_loc },
-                .dot_arrow = { .name = name },
-            };
-
-            if (use_constructor) {
-                diag_err(s, (SourceRange){ start_loc, end_loc }, "Cannot get member of type");
-            }
-            goto try_again;
-        }
-
-        // Function call
-        if (tokens_get(s)->type == '(') {
-            SourceLoc open_loc = tokens_get_location(s);
-            tokens_next(s);
-
-            int param_count = 0;
-            while (!tokens_eof(s) && tokens_get(s)->type != ')') {
-                if (param_count) {
-                    if (tokens_get(s)->type != ',') {
+            case '(': {
+                int param_count = 0;
+                while (!tokens_eof(s) && tokens_get(s)->type != ')') {
+                    if (param_count && !expect_char(s, ',')) {
                         break;
                     }
-
-                    tokens_next(s);
+                    parse_assignment(parser, s);
+                    param_count++;
                 }
-
-                parse_assignment(parser, s);
-                param_count++;
+                expect_closing_paren(s, op_loc);
+                E_PUSH(EXPR_CALL, .call = { param_count });
+                break;
             }
 
-            expect_closing_paren(s, open_loc);
-            SourceLoc end_loc = tokens_get_last_location(s);
-
-            *push_expr(parser) = (Subexpr){
-                .op = EXPR_CALL,
-                .loc = { start_loc, end_loc },
-                .call = { param_count },
-            };
-            goto try_again;
-        }
-
-        if (tokens_get(s)->type == TOKEN_INCREMENT || tokens_get(s)->type == TOKEN_DECREMENT) {
-            bool is_inc = tokens_get(s)->type == TOKEN_INCREMENT;
-            tokens_next(s);
-            SourceLoc end_loc = tokens_get_last_location(s);
-
-            *push_expr(parser) = (Subexpr){
-                .op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
-                .loc = { start_loc, end_loc },
-            };
-
-            if (use_constructor) {
-                diag_err(s, (SourceRange){ start_loc, end_loc }, "Cannot increment or decrement type");
+            case TOKEN_INCREMENT:
+            case TOKEN_DECREMENT: {
+                E_PUSH(type == TOKEN_INCREMENT ? EXPR_POST_INC : EXPR_POST_DEC);
+                if (use_constructor) {
+                    E_ERR("Cannot increment or decrement an untyped constructor");
+                }
+                break;
             }
-            goto try_again;
-        }
 
-        return;
+            default:
+            tokens_prev(s);
+            return;
+        }
     }
 }
 

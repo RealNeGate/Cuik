@@ -614,6 +614,8 @@ struct Subexpr {
     int has_visited : 1;
 
     union {
+        char raw;
+
         uint32_t char_lit;
         double float_lit;
 
@@ -682,9 +684,8 @@ struct Subexpr {
         } ptrop;
 
         struct {
-            // if case_count == 0, then controlling_expr is the matched expression
-            int case_count;
-            C11GenericEntry* cases;
+            // if aarray_length(cases) == 0, then controlling_expr is the matched expression
+            ArenaArray(C11GenericEntry) cases;
         } generic_;
 
         struct {

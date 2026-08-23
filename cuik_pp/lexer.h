@@ -200,6 +200,11 @@ static void tokens_prev(TokenStream* restrict s) {
     s->list.current -= 1;
 }
 
+static Token* tokens_post_inc(TokenStream* restrict s) {
+    assert(s->list.current < dyn_array_length(s->list.tokens));
+    return &s->list.tokens[s->list.current++];
+}
+
 static void tokens_next(TokenStream* restrict s) {
     assert(s->list.current < dyn_array_length(s->list.tokens));
     s->list.current += 1;
