@@ -25,6 +25,7 @@
 #define CUIK_AST_H
 
 #include "cuik_prelude.h"
+#include "arena_array.h"
 
 #ifdef CONFIG_HAS_TB
 #include <tb.h>
@@ -703,7 +704,6 @@ struct Subexpr {
         } ternary;
 
         struct {
-            // the sides aren't in the same Cuik_Expr because they're conditionally run
             Cuik_Expr *left, *right;
         } logical_binop;
 
@@ -737,7 +737,6 @@ struct Subexpr {
 //   is used for knowing when symbols are in use.
 //
 struct Cuik_Expr {
-    size_t count;
     bool visited;
 
     ptrdiff_t first_symbol;
@@ -748,7 +747,7 @@ struct Cuik_Expr {
     Cuik_QualType* cast_types;
 
     // constructed during parse time
-    Subexpr* exprs;
+    ArenaArray(Subexpr) exprs;
 };
 
 static bool cuik_type_is_signed(const Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && !t->is_unsigned; }

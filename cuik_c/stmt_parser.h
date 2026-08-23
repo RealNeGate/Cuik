@@ -42,7 +42,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
         while (!tokens_eof(s) && tokens_get(s)->type != ';') {
             Decl decl = is_glsl
                 ? parse_declarator_glsl(parser, s, type, false)
-                : parse_declarator2(parser, s, type, false);
+            : parse_declarator2(parser, s, type, false);
 
             // Convert into statement
             Stmt* n = alloc_stmt(parser);
@@ -84,6 +84,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
                     diag_err(s, decl.loc, "typedef cannot have initial expression");
                 }
 
+                parser->expr = NULL;
                 if (tokens_get(s)->type == '{') {
                     parse_initializer2(parser, s, CUIK_QUAL_TYPE_NULL);
                 } else {
@@ -108,7 +109,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
         size_t start_tkn = s->list.current; // used for error recovery
 
         Cuik_Expr* expr = parse_expr2(parser, s);
-        SourceRange loc = expr->exprs[expr->count - 1].loc;
+        SourceRange loc = aarray_top(expr->exprs).loc;
 
         n->op = STMT_EXPR;
         n->loc = loc;
@@ -189,7 +190,7 @@ static ParseResult parse_stmt_or_expr2(Cuik_Parser* parser, TokenStream* restric
             size_t start_tkn = s->list.current; // used for error recovery
 
             Cuik_Expr* expr = parse_expr2(parser, s);
-            SourceRange loc = expr->exprs[expr->count - 1].loc;
+            SourceRange loc = aarray_top(expr->exprs).loc;
 
             n->op = STMT_EXPR;
             n->loc = loc;
@@ -564,6 +565,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         // skip to the semicolon
         tokens_next(s);
 
+        parser->expr = NULL;
         ptrdiff_t search = nl_map_get_cstr(labels, name);
         if (search >= 0) {
             *push_expr(parser) = (Subexpr){

@@ -68,33 +68,26 @@ static ExprInfo get_binop(TknType ty) {
 static Subexpr* push_expr(Cuik_Parser* parser) {
     if (parser->expr == NULL) {
         parser->expr = TB_ARENA_ALLOC(parser->arena, Cuik_Expr);
-        *parser->expr = (Cuik_Expr){ .exprs = tls_push(0), .first_symbol = -1 };
+        *parser->expr = (Cuik_Expr){
+            .first_symbol = -1,
+            .exprs = aarray_create(parser->arena, Subexpr, 4),
+        };
     }
 
-    return tls_push(sizeof(Subexpr));
+    return aarray_grab(parser->expr->exprs);
 }
 
 static Subexpr* peek_expr(Cuik_Parser* parser) {
-    Subexpr* end = tls_push(0);
-    return &end[-1];
+    assert(parser->expr != NULL);
+    return &aarray_top(parser->expr->exprs);
 }
 
 static Cuik_Expr* complete_expr(Cuik_Parser* parser) {
     Cuik_Expr* e = parser->expr;
-
-    // move to more permanent storage
-    size_t count = e->count = ((Subexpr*) tls_push(0)) - e->exprs;
-    Subexpr* exprs = TB_ARENA_ARR_ALLOC(parser->arena, count, Subexpr);
-    memcpy(exprs, e->exprs, count * sizeof(Subexpr));
-    tls_restore(e->exprs);
-
     if (e->first_symbol >= 0) {
         parser->expr->next_in_chain = symbol_chain_start;
         symbol_chain_start = parser->expr;
     }
-
-    e->exprs = exprs;
-    parser->expr = NULL;
     return e;
 }
 
@@ -211,9 +204,14 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
 
         expect_char(s, '}');
     } else {
+        Cuik_Expr* hide = parser->expr;
+        parser->expr = NULL;
+
         // parse without comma operator
         parse_assignment(parser, s);
         current->expr = complete_expr(parser);
+
+        parser->expr = hide;
     }
     current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
 
@@ -544,6 +542,9 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
             SourceRange default_loc = { 0 };
             while (!tokens_eof(s) && tokens_get(s)->type != ')') {
+                Cuik_Expr* hide = parser->expr;
+                parser->expr = NULL;
+
                 if (tokens_get(s)->type == TOKEN_KW_default) {
                     if (default_loc.start.raw != 0) {
                         diag_err(s, tokens_get_range(s), "multiple default cases on _Generic");
@@ -576,6 +577,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                         .value = expr,
                     };
                 }
+                parser->expr = hide;
 
                 // exit if it's not a comma
                 if (tokens_get(s)->type != ',') break;
@@ -915,7 +917,7 @@ static void parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, bo
 }
 
 static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, int min_prec) {
-    Subexpr* start_of_expr = (Subexpr*) tls_push(0);
+    ptrdiff_t start_i = parser->expr ? aarray_length(parser->expr->exprs) : 0;
 
     // This precendence climber is always left associative
     SourceLoc start_loc = tokens_get_location(s);
@@ -926,10 +928,6 @@ static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, i
         tokens_next(s);
 
         if (binop.op == EXPR_LOGICAL_AND || binop.op == EXPR_LOGICAL_OR) {
-            // a = b || c
-            //     ^
-            //     we need to split from here to the logical or instead of just everything
-            //     to the left of it.
             Cuik_Expr* hide = parser->expr;
             parser->expr = NULL;
 
@@ -937,9 +935,6 @@ static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, i
             Cuik_Expr* left = NULL;
             {
                 ptrdiff_t first_sym = -1;
-
-                // relocate symbols
-                ptrdiff_t start_i = start_of_expr - hide->exprs;
 
                 // if it's part of the left expression, move it out
                 // of the hidden expression.
@@ -953,14 +948,16 @@ static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, i
                     sym = hide->first_symbol = next;
                 }
 
-                // copy
-                size_t count = (Subexpr*) tls_push(0) - start_of_expr;
-                Subexpr* exprs = TB_ARENA_ARR_ALLOC(parser->arena, count, Subexpr);
-                memcpy(exprs, start_of_expr, count * sizeof(Subexpr));
-                tls_restore(start_of_expr);
+                size_t count = aarray_length(hide->exprs) - start_i;
+                ArenaArray(Subexpr) exprs = aarray_create(parser->arena, Subexpr, count);
 
-                left = TB_ARENA_ALLOC(parser->arena, Cuik_Expr);
-                *left = (Cuik_Expr){ .exprs = exprs, .count = count, .first_symbol = first_sym };
+                // migrate
+                memcpy(&exprs[0], &hide->exprs[start_i], count * sizeof(Subexpr));
+                aarray_set_length(hide->exprs, start_i);
+                aarray_set_length(exprs, count);
+
+                left  = TB_ARENA_ALLOC(parser->arena, Cuik_Expr);
+                *left = (Cuik_Expr){ .exprs = exprs, .first_symbol = first_sym };
 
                 if (left->first_symbol >= 0) {
                     left->next_in_chain = symbol_chain_start;
@@ -1004,15 +1001,16 @@ static void parse_ternary(Cuik_Parser* restrict parser, TokenStream* restrict s)
         // into their own separate Cuik_Expr but we've already got stuff in progress
         // so we'll temporarily hide it.
         Cuik_Expr* hide = parser->expr;
-        parser->expr = NULL;
 
         // left expression
+        parser->expr = NULL;
         parse_expr(parser, s);
         Cuik_Expr* left = complete_expr(parser);
 
         expect_char(s, ':');
 
         // right expression
+        parser->expr = NULL;
         parse_ternary(parser, s);
         Cuik_Expr* right = complete_expr(parser);
 
@@ -1103,13 +1101,24 @@ static void parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
 }
 
 static Cuik_Expr* parse_expr2(Cuik_Parser* restrict parser, TokenStream* restrict s) {
+    Cuik_Expr* old = parser->expr;
+    parser->expr = NULL;
+
     parse_expr(parser, s);
-    return complete_expr(parser);
+    Cuik_Expr* e = complete_expr(parser);
+
+    parser->expr = old;
+    return e;
 }
 
 static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s) {
+    Cuik_Expr* old = parser->expr;
+    parser->expr = NULL;
+
     parse_assignment(parser, s);
     Cuik_Expr* e = complete_expr(parser);
+
+    parser->expr = old;
 
     Cuik_ConstVal value;
     if (!const_eval(parser, &parser->tokens, e, &value)) {
@@ -1118,7 +1127,8 @@ static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s) {
     }
 
     if (value.tag != CUIK_CONST_INT) {
-        diag_err(&parser->tokens, e->exprs[e->count - 1].loc, "Constant expression was not an integer");
+        size_t count = aarray_length(e->exprs);
+        diag_err(&parser->tokens, e->exprs[count - 1].loc, "Constant expression was not an integer");
         return 0;
     }
 

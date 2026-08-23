@@ -21,19 +21,22 @@ const char* cuik_stmt_decl_name(Stmt* stmt) {
 }
 
 static Subexpr* get_root_subexpr(Cuik_Expr* e) {
-    return e ? &e->exprs[e->count - 1] : NULL;
+    return e ? &aarray_top(e->exprs) : NULL;
 }
 
 static Cuik_QualType get_root_type(Cuik_Expr* e) {
-    return e ? e->types[e->count - 1] : CUIK_QUAL_TYPE_NULL;
+    size_t count = aarray_length(e->exprs);
+    return e ? e->types[count - 1] : CUIK_QUAL_TYPE_NULL;
 }
 
 static Cuik_QualType get_root_cast(Cuik_Expr* e) {
-    return e ? e->cast_types[e->count - 1] : CUIK_QUAL_TYPE_NULL;
+    size_t count = aarray_length(e->exprs);
+    return e ? e->cast_types[count - 1] : CUIK_QUAL_TYPE_NULL;
 }
 
 static void set_root_cast(Cuik_Expr* e, Cuik_QualType ty) {
-    e->cast_types[e->count - 1] = ty;
+    size_t count = aarray_length(e->exprs);
+    e->cast_types[count - 1] = ty;
 }
 
 static void set_expr_type(Cuik_Expr* e, Subexpr* s, Cuik_QualType ty) {
@@ -413,7 +416,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
 
         Cuik_QualType expr_qtype = cuik__sema_expr(tu, expr);
         Cuik_Type* expr_type = cuik_canonical_type(expr_qtype);
-        Subexpr* e = &expr->exprs[expr->count - 1];
+        Subexpr* e = &aarray_top(expr->exprs);
 
         // if we try to initialize an array without brackets, it'll let us
         // access all the members without it.
@@ -473,14 +476,14 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
                         expr->exprs[0] = *e;
                         expr->exprs[0].op = EXPR_CONST;
                         expr->exprs[0].const_val = val;
-                        expr->count = 1;
+                        aarray_set_length(expr->exprs, 1);
 
                         e = &expr->exprs[0];
                     }
                 }
             }
 
-            expr->cast_types[expr->count - 1] = cast_type;
+            set_root_cast(expr, cast_type);
         }
     } else {
         // compound literals can be used on both scalars and aggregates.
@@ -1120,6 +1123,9 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             // Normal C member access
             bool is_arrow = (e->op == EXPR_ARROW);
             Cuik_Type* record_type = get_record_type(tu, base, e->loc, is_arrow);
+            if (record_type == NULL) {
+                return CUIK_QUAL_TYPE_NULL;
+            }
 
             if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
                 diag_err(&tu->tokens, e->loc, "Cannot get the member of a non-record type (%!T)", record_type);
@@ -1236,7 +1242,6 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
 
             set_root_cast(e->logical_binop.left,  boolean);
             set_root_cast(e->logical_binop.right, boolean);
-
             return boolean;
         }
 
@@ -1421,19 +1426,20 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
 #undef SET_CAST
 
 Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Cuik_Expr* restrict e) {
+    size_t count = aarray_length(e->exprs);
     if (e->visited) {
-        return e->types[e->count - 1];
+        return e->types[count - 1];
     }
 
     // we're gonna need a type and cast_type stream
-    Cuik_QualType* t = TB_ARENA_ARR_ALLOC(&tu->arena, 2 * e->count, Cuik_QualType);
+    Cuik_QualType* t = TB_ARENA_ARR_ALLOC(&tu->arena, 2 * count, Cuik_QualType);
     e->visited    = true;
     e->types      = t;
-    e->cast_types = &t[e->count];
+    e->cast_types = &t[count];
 
     size_t stack[128], top = 0;
     Subexpr* exprs = e->exprs;
-    for (size_t i = 0; i < e->count; i++) {
+    for (size_t i = 0; i < count; i++) {
         // once we know this we can organize the top slice of the stack as the inputs
         int arity = cuik_get_expr_arity(&exprs[i]);
         top -= arity;
@@ -1445,6 +1451,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Cuik_Expr* restrict e) {
         t[i] = cuik__sema_subexpr(tu, e, &exprs[i], arity, args);
         if (CUIK_QUAL_TYPE_IS_NULL(t[i])) {
             // there was a nasty error... exit
+            t[count - 1] = CUIK_QUAL_TYPE_NULL;
             return CUIK_QUAL_TYPE_NULL;
         }
 
@@ -1452,7 +1459,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Cuik_Expr* restrict e) {
         stack[top++] = i;
     }
 
-    return t[e->count - 1];
+    return t[count - 1];
 }
 
 void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
@@ -1770,7 +1777,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                         e->exprs[0] = *root;
                         e->exprs[0].op = EXPR_CONST;
                         e->exprs[0].const_val = val;
-                        e->count = 1;
+                        aarray_set_length(e->exprs, 1);
                     }
                 }
             }

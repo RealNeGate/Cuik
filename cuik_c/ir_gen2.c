@@ -322,7 +322,7 @@ static void cg_logical_op(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
         // try RHS
         tb_builder_label_set(g, paths2[!early_out]);
         ee = e->logical_binop.right;
-        e = &ee->exprs[ee->count - 1];
+        e  = &aarray_top(ee->exprs);
     }
 
     // final condition acts like a traditional if
@@ -1051,8 +1051,8 @@ static ValDesc cg_expr(TranslationUnit* tu, TB_GraphBuilder* g, Cuik_Expr* restr
     ValDesc stack[1024];
 
     size_t i = 0, top = 0;
-    Subexpr* exprs = e->exprs;
-    for (; i < e->count; i++) {
+    ArenaArray(Subexpr) exprs = e->exprs;
+    for (; i < aarray_length(exprs); i++) {
         Subexpr* s = &exprs[i];
         if (s->op == EXPR_NONE) { continue; }
 

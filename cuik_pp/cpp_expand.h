@@ -222,6 +222,7 @@ static Token read_one(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeCursor* 
 // returns the size of the expanded region which goes at the very end of the token stream
 static int expand_identifier(Cuik_CPP* restrict ctx, CPPStackSlot* slot, InvokeElem* parent, int read_head, uint32_t parent_macro, MacroDef* def, int depth, int* out_read_tail) {
     if (expand_builtin_idents(ctx, &ctx->tokens.list.tokens[read_head])) {
+        if (out_read_tail) { *out_read_tail = read_head+1; }
         return 1;
     }
 

@@ -265,7 +265,8 @@ static void gen_global_initializer(InitBuilder* b, Cuik_Type* type, Cuik_Expr* e
         } else if (value.tag == CUIK_CONST_INT) {
             int_form = value.i;
         } else if (value.tag == CUIK_CONST_FLOAT) {
-            Cuik_TypeKind kind = cuik_canonical_type(e->cast_types[e->count - 1])->kind;
+            size_t count = aarray_length(e->exprs);
+            Cuik_TypeKind kind = cuik_canonical_type(e->cast_types[count - 1])->kind;
             if (kind == KIND_DOUBLE) {
                 typedef union { double f; uint64_t u; } F64U64;
                 int_form = (F64U64){ value.f }.u;

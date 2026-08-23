@@ -65,6 +65,7 @@ static void* aarray__reserve2(void* ptr, size_t type_size, size_t min_size) {
 #define aarray_clear(arr)            ((((AArray*) (arr)) - 1)->length = 0)
 #define aarray_insert(arr, i, ...)   ((arr) = aarray__reserve2(arr, sizeof(*(arr)), (i)+1), (arr)[i] = __VA_ARGS__)
 #define aarray_push(arr, ...)        ((arr) = aarray__reserve(arr, sizeof(*(arr)), aarray_length(arr)), (arr)[aarray_length(arr)++] = __VA_ARGS__)
+#define aarray_grab(arr)             ((arr) = aarray__reserve(arr, sizeof(*(arr)), aarray_length(arr)), &(arr)[aarray_length(arr)++])
 #define aarray_pop(arr)              ((arr)[(((AArray*)(arr)) - 1)->length -= 1])
 #define aarray_top(arr)              ((arr)[(((AArray*)(arr)) - 1)->length - 1])
 #define aarray_reserve(arr, i)       ((arr) = aarray__reserve(arr, sizeof(*(arr)), (i)), aarray_length(arr) = (i))

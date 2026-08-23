@@ -212,9 +212,9 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             } else {
                 // clone but preserve flags
                 n->decl.type = cuik_make_qual_type(
-                    type_clone(&parser->types, cuik_canonical_type(n->decl.type), decl.name),
-                    cuik_get_quals(n->decl.type)
-                );
+                                                   type_clone(&parser->types, cuik_canonical_type(n->decl.type), decl.name),
+                                                   cuik_get_quals(n->decl.type)
+                                                   );
                 cuik_canonical_type(n->decl.type)->noret = attr.is_noret;
             }
         }
@@ -231,9 +231,9 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     if (t->also_known_as != decl.name) {
                         // clone but preserve flags
                         decl.type = cuik_make_qual_type(
-                            type_clone(&parser->types, t, decl.name),
-                            cuik_get_quals(decl.type)
-                        );
+                                                        type_clone(&parser->types, t, decl.name),
+                                                        cuik_get_quals(decl.type)
+                                                        );
                     } else {
                         t->also_known_as = decl.name;
                     }
@@ -359,29 +359,29 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                 }
 
                 /*if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(decl_type, placeholder_space)) {
-                    Cuik_Type *t1 = placeholder_space, *t2 = decl_type;
-                    // only deref if both can
-                    while (t1->kind == t2->kind && t1->kind == KIND_PTR) {
-                        t1 = cuik_canonical_type(t1->ptr_to);
-                        t2 = cuik_canonical_type(t2->ptr_to);
-                    }
+                Cuik_Type *t1 = placeholder_space, *t2 = decl_type;
+                // only deref if both can
+                while (t1->kind == t2->kind && t1->kind == KIND_PTR) {
+                t1 = cuik_canonical_type(t1->ptr_to);
+                t2 = cuik_canonical_type(t2->ptr_to);
+                }
 
-                    bool incompat = true;
-                    if (t1->kind == t2->kind && (t1->kind == KIND_STRUCT || t2->kind == KIND_UNION)) {
-                        // if the tag names match... it's all good
-                        if (t1->record.name != NULL && t2->record.name && strcmp(t1->record.name, t2->record.name) == 0) {
-                            incompat = false;
+                bool incompat = true;
+                if (t1->kind == t2->kind && (t1->kind == KIND_STRUCT || t2->kind == KIND_UNION)) {
+                // if the tag names match... it's all good
+                if (t1->record.name != NULL && t2->record.name && strcmp(t1->record.name, t2->record.name) == 0) {
+                incompat = false;
 
-                            if (decl_type->size == 0 && placeholder_space->size != 0) {
-                                decl.type = old_def->type;
-                            }
-                        }
-                    }
+                if (decl_type->size == 0 && placeholder_space->size != 0) {
+                decl.type = old_def->type;
+                }
+                }
+                }
 
-                    if (incompat) {
-                        diag_err(s, decl.loc, "declaration incompatible with previous declaration");
-                        diag_note(s, old_def->loc, "see here");
-                    }
+                if (incompat) {
+                diag_err(s, decl.loc, "declaration incompatible with previous declaration");
+                diag_note(s, old_def->loc, "see here");
+                }
                 }*/
 
                 if (attr.is_typedef) {
@@ -598,6 +598,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
 
                 // intitialize use list
                 symbol_chain_start = NULL;
+                parser.expr = NULL;
 
                 if (tokens_get(&mini_lex)->type == '{') {
                     parse_initializer2(&parser, &mini_lex, CUIK_QUAL_TYPE_NULL);
@@ -607,7 +608,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
                         diag_err(&mini_lex, tokens_get_range(&mini_lex), "failed to parse expression");
                     }
                 }
-
                 sym->stmt->decl.initial = complete_expr(&parser);
 
                 // finalize use list
@@ -688,13 +688,13 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         diag_header(s, DIAG_ERR, "could not resolve symbol: %s", loc->name);
         DiagWriter d = diag_writer(s);
         for (; loc != NULL; loc = loc->next) {
-            if (!diag_writer_is_compatible(&d, loc->loc)) {
-                // end line
-                diag_writer_done(&d);
-                d = diag_writer(s);
-            }
+        if (!diag_writer_is_compatible(&d, loc->loc)) {
+        // end line
+        diag_writer_done(&d);
+        d = diag_writer(s);
+        }
 
-            diag_writer_highlight(&d, loc->loc);
+        diag_writer_highlight(&d, loc->loc);
         }
         diag_writer_done(&d);*/
     }
