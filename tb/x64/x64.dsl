@@ -382,9 +382,9 @@
     where "$dt.type == TB_TAG_I8 && $src->dt.type == TB_TAG_BOOL"
     => (MACH_COPY dt=$dt ___ $src def="ctx->normie_mask[REG_CLASS_GPR]" use="ctx->normie_mask[REG_CLASS_GPR]")
 
-    // 16 -> 32
-    pat (SIGN_EXT dt=$dt ___ $src) where "$src->dt.type == TB_TAG_I16" => (x86_movsx16 dt=$dt ___ ___ $src extra_dt="TB_TYPE_I16")
-    pat (ZERO_EXT dt=$dt ___ $src) where "$src->dt.type == TB_TAG_I16" => (x86_movzx16 dt=$dt ___ ___ $src extra_dt="TB_TYPE_I16")
+    // 16 -> 32/64
+    pat (SIGN_EXT dt=$dt ___ $src) where "$src->dt.type == TB_TAG_I16" => (x86_movsx16 dt=$dt ___ ___ $src extra_dt="$dt")
+    pat (ZERO_EXT dt=$dt ___ $src) where "$src->dt.type == TB_TAG_I16" => (x86_movzx16 dt=$dt ___ ___ $src extra_dt="$dt")
 )
 
 #if 0

@@ -1,8 +1,32 @@
 
+local function shuffle(t)
+    for i = #t, 2, -1 do
+        local j = math.random(i)
+        t[i], t[j] = t[j], t[i]
+    end
+    return t
+end
+
 -- Load elim test
 function trial(n)
     local lines = {}
     lines[#lines + 1] = "#include <stdio.h>"
+    lines[#lines + 1] = "int main() {"
+    lines[#lines + 1] = "    int dst[50];"
+    for i=1,n do
+        local x = math.floor(math.random() * 50)
+        local y = math.floor(math.random() * 100000)
+        lines[#lines + 1] = string.format("    dst[%d] = %d;", x, y)
+    end
+    lines[#lines + 1] = "    for (int i = 0; i < 100; i++) { printf(\"%d\", dst[i]); }"
+    lines[#lines + 1] = "}"
+    return lines
+end
+
+function trial_idioms(n)
+    local lines = {}
+    lines[#lines + 1] = "#include <stdio.h>"
+    lines[#lines + 1] = "#include <stddef.h>"
     lines[#lines + 1] = "int main() {"
     lines[#lines + 1] = "    int dst[50];"
     for i=1,n do
@@ -45,4 +69,4 @@ function export(lines, path)
     f:close()
 end
 
-export(trial2(1000), "stress.c")
+export(trial_idioms(500), "stress.c")

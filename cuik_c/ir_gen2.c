@@ -74,7 +74,7 @@ static void gen_local_init(TranslationUnit* tu, TB_GraphBuilder* g, TB_Node* add
 static void assign_to_lval(TB_GraphBuilder* g, Cuik_Type* type, const ValDesc* dst, TB_Node* src, bool is_volatile) {
     if (dst->kind == LVALUE_BITS && dst->bits.width != (type->size * 8)) {
         // NOTE(NeGate): the semantics around volatile bitfields are janky at best
-        assert(is_volatile);
+        // assert(!is_volatile);
 
         TB_DataType dt = ctype_to_tbtype(type);
         TB_Node* old_value = tb_builder_load(g, dst->mem_var, true, dt, dst->n, type->align, false);

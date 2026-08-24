@@ -225,7 +225,7 @@ struct Cuik_Type {
         struct Cuik_TypeRecord {
             Atom name;
 
-            int kid_count, pad;
+            int kid_count, max_align;
             Member* kids;
 
             // this is the one used in type comparisons

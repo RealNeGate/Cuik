@@ -822,10 +822,13 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     expect_char(s, '}');
                     tokens_prev(s);
 
+                    assert(parser->pack_count > 0);
+                    int max_align = parser->packs[parser->pack_count - 1];
+
                     // put members into more permanent storage
                     Member* permanent_store = copy_out_temporary(parser->arena, members, member_count, sizeof(Member));
                     type->record = (struct Cuik_TypeRecord){
-                        .name = name, .kid_count = member_count, .kids = permanent_store, .nominal = type
+                        .name = name, .kid_count = member_count, .max_align = max_align, .kids = permanent_store, .nominal = type
                     };
 
                     if (!parser->is_in_global_scope) {

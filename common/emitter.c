@@ -133,7 +133,23 @@ void tb_out_zero(TB_Emitter* o, size_t len) {
     o->count += len;
 }
 
+size_t tb_outstr_nul(TB_Emitter* o, const char* str) {
+    size_t len = 0;
+    while (str[len++]) {}
+
+    tb_out_reserve(o, len);
+    size_t start = o->count;
+
+    for (; *str; str++) {
+        o->data[o->count++] = *str;
+    }
+
+    o->data[o->count++] = 0;
+    return start;
+}
+
 size_t tb_outstr_nul_UNSAFE(TB_Emitter* o, const char* str) {
+    assert(o->count < o->capacity);
     size_t start = o->count;
 
     for (; *str; str++) {

@@ -173,6 +173,10 @@ struct Cuik_Parser {
     Cuik_Type* first_placeholder;
     TypeConflict* first_conflict;
 
+    // Pragma packing
+    int pack_count;
+    int packs[16];
+
     // used when expression building
     Cuik_Expr* expr;
 
@@ -336,6 +340,7 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
         bool is_union = (type->kind == KIND_UNION);
 
         size_t member_count = type->record.kid_count;
+        int max_align = type->record.max_align;
         Member* members = type->record.kids;
 
         // for unions this just represents the max size
@@ -344,6 +349,13 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
         int current_bit_offset = 0;
         // struct/union are aligned to the biggest member alignment
         int align = 0;
+
+        // Same printing as clang's -fdump-record-layouts
+        bool log = false;
+        if (log) {
+            printf("*** Dumping AST Record Layout\n");
+            printf("    %-10d | %s %s", 0, type->kind == KIND_STRUCT ? "struct" : "union", type->record.name);
+        }
 
         for (size_t i = 0; i < member_count; i++) {
             Member* member = &members[i];
@@ -355,7 +367,7 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
             }
 
             Cuik_Type* member_type = cuik_canonical_type(member->type);
-            int member_align = member_type->align;
+            int member_align = member_type->align > max_align ? max_align : member_type->align;
             int member_size = member_type->size;
             if (!is_union) {
                 int new_offset = align_up(offset, member_align);
@@ -373,7 +385,7 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
             // bitfields
             if (member->is_bitfield) {
                 int bit_width = member->bit_width;
-                int bits_in_region = member_type->kind == KIND_BOOL ? 1 : (member_size * 8);
+                int bits_in_region = member_type->kind == KIND_BOOL ? 8 : (member_size * 8);
                 if (bit_width > bits_in_region) {
                     diag_err(tokens, type->loc, "bitfield cannot fit in this type.");
                 }
@@ -396,6 +408,14 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
                 }
             }
 
+            if (log) {
+                if (member->bit_width == 0) {
+                    printf("    %-4d | %s\n", member->offset, member->name);
+                } else {
+                    printf("    %-4d:%d-%d | %s\n", member->offset, member->bit_offset, member->bit_offset + member->bit_width - 1, member->name);
+                }
+            }
+
             // the total alignment of a struct/union is based on the biggest member
             last_member_size = member_size;
             if (member_align > align) align = member_align;
@@ -403,12 +423,14 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
 
         // if it's a bitfield, we should finalize that field
         if (current_bit_offset) {
-            offset += 1;
+            offset += last_member_size;
         }
 
         offset = align_up(offset, align);
         type->align = align;
         type->size = offset;
+
+        if (log) { printf("    [sizeof=%d, align=%d]\n\n", offset, align); }
     }
 
     type->flags |= CUIK_TYPE_FLAG_COMPLETE;

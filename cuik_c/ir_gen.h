@@ -16,7 +16,6 @@ typedef enum IRValType {
     RVALUE_PHI,
 
     LVALUE,
-    LVALUE_SYM,
     LVALUE_BITS,
     LVALUE_EXPR,
     LVALUE_LABEL,

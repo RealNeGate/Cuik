@@ -85,6 +85,37 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
         } else {
             diag_err(s, tokens_get_range(s), "unknown pragma comment option");
         }
+    } else if (string_equals_cstr(&pragma_name, "pack")) {
+        // #pragma pack(push)
+        // #pragma pack(pop)
+        // #pragma pack(1)
+        Token t = lexer_read(&pragma_lex);
+        if (t.type != '(') {
+            diag_err(s, tokens_get_range(s), "expected (");
+        }
+
+        t = lexer_read(&pragma_lex);
+
+        Token t2 = lexer_read(&pragma_lex);
+        if (t2.type == ')') {
+            size_t pack_count = parser->pack_count;
+            if (t.type == TOKEN_INTEGER) {
+                Cuik_IntSuffix suffix;
+                uint64_t i = parse_int(t.content.length, (const char*) t.content.data, &suffix);
+
+                parser->packs[pack_count - 1] = i;
+            } else if (string_equals_cstr(&t.content, "push")) {
+                assert(parser->pack_count < COUNTOF(parser->packs));
+                parser->packs[parser->pack_count++] = parser->packs[pack_count - 1];
+            } else if (string_equals_cstr(&t.content, "pop")) {
+                assert(parser->pack_count > 0);
+                parser->pack_count--;
+            } else {
+                diag_warn(s, tokens_get_range(s), "unknown pragma pack option '%!S'", t.content);
+            }
+        } else {
+            diag_err(s, tokens_get_range(s), "expected )");
+        }
     }
     tokens_next(s);
     tls_restore(out);
@@ -494,6 +525,9 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
 
     parser.symbols = cuik_symtab_create(NULL);
     parser.tags = cuik_symtab_create(&(Cuik_Type*){ NULL });
+
+    parser.pack_count = 1;
+    parser.packs[0]   = 8;
 
     if (parser.version == CUIK_VERSION_GLSL) {
         #define X(name) atom_ ## name = atoms_putc(#name);

@@ -21,28 +21,28 @@ static void put_section_symbols(DynArray(TB_ModuleSection) sections, TB_Emitter*
         DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
         DynArray(TB_Global*) globals = sections[i].globals;
 
-        dyn_array_for(i, funcs) {
-            TB_FunctionOutput* out_f = funcs[i];
+        dyn_array_for(j, funcs) {
+            TB_FunctionOutput* out_f = funcs[j];
             const char* name_str = out_f->parent->super.name;
 
-            uint32_t name = name_str ? tb_outstr_nul_UNSAFE(strtbl, name_str) : 0;
+            uint32_t name = name_str ? tb_outstr_nul(strtbl, name_str) : 0;
             out_f->parent->super.symbol_id = put_symbol(stab, name, TB_ELF64_ST_INFO(t, TB_ELF64_STT_FUNC), sec_num, out_f->code_pos, out_f->code_size);
         }
 
         int acceptable = t == TB_ELF64_STB_GLOBAL ? TB_LINKAGE_PUBLIC : TB_LINKAGE_PRIVATE;
-        dyn_array_for(i, globals) {
-            TB_Global* g = globals[i];
+        dyn_array_for(j, globals) {
+            TB_Global* g = globals[j];
             if (g->super.linkage != acceptable) {
                 continue;
             }
 
             uint32_t name = 0;
             if (g->super.name) {
-                name = tb_outstr_nul_UNSAFE(strtbl, g->super.name);
+                name = tb_outstr_nul(strtbl, g->super.name);
             } else {
                 char buf[8];
-                snprintf(buf, 8, "$%d_%td", sec_num, i);
-                name = tb_outstr_nul_UNSAFE(strtbl, buf);
+                snprintf(buf, 8, "$%d_%td", sec_num, j);
+                name = tb_outstr_nul(strtbl, buf);
             }
 
             g->super.symbol_id = put_symbol(stab, name, TB_ELF64_ST_INFO(t, TB_ELF64_STT_OBJECT), sec_num, g->pos, 0);
