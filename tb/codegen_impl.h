@@ -899,8 +899,10 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                             }
                         }
                     }
+                }
 
-                    int kill_count = node_constraint_kill(&ctx, n, ctx.ins);
+                IF_OPT(REGALLOC) {
+                    int kill_count = ctx.constraint_kill(&ctx, n, ctx.ins);
                     FOR_N(k, 0, kill_count) {
                         printf("    KILL[%zu] = ", k), tb__print_regmask(&OUT_STREAM_DEFAULT, ctx.ins[k]), printf("\n");
                     }
@@ -914,7 +916,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     CUIK_TIMED_BLOCK("regalloc") {
         STATS_ENTER(MACH_RA);
         switch (ra) {
-            case TB_RA_ROGERS: tb__rogers(&ctx, &f->tmp_arena); break;
+            case TB_RA_ROGERS: tb__ra_fast(&ctx, &f->tmp_arena); break;
             case TB_RA_BRIGGS: tb__briggs(&ctx, &f->tmp_arena); break;
         }
 

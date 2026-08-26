@@ -77,6 +77,23 @@ typedef struct {
     int safepoint_i;
 } Disasm;
 
+typedef enum {
+    // not yet assigned a color
+    VREG_STAGE_UNDEF,
+
+    // first time assigned a color
+    VREG_STAGE_ASSIGN,
+
+    // evicted, cannot do this twice
+    VREG_STAGE_EVICT,
+
+    // local/global splitting
+    VREG_STAGE_SPLIT,
+
+    // aggressive spilling
+    VREG_STAGE_SPILL,
+} VRegStage;
+
 typedef struct VReg VReg;
 struct VReg {
     TB_Node* n;
@@ -102,8 +119,9 @@ struct VReg {
     // BRIGGS: when coalesced this number will go up
     int uses;
 
-    uint8_t was_spilled : 2;
-    uint8_t was_reload  : 1;
+    VRegStage stage;
+
+    uint8_t kill_lrg : 1;
 };
 
 typedef struct Ctx Ctx;
@@ -259,6 +277,7 @@ struct Ctx {
 extern int stats_miss, stats_hit;
 extern RegMask TB_REG_EMPTY;
 
+void tb__ra_fast(Ctx* restrict ctx, TB_Arena* arena);
 void tb__rogers(Ctx* restrict ctx, TB_Arena* arena);
 void tb__briggs(Ctx* restrict ctx, TB_Arena* arena);
 
@@ -348,10 +367,6 @@ static double get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
     }
 
     double score = vreg->spill_cost / vreg->area;
-    if (vreg->was_spilled == 2) {
-        score += 1e6;
-    }
-
     return score;
 }
 
@@ -626,5 +641,16 @@ static bool is_spill_store(TB_Node* n) {
 
 static bool is_gcref_dt(TB_DataType dt) {
     return dt.type == TB_TAG_PTR && dt.elem_or_addrspace > 0;
+}
+
+static DynArray(int) add_if_null(DynArray(int) arr, int x) {
+    dyn_array_for(i, arr) {
+        if (arr[i] == x) {
+            return arr;
+        }
+    }
+
+    dyn_array_put(arr, x);
+    return arr;
 }
 

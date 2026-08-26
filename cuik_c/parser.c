@@ -370,6 +370,13 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
             int member_align = member_type->align > max_align ? max_align : member_type->align;
             int member_size = member_type->size;
             if (!is_union) {
+                // if it was a bitfield and isn't now we need to materialize
+                // the bitfield cell before moving forward
+                if (current_bit_offset && !member->is_bitfield) {
+                    current_bit_offset = 0;
+                    offset += last_member_size;
+                }
+
                 int new_offset = align_up(offset, member_align);
 
                 // If we realign, reset the bit offset
@@ -409,10 +416,10 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
             }
 
             if (log) {
-                if (member->bit_width == 0) {
-                    printf("    %-4d | %s\n", member->offset, member->name);
-                } else {
+                if (member->is_bitfield) {
                     printf("    %-4d:%d-%d | %s\n", member->offset, member->bit_offset, member->bit_offset + member->bit_width - 1, member->name);
+                } else {
+                    printf("    %-4d | %s\n", member->offset, member->name);
                 }
             }
 

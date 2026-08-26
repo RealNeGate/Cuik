@@ -22,6 +22,9 @@
 #include "briggs_ra.c"
 #include "ra_split.c"
 
+#include "regalloc/ra.c"
+#include "regalloc/ra_fast.c"
+
 // Parsers
 #define TB_COFF_IMPL
 #include <tb_coff.h>
