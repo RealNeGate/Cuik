@@ -361,6 +361,15 @@ TB_Node* tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_Node* a, TB_Node*
         }
     }
 
+    if (type == TB_MUL && b->type == TB_ICONST) {
+        uint64_t y = TB_NODE_GET_EXTRA_T(b, TB_NodeInt)->value;
+        uint64_t log2 = tb_ffs(y) - 1;
+        if (y == (UINT64_C(1) << log2)) {
+            type = TB_SHL;
+            b = tb_builder_uint(g, a->dt, log2);
+        }
+    }
+
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, type, a->dt, 3, sizeof(TB_NodeBinopInt));
     set_input(f, n, a, 1);

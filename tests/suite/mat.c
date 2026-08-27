@@ -4,10 +4,10 @@
 #include <stdio.h>
 
 /* void ex() {
-    printf("A");
-    printf("B");
-    printf("C");
-    printf("D");
+printf("A");
+printf("B");
+printf("C");
+printf("D");
 } */
 
 static int foo(int a, int b) {
@@ -31,22 +31,22 @@ void matmul(float* dst, float* a, float* b) {
     }
 
     for (size_t i = 0; i < 16; i++) {
-        dst[i*16 + 0] = -0.0f;
-        dst[i*16 + 1] = -0.0f;
-        dst[i*16 + 2] = -0.0f;
-        dst[i*16 + 3] = -0.0f;
-        dst[i*16 + 4] = -0.0f;
-        dst[i*16 + 5] = -0.0f;
-        dst[i*16 + 6] = -0.0f;
-        dst[i*16 + 7] = -0.0f;
-        dst[i*16 + 8] = -0.0f;
-        dst[i*16 + 9] = -0.0f;
-        dst[i*16 + 10] = -0.0f;
-        dst[i*16 + 11] = -0.0f;
-        dst[i*16 + 12] = -0.0f;
-        dst[i*16 + 13] = -0.0f;
-        dst[i*16 + 14] = -0.0f;
-        dst[i*16 + 15] = -0.0f;
+        dst[i*16 + 0] = 0.0f;
+        dst[i*16 + 1] = 0.0f;
+        dst[i*16 + 2] = 0.0f;
+        dst[i*16 + 3] = 0.0f;
+        dst[i*16 + 4] = 0.0f;
+        dst[i*16 + 5] = 0.0f;
+        dst[i*16 + 6] = 0.0f;
+        dst[i*16 + 7] = 0.0f;
+        dst[i*16 + 8] = 0.0f;
+        dst[i*16 + 9] = 0.0f;
+        dst[i*16 + 10] = 0.0f;
+        dst[i*16 + 11] = 0.0f;
+        dst[i*16 + 12] = 0.0f;
+        dst[i*16 + 13] = 0.0f;
+        dst[i*16 + 14] = 0.0f;
+        dst[i*16 + 15] = 0.0f;
     }
 
     for (size_t kk = 0; kk < 16; kk += 4) {

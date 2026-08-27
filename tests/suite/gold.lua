@@ -48,7 +48,7 @@ local total   = 0
 local passed  = 0
 function process_test(i)
     -- HACK REMOVE LATER
-    local includes = "" -- "-I /home/linuxbrew/.linuxbrew/Cellar/csmith/2.3.0/include/csmith-2.3.0/"
+    local includes = "-I /usr/include/csmith/"
     local args     = ""
     if x[i] == "nbody.c" then
         args = "100000"
