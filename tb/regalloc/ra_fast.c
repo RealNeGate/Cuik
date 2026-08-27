@@ -32,7 +32,7 @@ enum {
     FRA_LOG_MED  = 2,
     FRA_LOG_HIGH = 3,
 
-    FRA_LOG_CURR = FRA_LOG_MED,
+    FRA_LOG_CURR = FRA_LOG_HIGH,
 };
 
 static bool fra_interfere(Ctx* restrict ctx, RABase* ra_base, TB_Node* lhs, TB_Node* rhs) {
@@ -166,6 +166,12 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
             spill_vreg->assigned  = ra->base.num_spills;
             spill_vreg->reg_width = tb__reg_width_from_dt(mask->class, evict.n->dt);
             ra->base.num_spills += spill_vreg->reg_width;
+
+            if (FRA_LOG_CURR >= FRA_LOG_MED) {
+                printf("      SPILL ");
+                print_reg_name(spill_vreg->class, spill_vreg->assigned);
+                printf(" (V%zu, %%%u)\n", spill_vreg - ctx->vregs, spill->gvn);
+            }
         }
 
         VReg* reload_vreg = tb__set_node_vreg(ctx, reload);
@@ -305,6 +311,7 @@ static TB_Node* fra_allocate_reg(Ctx* restrict ctx, FastRA* ra, TB_Node* n, int 
     size_t cnt = 0;
     TB_Node** arr = coalesce_set_array(&ra->base, &n, &cnt);
 
+    TB_Node* phi = NULL;
     TB_BasicBlock* leader = NULL;
     if (n->gvn >= ra->old_node_count) {
         leader = bb;
@@ -322,7 +329,6 @@ static TB_Node* fra_allocate_reg(Ctx* restrict ctx, FastRA* ra, TB_Node* n, int 
         }
     }
 
-    TB_Node* phi = NULL;
     FOR_N(j, 0, cnt) {
         if (arr[j]->type == TB_PHI) { phi = arr[j]; break; }
     }
@@ -341,6 +347,11 @@ static TB_Node* fra_allocate_reg(Ctx* restrict ctx, FastRA* ra, TB_Node* n, int 
             v->assigned  = ra->base.num_spills;
             v->reg_width = tb__reg_width_from_dt(mask->class, n->dt);
             ra->base.num_spills += v->reg_width;
+            if (FRA_LOG_CURR >= FRA_LOG_MED) {
+                printf("      SPILL ");
+                print_reg_name(v->class, v->assigned);
+                printf(" (V%d, %%%u)\n", vreg_id, n->gvn);
+            }
 
             if (phi != NULL) {
                 // reloads will be inserted automatically when accessing this vreg
@@ -716,7 +727,7 @@ void tb__ra_fast(Ctx* restrict ctx, TB_Arena* arena) {
                         if (FRA_LOG_CURR >= FRA_LOG_MED) {
                             printf("    EXPIRE ");
                             print_reg_name(vreg->class, vreg->assigned);
-                            printf("\n");
+                            printf(" (%d uses)\n", n->user_count);
                         }
                     } else {
                         // walk to the next node in the coalescing
@@ -830,7 +841,7 @@ void tb__ra_fast(Ctx* restrict ctx, TB_Arena* arena) {
         printf("\n");
     }
 
-    __builtin_debugtrap();
+    // __builtin_debugtrap();
     ctx->num_spills += ra.base.num_spills - starting_spills;
     cuikperf_region_end();
 
