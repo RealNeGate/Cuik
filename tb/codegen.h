@@ -116,12 +116,10 @@ struct VReg {
     double spill_bias;
     int hint_vreg;
 
-    // BRIGGS: when coalesced this number will go up
-    int uses;
-
     VRegStage stage;
 
-    uint8_t kill_lrg : 1;
+    bool kill_lrg   : 1;
+    bool hard_split : 1;
 };
 
 typedef struct Ctx Ctx;

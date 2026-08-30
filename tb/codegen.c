@@ -16,7 +16,7 @@ int tb__reg_width_from_dt(int reg_class, TB_DataType dt) {
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
     int i = aarray_length(ctx->vregs);
     aarray_insert(ctx->vreg_map, n->gvn, i);
-    aarray_push(ctx->vregs, (VReg){ .n = n, .assigned = -1, .spill_cost = NAN, .uses = 1 });
+    aarray_push(ctx->vregs, (VReg){ .n = n, .assigned = -1, .spill_cost = NAN });
     return &ctx->vregs[i];
 }
 

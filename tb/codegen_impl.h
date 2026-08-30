@@ -190,7 +190,7 @@ static int try_create_vreg(Ctx* restrict ctx, TB_Node* n, RegMask* def_mask) {
     int vreg_id = ctx->vreg_map[n->gvn];
     if (vreg_id > 0) {
         TB_ASSERT(def_mask != &TB_REG_EMPTY);
-        ctx->vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN, .uses = 1 };
+        ctx->vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN };
         ctx->vregs[vreg_id].reg_width = tb__reg_width_from_dt(def_mask->class, n->dt);
 
         if (def_mask->class == REG_CLASS_STK) {
@@ -864,6 +864,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         // setup for the next phase
         ctx.vregs = aarray_create(&f->arena, VReg, tb_next_pow2(vreg_count + 16));
         aarray_set_length(ctx.vregs, vreg_count);
+
+        ctx.vregs[0] = (VReg){ 0 };
         STATS_EXIT(MACH_LCM);
 
         dbg_submit_event_sched(&ctx.cfg, f, "ISel+Sched");
@@ -915,10 +917,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
     CUIK_TIMED_BLOCK("regalloc") {
         STATS_ENTER(MACH_RA);
-        switch (ra) {
-            case TB_RA_ROGERS: tb__ra_fast(&ctx, &f->tmp_arena); break;
-            case TB_RA_BRIGGS: tb__briggs(&ctx, &f->tmp_arena); break;
-        }
+        // tb__ra_fast(&ctx, &f->tmp_arena);
+        tb__briggs(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);

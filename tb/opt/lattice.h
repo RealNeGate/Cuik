@@ -128,7 +128,7 @@ static void latticehs_raw_insert(TB_Module* m, Lattice* l) {
 }
 
 void tb__lattice_init(TB_Module* m) {
-    m->lattice_elements = nbhs_alloc(256);
+    m->lattice_elements = nbhs_alloc(2048);
 
     latticehs_raw_insert(m, &BOT_IN_THE_SKY);
     latticehs_raw_insert(m, &TOP_IN_THE_SKY);

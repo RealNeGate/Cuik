@@ -2,11 +2,6 @@
 // that's used across multiple blocks for the purpose of achieving a
 // nearly single-pass allocation.
 typedef struct {
-    int pos;
-    TB_Node* n;
-} FastRAInsert;
-
-typedef struct {
     RABase base;
     size_t old_node_count;
 
@@ -24,7 +19,7 @@ typedef struct {
     int* refs[MAX_REG_CLASSES];
     TB_Node** active[MAX_REG_CLASSES];
 
-    DynArray(FastRAInsert) inserts;
+    DynArray(RAInsert) inserts;
 } FastRA;
 
 enum {
@@ -100,13 +95,13 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
     TB_Node* r_of = fra_reload_of(ctx, ra, evict.n);
     if (r_of != NULL) {
         VReg* evict_vreg = &ctx->vregs[evict.vreg_id];
-        ra->active[evict_vreg->class][evict_vreg->assigned] = 0;
+        ra->active[evict_vreg->class][evict_vreg->assigned] = NULL;
 
         int r_vreg_id = ctx->vreg_map[r_of->gvn];
         TB_ASSERT(r_vreg_id < ra->spill_cap);
         ra->reloads[r_vreg_id] = NULL;
 
-        FastRAInsert ins = { pos + 1, evict.n };
+        RAInsert ins = { pos + 1, evict.n };
         dyn_array_put(ra->inserts, ins);
     } else {
         // insert a reload *after* pos for the evicted reg, remap
@@ -185,7 +180,7 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
         reload_vreg->class    = evict_vreg->class;
         reload_vreg->assigned = evict_vreg->assigned;
         // reset core assignment
-        ra->active[evict_vreg->class][evict_vreg->assigned] = 0;
+        ra->active[evict_vreg->class][evict_vreg->assigned] = NULL;
         evict_vreg->class = 0;
         evict_vreg->assigned = -1;
 
@@ -247,7 +242,7 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
             ra->reloads[evict.vreg_id] = NULL;
         }
 
-        FastRAInsert ins = { pos + 1, reload };
+        RAInsert ins = { pos + 1, reload };
         dyn_array_put(ra->inserts, ins);
     }
 }
@@ -301,7 +296,7 @@ static TB_Node* fra_allocate_reg(Ctx* restrict ctx, FastRA* ra, TB_Node* n, int 
         reload_vreg->mask = use_mask;
         reload_vreg->reg_width = 1;
 
-        FastRAInsert ins = { pos, reload };
+        RAInsert ins = { pos, reload };
         dyn_array_put(ra->inserts, ins);
         return fra_allocate_reg(ctx, ra, reload, reload_vreg_id, use_mask, bb, pos, def_site);
     } else if (v->assigned >= 0) {
@@ -654,7 +649,7 @@ void tb__ra_fast(Ctx* restrict ctx, TB_Arena* arena) {
 
                 // insert spill right before the def
                 if (ra.spills[vreg_id] != NULL && ra.spills[vreg_id]->type != TB_PHI) {
-                    FastRAInsert ins = { j + 1, ra.spills[vreg_id] };
+                    RAInsert ins = { j + 1, ra.spills[vreg_id] };
                     dyn_array_put(ra.inserts, ins);
                 }
                 ra.spills[vreg_id] = NULL;
@@ -669,7 +664,7 @@ void tb__ra_fast(Ctx* restrict ctx, TB_Arena* arena) {
                     // insert spill store
                     RegMask* spill_mask = intern_regmask(ctx, REG_CLASS_STK, true, 0);
                     TB_Node* spill = fra_mach_copy(ctx, &ra.base, spill_mask, def_mask, n);
-                    FastRAInsert ins = { j + 1, spill };
+                    RAInsert ins = { j + 1, spill };
                     dyn_array_put(ra.inserts, ins);
 
                     TB_Node* new_leader = NULL;
@@ -795,35 +790,7 @@ void tb__ra_fast(Ctx* restrict ctx, TB_Arena* arena) {
             }
         }
 
-        // merge insert
-        DynArray(FastRAInsert) inserts = ra.inserts;
-        size_t cnt = aarray_length(bb->items);
-        aarray_reserve(bb->items, cnt + dyn_array_length(inserts));
-
-        size_t shift = 0;
-        FOR_REV_N(j, 0, dyn_array_length(inserts)) {
-            TB_Node* n = inserts[j].n;
-            size_t pos = inserts[j].pos + shift;
-            while (pos < cnt && (bb->items[pos]->type == TB_PHI || NODE_ISA(bb->items[pos], PROJ))) {
-                pos++;
-            }
-
-            // position before next insertion
-            size_t end = j > 0 ? inserts[j - 1].pos : cnt;
-
-            printf("%-5zu  %-5zu INSERT ", pos, end);
-            tb_print_dumb_node(NULL, n);
-            printf("\n");
-
-            // skip phis and projections so that they stay nice and snug
-            if (cnt > pos) {
-                memmove(&bb->items[pos + 1], &bb->items[pos], (cnt - pos) * sizeof(TB_Node*));
-            }
-            bb->items[pos] = n;
-            shift += 1, cnt += 1;
-            tb__insert(ctx, ctx->f, bb, n);
-        }
-        printf("\n");
+        tb__ra_bulk_insert_rev(ctx, bb, ra.inserts);
     }
 
     FOR_N(i, 0, ctx->bb_count) {

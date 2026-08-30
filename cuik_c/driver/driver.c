@@ -156,7 +156,7 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
-    if (strcmp(name, "main") != 0) {
+    if (0 && strcmp(name, "matmul") != 0) {
         return;
     }
 
@@ -175,7 +175,8 @@ static void apply_func(TB_Function* f, void* arg) {
         } else {
             CUIK_TIMED_BLOCK("codegen") {
                 TB_Arena* code_arena = get_code_arena();
-                TB_FunctionOutput* out = tb_codegen(f, TB_RA_ROGERS, ir_worklist, code_arena, print_asm);
+                TB_CodegenRA ra = args->optimize ? TB_RA_BRIGGS : TB_RA_FAST;
+                TB_FunctionOutput* out = tb_codegen(f, ra, ir_worklist, code_arena, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");

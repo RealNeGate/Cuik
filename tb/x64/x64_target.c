@@ -646,7 +646,8 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         printf(" = phi(");
         FOR_N(i, 1, n->input_count) {
             if (i != 1) { printf(", "); }
-            print_pretty_edge(ctx, n->inputs[i]);
+            if (n->inputs[i] == NULL) { printf("___"); }
+            else { print_pretty_edge(ctx, n->inputs[i]); }
         }
         printf(")");
     } else if (n->type == TB_x86_vzero) {
@@ -973,7 +974,6 @@ static int node_2addr(TB_Node* n) {
             return n->input_count - 1;
         }
 
-        case TB_MACH_COPY:
         case TB_FLOAT_EXT:
         return 1;
 

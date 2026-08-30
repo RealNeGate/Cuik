@@ -172,14 +172,14 @@ static void mark_point_as_hrp(Ctx* ctx, Rogers* ra, TB_Node* n, int reg_class) {
         end_t++;
     }
 
-    HRPRegion* hrp = &ra->base.hrp[bb_id];
+    /*HRPRegion* hrp = &ra->base.hrp[bb_id];
     if (hrp->start[reg_class] < 0) {
-        hrp->start[reg_class] = t;
-        hrp->end[reg_class]   = end_t;
+    hrp->start[reg_class] = t;
+    hrp->end[reg_class]   = end_t;
     } else {
-        hrp->start[reg_class] = TB_MIN(hrp->start[reg_class], t);
-        hrp->end[reg_class]   = TB_MAX(hrp->end[reg_class], end_t);
-    }
+    hrp->start[reg_class] = TB_MIN(hrp->start[reg_class], t);
+    hrp->end[reg_class]   = TB_MAX(hrp->end[reg_class], end_t);
+    } */
 }
 
 static void gimme_lifetime(Ctx* ctx, Rogers* ra, TB_BasicBlock** scheduled, TB_BasicBlock* bb, TB_Node* n, int* range) {
@@ -227,36 +227,36 @@ static void mark_node_as_hrp(Ctx* ctx, Rogers* ra, uint32_t gvn, uint32_t failed
 
     // each active range outside of the def BB is live in
 
-    FOR_N(bb_id, 0, ctx->bb_count) {
-        TB_BasicBlock* bb = &ctx->cfg.blocks[bb_id];
-        HRPRegion* hrp = &ra->base.hrp[bb_id];
+    /*FOR_N(bb_id, 0, ctx->bb_count) {
+    TB_BasicBlock* bb = &ctx->cfg.blocks[bb_id];
+    HRPRegion* hrp = &ra->base.hrp[bb_id];
 
-        // Fully HRP already
-        if (hrp->start[reg_class] == 0 && hrp->end[reg_class] == aarray_length(bb->items)-1) {
-            continue;
-        }
-
-        int A[2], B[2];
-        gimme_lifetime(ctx, ra, scheduled, bb, n,      A);
-        gimme_lifetime(ctx, ra, scheduled, bb, failed, B);
-
-        int start_t = TB_MAX(A[0], B[0]);
-        int end_t   = TB_MIN(A[1], B[1]);
-        if (end_t < 0) {
-            continue;
-        }
-
-        // TB_OPTDEBUG(REGALLOC6)(printf("#         BB%zu [%d (%%%u), %d (%%%u)] (%u items)\n", bb_id, start_t, bb->items[start_t]->gvn, end_t, bb->items[end_t]->gvn, aarray_length(bb->items)));
-
-        if (hrp->start[reg_class] < 0) {
-            hrp->start[reg_class] = start_t;
-            hrp->end[reg_class]   = end_t;
-        } else {
-            hrp->start[reg_class] = TB_MIN(hrp->start[reg_class], start_t);
-            hrp->end[reg_class]   = TB_MAX(hrp->end[reg_class], end_t);
-        }
-        // stats_aaa++;
+    // Fully HRP already
+    if (hrp->start[reg_class] == 0 && hrp->end[reg_class] == aarray_length(bb->items)-1) {
+    continue;
     }
+
+    int A[2], B[2];
+    gimme_lifetime(ctx, ra, scheduled, bb, n,      A);
+    gimme_lifetime(ctx, ra, scheduled, bb, failed, B);
+
+    int start_t = TB_MAX(A[0], B[0]);
+    int end_t   = TB_MIN(A[1], B[1]);
+    if (end_t < 0) {
+    continue;
+    }
+
+    // TB_OPTDEBUG(REGALLOC6)(printf("#         BB%zu [%d (%%%u), %d (%%%u)] (%u items)\n", bb_id, start_t, bb->items[start_t]->gvn, end_t, bb->items[end_t]->gvn, aarray_length(bb->items)));
+
+    if (hrp->start[reg_class] < 0) {
+    hrp->start[reg_class] = start_t;
+    hrp->end[reg_class]   = end_t;
+    } else {
+    hrp->start[reg_class] = TB_MIN(hrp->start[reg_class], start_t);
+    hrp->end[reg_class]   = TB_MAX(hrp->end[reg_class], end_t);
+    }
+    // stats_aaa++;
+    }*/
     cuikperf_region_end();
 }
 
@@ -651,7 +651,7 @@ static DynArray(int) compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Ar
             } while (last_phi < aarray_length(bb->items) && (bb->items[last_phi]->type == TB_PHI || NODE_ISA(bb->items[last_phi], PROJ)));
             uint64_t inst_count = aarray_length(bb->items) - last_phi;
 
-            // start intervals
+            // start int
             BITS64_FOR_AND(j, bb->live_out.data, ra->is_vreg, bb->live_out.capacity) {
                 int vreg_id = ctx->vreg_map[j];
                 TB_ASSERT(vreg_id > 0);
@@ -709,7 +709,7 @@ static DynArray(int) compute_areas(Ctx* restrict ctx, Rogers* restrict ra, TB_Ar
                 if (kill_count > 0) {
                     FOR_N(k, 0, kill_count) {
                         int vreg_id = aarray_length(ctx->vregs);
-                        aarray_push(ctx->vregs, (VReg){ .n = n, .assigned = -1, .spill_cost = NAN, .uses = 1 });
+                        aarray_push(ctx->vregs, (VReg){ .n = n, .assigned = -1, .spill_cost = NAN });
 
                         VReg* kill_vreg = &ctx->vregs[vreg_id];
                         kill_vreg->mask = ctx->ins[k];
@@ -783,12 +783,12 @@ static void allocate_loop2(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* are
         rounds++;
 
         // reset HRP regions
-        FOR_N(i, 0, ctx->bb_count) {
-            FOR_N(j, 1, ctx->num_classes) {
-                ra->base.hrp[i].start[j] = -1;
-                ra->base.hrp[i].end[j]   = -1;
-            }
+        /* FOR_N(i, 0, ctx->bb_count) {
+        FOR_N(j, 1, ctx->num_classes) {
+        ra->base.hrp[i].start[j] = -1;
+        ra->base.hrp[i].end[j]   = -1;
         }
+        } */
 
         while (dyn_array_length(prio_queue)) {
             int vreg_id = dyn_array_pop(prio_queue);

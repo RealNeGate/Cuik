@@ -1,29 +1,22 @@
 #pragma once
 
 typedef struct {
-    // VReg
     uint32_t target;
-
-    // if this allocation was clobbered, this means
-    // we only need to avoid the "failed" node for
-    // the definition (since it wanted to use the
-    // register we did):
-    //
-    // # insert %d to put %c into a reg which isn't clobbered.
-    // %c = ...            # RAX
-    // %d: GPR ~ RAX = %c
-    // call foo            # kill: RAX
-    // use(%d)
-    RegMask* clobber;
 } SplitDecision;
+
+typedef struct {
+    int pos;
+    TB_Node* n;
+} RAInsert;
 
 // High reg pressure block data, the splitter
 // will avoid keeping split values alive in this
 // region when possible.
 typedef struct {
-    int start[MAX_REG_CLASSES];
-    int end[MAX_REG_CLASSES];
-} HRPRegion;
+    int curr, max;
+    // index in the block where the pressure went from lo->hi
+    int lo2hi;
+} RAPressure;
 
 typedef struct RABase RABase;
 struct RABase {
@@ -33,7 +26,7 @@ struct RABase {
     int num_classes;
     int* num_regs;
 
-    // how many did the RA introduce
+    // how many stack slots did the RA introduce
     int num_spills;
     int max_regs_in_class;
 
@@ -49,12 +42,9 @@ struct RABase {
     int mask_cap;
     uint64_t* mask;
 
-    HRPRegion* hrp;
+    RAPressure* hrp[MAX_REG_CLASSES];
 
-    // list of new VRegs after splitting, also list of vregs
-    // which were killed
-    DynArray(int) new_vregs;
-    DynArray(int) dead_vregs;
+    DynArray(SplitDecision) splits;
 
     // do we need to build any alternative structures since we've
     // changed the graph
@@ -86,6 +76,9 @@ void tb__ra_init(RABase* ra, TB_Arena* arena);
 void tb__ra_deinit(RABase* ra);
 
 double tb__ra_get_spill_cost(RABase* ra, VReg* vreg);
+
+void tb__ra_bulk_insert(Ctx* ctx, TB_BasicBlock* bb, DynArray(RAInsert) inserts);
+void tb__ra_bulk_insert_rev(Ctx* ctx, TB_BasicBlock* bb, DynArray(RAInsert) inserts);
 
 // Complex splitter
 void tb__insert_splits(Ctx* ctx, RABase* ra, SplitDecision* splits, size_t num_spills);

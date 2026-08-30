@@ -25,9 +25,7 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
     ra->num_regs = ctx->num_regs;
     ra->max_regs_in_class = max_regs_in_class;
 
-    // used for hard-list list at the very start
-    ra->new_vregs = dyn_array_create(int, 32);
-    ra->dead_vregs = dyn_array_create(int, 32);
+    ra->splits = dyn_array_create(SplitDecision, 32);
     bool cisc_stuff = false;
 
     // create timeline & insert moves
@@ -72,7 +70,8 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
                     RegMask* new_mask = tb__reg_mask_meet(ctx, in_vreg->mask, ins[k]);
                     if (in_vreg->mask != &TB_REG_EMPTY && new_mask == &TB_REG_EMPTY) {
                         TB_OPTDEBUG(REGALLOC)(printf("HARD-SPLIT on V%td\n", in_vreg - ctx->vregs));
-                        dyn_array_put(ra->new_vregs, in_vreg - ctx->vregs);
+                        SplitDecision split = { in_vreg - ctx->vregs };
+                        dyn_array_put(ra->splits, split);
                     }
 
                     in_vreg->mask = new_mask;
@@ -101,11 +100,11 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
     f->worklist = NULL;
 
     // resolving hard-splits
-    if (dyn_array_length(ra->new_vregs) > 0) {
+    if (dyn_array_length(ra->splits) > 0) {
         cuikperf_region_start("hard splits", NULL);
         // insert hard split code
-        FOR_N(i, 0, dyn_array_length(ra->new_vregs)) {
-            VReg* vreg = &ctx->vregs[ra->new_vregs[i]];
+        dyn_array_for(i, ra->splits) {
+            VReg* vreg = &ctx->vregs[ra->splits[i].target];
             RegMask* mask = ctx->constraint(ctx, vreg->n, NULL);
             vreg->mask = mask;
 
@@ -117,7 +116,7 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
 
             ra->uf_len += 1;
         }
-        dyn_array_clear(ra->new_vregs);
+        dyn_array_clear(ra->splits);
         cuikperf_region_end();
 
         f->worklist = ws;
@@ -179,7 +178,6 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
 
                         if (in->user_count == 0) {
                             // delete the original def
-                            ctx->vregs[ctx->vreg_map[in->gvn]].uses -= 1;
                             ctx->vreg_map[in->gvn] = 0;
                             tb__remove_node(ctx, ctx->f, in);
                             tb_kill_node(ctx->f, in);
@@ -206,14 +204,30 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
             int x = uf_find(ra->uf, ra->uf_len, n->gvn);
             int vreg_id = ctx->vreg_map[x];
 
+            // check for conflicts
+            bool conflict = false;
             RegMask* rm = ctx->vregs[vreg_id].mask;
+            FOR_N(j, 1, n->input_count) {
+                int x = uf_find(ra->uf, ra->uf_len, n->inputs[j]->gvn);
+                FOR_N(k, j + 1, n->input_count) {
+                    int y = uf_find(ra->uf, ra->uf_len, n->inputs[k]->gvn);
+                    RegMask* new_mask = tb__reg_mask_meet(ctx, rm, ctx->vregs[ctx->vreg_map[y]].mask);
+                    if (!tb__ra_can_coalesce(ra, n->inputs[j], n->inputs[k]) || new_mask == &TB_REG_EMPTY) {
+                        conflict = true;
+                        break;
+                    }
+                    rm = new_mask;
+                }
+            }
+
+            rm = ctx->vregs[vreg_id].mask;
             FOR_N(k, 1, n->input_count) {
                 // interfere against everything in the set
                 TB_Node* in = n->inputs[k];
                 int y = uf_find(ra->uf, ra->uf_len, in->gvn);
 
                 RegMask* new_mask = tb__reg_mask_meet(ctx, rm, ctx->vregs[ctx->vreg_map[y]].mask);
-                if (!tb__ra_can_coalesce(ra, n, in) || new_mask == &TB_REG_EMPTY) {
+                if (conflict) {
                     TB_OPTDEBUG(REGALLOC)(printf("PHI %%%u (-> %%%u) has self-conflict\n", n->gvn, in->gvn));
 
                     TB_Node* move = tb__ra_hard_split(ctx, ra, n, in, rm, vreg_id);
@@ -228,7 +242,6 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
 
                     if (in->user_count == 0) {
                         // delete the original def
-                        ctx->vregs[ctx->vreg_map[in->gvn]].uses -= 1;
                         ctx->vreg_map[in->gvn] = 0;
                         tb__remove_node(ctx, ctx->f, in);
                         tb_kill_node(ctx->f, in);
@@ -239,6 +252,7 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
                     changes = true;
                 } else {
                     rm = new_mask;
+                    TB_ASSERT(rm != &TB_REG_EMPTY);
                 }
 
                 // hard coalesce with direct input
@@ -267,7 +281,7 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
         }
         ra->interfere_dirty = true;
 
-        tb_arena_restore(&f->tmp_arena, sp);
+        tb_arena_restore(arena, sp);
         cuikperf_region_end();
     }
     // RA calls might add dead nodes but we don't care
@@ -279,16 +293,13 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
     }
 
     ra->num_spills = ctx->num_regs[REG_CLASS_STK];
-    ra->hrp = tb_arena_alloc(arena, ctx->bb_count * sizeof(HRPRegion));
-    FOR_N(i, 0, ctx->bb_count) {
-        ra->hrp[i].start[0] = -1;
-        ra->hrp[i].end[0]   = -1;
+    FOR_N(i, 0, ctx->num_classes) {
+        ra->hrp[i] = NULL;
     }
 }
 
 void tb__ra_deinit(RABase* ra) {
-    dyn_array_destroy(ra->new_vregs);
-    dyn_array_destroy(ra->dead_vregs);
+    dyn_array_destroy(ra->splits);
     cuik_free(ra->uf);
     cuik_free(ra->uf_size);
     nl_table_free(ra->coalesce_set);
@@ -429,7 +440,6 @@ static void tb__ra_remat(Ctx* ctx, RABase* ra, TB_Node* n, bool kill_node) {
 
     if (kill_node) {
         // delete the original def
-        ctx->vregs[ctx->vreg_map[n->gvn]].uses -= 1;
         ctx->vreg_map[n->gvn] = 0;
         tb__remove_node(ctx, f, n);
         tb_kill_node(f, n);
@@ -450,14 +460,6 @@ void insert_op_at_end(Ctx* ctx, RABase* ra, TB_BasicBlock* bb, TB_Node* n) {
 
     size_t bb_id = bb - ctx->cfg.blocks;
     rogers_insert_op(ctx, bb_id, n, pos);
-
-    if (ra != NULL) {
-        // move up if necessary
-        FOR_N(class, 1, ctx->num_classes) {
-            ra->hrp[bb_id].start[class] += pos <= ra->hrp[bb_id].start[class];
-            ra->hrp[bb_id].end[class] += pos <= ra->hrp[bb_id].end[class];
-        }
-    }
 }
 
 void tb__ra_resize_uf(RABase* ra, size_t new_len) {
@@ -507,23 +509,20 @@ void tb__ra_coalesce(RABase* ra, int x, int y, TB_Node* xn, TB_Node* yn) {
 }
 
 bool tb__ra_can_coalesce(RABase* ra, TB_Node* xn, TB_Node* yn) {
-    if (ra->uf[yn->gvn] != yn->gvn || ra->uf_size[yn->gvn] != 1) {
-        return false;
-    }
+    size_t cnt2;
+    TB_Node** arr2 = coalesce_set_array(ra, &yn, &cnt2);
 
-    int x = uf_find(ra->uf, ra->uf_len, xn->gvn);
-    ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (x + 1));
-    if (set == NULL) {
-        return !ra->interfere(ra->ctx, ra, xn, yn);
-    } else {
-        aarray_for(i, set) {
-            if (ra->interfere(ra->ctx, ra, set[i], yn)) {
+    size_t cnt;
+    TB_Node** arr = coalesce_set_array(ra, &xn, &cnt);
+    FOR_N(i, 0, cnt) {
+        FOR_N(j, 0, cnt2) {
+            if (ra->interfere(ra->ctx, ra, arr[i], arr2[j])) {
                 return false;
             }
         }
-
-        return true;
     }
+
+    return true;
 }
 
 void tb__ra_update_mask(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
@@ -568,6 +567,72 @@ double tb__ra_get_spill_cost(RABase* ra, VReg* vreg) {
     }
 
     return vreg->spill_cost - vreg->area*0.2;
+}
+
+void tb__ra_bulk_insert(Ctx* ctx, TB_BasicBlock* bb, DynArray(RAInsert) inserts) {
+    // merge insert
+    size_t cnt = aarray_length(bb->items);
+    aarray_reserve(bb->items, cnt + dyn_array_length(inserts));
+
+    size_t shift = 0;
+    FOR_N(j, 0, dyn_array_length(inserts)) {
+        TB_Node* n = inserts[j].n;
+        size_t pos = inserts[j].pos + shift;
+        while (pos < cnt && (bb->items[pos]->type == TB_PHI || NODE_ISA(bb->items[pos], PROJ))) {
+            pos++;
+        }
+
+        IF_OPT(REGSPLIT) {
+            printf("%-5d  %-5zu INSERT ", inserts[j].pos, pos);
+            tb_print_dumb_node(NULL, n);
+            printf("\n");
+        }
+
+        // skip phis and projections so that they stay nice and snug
+        if (cnt > pos) {
+            memmove(&bb->items[pos + 1], &bb->items[pos], (cnt - pos) * sizeof(TB_Node*));
+        }
+        bb->items[pos] = n;
+        shift += 1, cnt += 1;
+        tb__insert(ctx, ctx->f, bb, n);
+    }
+
+    IF_OPT(REGSPLIT) {
+        printf("\n");
+    }
+}
+
+void tb__ra_bulk_insert_rev(Ctx* ctx, TB_BasicBlock* bb, DynArray(RAInsert) inserts) {
+    // merge insert
+    size_t cnt = aarray_length(bb->items);
+    aarray_reserve(bb->items, cnt + dyn_array_length(inserts));
+
+    size_t shift = 0;
+    FOR_REV_N(j, 0, dyn_array_length(inserts)) {
+        TB_Node* n = inserts[j].n;
+        size_t pos = inserts[j].pos + shift;
+        while (pos < cnt && (bb->items[pos]->type == TB_PHI || NODE_ISA(bb->items[pos], PROJ))) {
+            pos++;
+        }
+
+        IF_OPT(REGSPLIT) {
+            printf("%-5d  %-5zu INSERT ", inserts[j].pos, pos);
+            tb_print_dumb_node(NULL, n);
+            printf("\n");
+        }
+
+        // skip phis and projections so that they stay nice and snug
+        if (cnt > pos) {
+            memmove(&bb->items[pos + 1], &bb->items[pos], (cnt - pos) * sizeof(TB_Node*));
+        }
+        bb->items[pos] = n;
+        shift += 1, cnt += 1;
+        tb__insert(ctx, ctx->f, bb, n);
+    }
+
+    IF_OPT(REGSPLIT) {
+        printf("\n");
+    }
 }
 
 #if 0

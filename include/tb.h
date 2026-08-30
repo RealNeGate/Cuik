@@ -875,9 +875,8 @@ TB_API void tb_print_svg(TB_Function* f);
 uint64_t tb_interpret(TB_Function* f, TB_Worklist* ws, uint64_t* params);
 
 typedef enum {
-    // Ian Rogers style allocator:
-    //   "Efficient global register allocation" (2020)
-    TB_RA_ROGERS,
+    // Just a really dumb local linear scan allocator
+    TB_RA_FAST,
 
     // Briggs-Chaitin style allocator:
     //   "Register Allocation via Graph Coloring" (1992)
