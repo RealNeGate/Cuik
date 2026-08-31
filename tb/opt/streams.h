@@ -64,7 +64,9 @@ static int bos_writef(OutStream* s, const char* fmt, va_list ap) {
     BufferOutStream* bos = (BufferOutStream*) s;
 
     // reserve size
-    int n = vsnprintf(&bos->data[bos->cnt], bos->cap - bos->cnt, fmt, ap);
+    va_list tmp;
+    va_copy(tmp, ap);
+    int n = vsnprintf(&bos->data[bos->cnt], bos->cap - bos->cnt, fmt, tmp);
     TB_ASSERT(n >= 0);
 
     // do we need more space?

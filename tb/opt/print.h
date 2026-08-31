@@ -490,7 +490,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb, OutStr
                     default: {
                         int family = n->type / 0x100;
                         if (family == 0) {
-                            TB_ASSERT_MSG(extra_bytes(n) == 0, "TODO");
+                            // TB_ASSERT_MSG(extra_bytes(n) == 0, "TODO");
                         } else {
                             TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
 

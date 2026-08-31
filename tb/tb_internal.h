@@ -494,9 +494,7 @@ struct TB_Function {
         // IPO lock
         Futex ipo_lock;
 
-        #if TB_OPTDEBUG_SERVER
         int dbg_server_t;
-        #endif
 
         #ifndef NDEBUG
         bool enable_log;

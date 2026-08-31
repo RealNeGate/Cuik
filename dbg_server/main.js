@@ -19,7 +19,6 @@ function startup() {
     };
 
     socket.onclose = () => {
-        close();
         document.getElementById("connect_btn").disabled = false;
     }
     socket.onerror = (error) => {

@@ -262,6 +262,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "sroa.h"
 #include "print.h"
 #include "print_dumb.h"
+#include "parse_dumb.h"
 #include "serialize.h"
 #include "loop.h"
 #include "slp.h"

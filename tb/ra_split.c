@@ -203,18 +203,21 @@ static TB_Node* ra_split_use(Ctx* ctx, RABase* ra, RegSplitter* splitter, TB_Bas
         }
 
         // use the latest variants
+        int num_spills = splitter->num_spills;
         FOR_N(k, 1, cpy->input_count) {
             TB_Node* in = cpy->inputs[k];
             if (in == NULL) { continue; }
 
             int spill = spill_map_get2(&splitter->spill_map, in);
-            if (spill >= 0) {
-                int num_spills = splitter->num_spills;
+            if (spill >= 0 && defs[bb_id*num_spills + spill] != NULL) {
                 TB_Node* fresh_def = defs[bb_id*num_spills + spill];
                 set_input(f, cpy, fresh_def, k);
             }
         }
     } else {
+        // cannot reload, must remat
+        TB_ASSERT(splitter->spill_mask[spill] != NULL);
+
         cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
         set_input(f, cpy, n, 1);
         TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = splitter->reload_mask[spill], .use = splitter->spill_mask[spill]);
@@ -264,6 +267,14 @@ static void ra_split_phi_edge(Ctx* ctx, RABase* ra, RegSplitter* splitter, TB_Ba
     FOR_N(k, 0, num_spills) {
         TB_Node* pred_def = pred_defs[k];
         if (!((splitter->live_out[pred_id] >> k) & 1)) {
+            continue;
+        }
+
+        // remat all means the value has one def and can be remat, likely it must
+        // be, such is the case for FLAGS stuff
+        if (((splitter->remat_all >> k) & 1)) {
+            TB_ASSERT(splitter->leaders[k] != NULL);
+            bb_defs[k] = splitter->leaders[k];
             continue;
         }
 
@@ -516,13 +527,15 @@ void tb__insert_splits(Ctx* ctx, RABase* ra, SplitDecision* splits, size_t num_s
                 live_out |= set_get(&bb->live_out, n->gvn);
             }
 
-            splitter.live_in[k]  |= ((uint64_t)live_in) << spill_i;
+            splitter.live_in[k]  |= ((uint64_t)live_in)  << spill_i;
             splitter.live_out[k] |= ((uint64_t)live_out) << spill_i;
         }
 
         if (cnt == 1) {
             splitter.single_def |= 1ull << spill_i;
-            if (can_remat(ctx, arr[0]) && splitter.spill_mask[spill_i] == NULL) {
+
+            // if (can_remat(ctx, arr[0]) && splitter.spill_mask[spill_i] == NULL) {
+            if (can_remat(ctx, arr[0])) {
                 splitter.remat_all |= 1ull << spill_i;
             }
 
@@ -804,7 +817,7 @@ void tb__insert_splits(Ctx* ctx, RABase* ra, SplitDecision* splits, size_t num_s
             BITS64_FOR_AND(spill, &W, &needs_spill, num_spills) {
                 // if it's gonna be used immediately then we're bound to
                 // reload so there's no colorability win
-                if (has_immediate_use(bb->items[j], n)) {
+                if (bb_defs[spill] == NULL || has_immediate_use(bb->items[j], n)) {
                     continue;
                 }
 
@@ -840,10 +853,11 @@ void tb__insert_splits(Ctx* ctx, RABase* ra, SplitDecision* splits, size_t num_s
                         }
                     }
 
-                    if (n->type == TB_MACH_COPY && !is_spill_store(n)) {
-                        // we can convert this copy into a reload of def
+                    if (n->type == TB_MACH_COPY && def->type == TB_MACH_COPY && !is_spill_store(n)) {
+                        // just copy the value, maybe we'd actually rather stretch def->in[1]
+                        TB_NodeMachCopy* def_extra = TB_NODE_GET_EXTRA(def);
                         TB_NodeMachCopy* cpy_extra = TB_NODE_GET_EXTRA(n);
-                        cpy_extra->use = splitter.reload_mask[spill];
+                        cpy_extra->use = def_extra->def;
                     } else if (can_fold) {
                         TB_OPTDEBUG(REGSPLIT)(printf("  BB%zu: SPILL%d: folded-reload at %%%u\n", bb_id, spill, n->gvn));
                     } else {
@@ -893,9 +907,11 @@ void tb__insert_splits(Ctx* ctx, RABase* ra, SplitDecision* splits, size_t num_s
         // insert last minute spill-stores
         size_t t = aarray_length(bb->items);
         BITS64_FOR_AND(spill, &W, &needs_spill, num_spills) {
-            bb_defs[spill] = ra_split_def(ctx, ra, &splitter, bb, t, bb_defs[spill], spill);
-            needs_spill &= (1u << spill);
-            W &= ~(1ull << spill);
+            if (bb_defs[spill] != NULL) {
+                bb_defs[spill] = ra_split_def(ctx, ra, &splitter, bb, t, bb_defs[spill], spill);
+                needs_spill &= (1u << spill);
+                W &= ~(1ull << spill);
+            }
         }
 
         // apply edits
@@ -1083,6 +1099,9 @@ void tb__insert_splits(Ctx* ctx, RABase* ra, SplitDecision* splits, size_t num_s
     // Phi-coalesce
     aarray_for(i, splitter.all_phis) {
         TB_Node* n = splitter.all_phis[i];
+        if (n->type == TB_NULL) {
+            continue;
+        }
         TB_ASSERT(n->type == TB_PHI);
         int x = uf_find(ra->uf, ra->uf_len, n->gvn);
         RegMask* rm = ctx->constraint(ctx, n, NULL);
@@ -1122,9 +1141,6 @@ void tb__insert_splits(Ctx* ctx, RABase* ra, SplitDecision* splits, size_t num_s
         int spill = spill_map_get2(&splitter.spill_map, n);
         if (spill >= 0) {
             new_vreg->stage = splitter.stage[spill];
-            if (new_vreg->stage == VREG_STAGE_SPILL) {
-                new_vreg->spill_cost = INFINITY;
-            }
         }
     }
 
@@ -1136,8 +1152,13 @@ void tb__insert_splits(Ctx* ctx, RABase* ra, SplitDecision* splits, size_t num_s
         int vreg_id = ctx->vreg_map[leader];
         if (n->gvn == leader) {
             VReg* vreg = &ctx->vregs[vreg_id];
-            vreg->reg_width  = tb__reg_width_from_dt(mask->class, n->dt);
+            vreg->reg_width = tb__reg_width_from_dt(mask->class, n->dt);
             vreg->spill_bias = mask->may_spill ? -100.0f : 0.0f;
+            if (vreg->stage == VREG_STAGE_SPILL) {
+                vreg->spill_bias += 1e6;
+            } else {
+                vreg->spill_bias += 1e3;
+            }
         }
         mask = tb__reg_mask_meet(ctx, mask, ctx->vregs[vreg_id].mask);
 

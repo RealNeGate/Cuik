@@ -33,76 +33,76 @@ static void write_bytes(sb_Stream* stream, const void* data, size_t len) {
 }
 
 void dbg_submit_event(TB_Function* f, const char* desc, ...) {
-    #if TB_OPTDEBUG_SERVER
-    if (dbg_server == NULL) {
-        return;
+    IF_OPT(SERVER) {
+        if (dbg_server == NULL) {
+            return;
+        }
+
+        // if we're acting as a debug server, submit the latest copy of the
+        // IR to the list of events. The viewer will organize the timeline
+        // on it's end
+        int t = f->dbg_server_t++;
+
+        BufferOutStream s = bos_make();
+        s.header.quoted = true;
+        s_writef(&s.header, "{ \"type\":\"OPT\", \"name\":\"%s\", \"time\":%d, \"desc\":\"", f->super.name, t);
+
+        va_list ap;
+        va_start(ap, desc);
+        s.header.writef(&s.header, desc, ap);
+        va_end(ap);
+
+        s_writef(&s.header, "\", \"content\":\"");
+        tb_print_to_stream(f, &s.header);
+        s_writef(&s.header, "\" }");
+
+        // printf("%.*s\n", (int) s.cnt, s.data);
+
+        write_bytes(dbg_client, s.data, s.cnt);
+        sb_poll_server(dbg_server, 0);
+        cuik_free(s.data);
     }
-
-    // if we're acting as a debug server, submit the latest copy of the
-    // IR to the list of events. The viewer will organize the timeline
-    // on it's end
-    int t = f->dbg_server_t++;
-
-    BufferOutStream s = bos_make();
-    s.header.quoted = true;
-    s_writef(&s.header, "{ \"type\":\"OPT\", \"name\":\"%s\", \"time\":%d, \"desc\":\"", f->super.name, t);
-
-    va_list ap;
-    va_start(ap, desc);
-    s.header.writef(&s.header, desc, ap);
-    va_end(ap);
-
-    s_writef(&s.header, "\", \"content\":\"");
-    tb_print_to_stream(f, &s.header);
-    s_writef(&s.header, "\" }");
-
-    // printf("%.*s\n", (int) s.cnt, s.data);
-
-    write_bytes(dbg_client, s.data, s.cnt);
-    sb_poll_server(dbg_server, 0);
-    cuik_free(s.data);
-    #endif
 }
 
 void dbg_submit_event_sched(TB_CFG* cfg, TB_Function* f, const char* desc, ...) {
-    #if TB_OPTDEBUG_SERVER
-    if (dbg_server == NULL) {
-        return;
-    }
-
-    // if we're acting as a debug server, submit the latest copy of the
-    // IR to the list of events. The viewer will organize the timeline
-    // on it's end
-    int t = f->dbg_server_t++;
-
-    BufferOutStream s = bos_make();
-    s.header.quoted = true;
-    s_writef(&s.header, "{ \"type\":\"OPT\", \"name\":\"%s\", \"time\":%d, \"desc\":\"", f->super.name, t);
-
-    va_list ap;
-    va_start(ap, desc);
-    s.header.writef(&s.header, desc, ap);
-    va_end(ap);
-
-    s_writef(&s.header, "\", \"content\":\"");
-    aarray_for(i, cfg->blocks) {
-        TB_BasicBlock* bb = &cfg->blocks[i];
-        s_writef(&s.header, "BB %zu:\\n", i);
-        aarray_for(j, bb->items) {
-            s_writef(&s.header, "  ");
-            tb_print_dumb_node_raw(NULL, bb->items[j], &s.header);
-            s_writef(&s.header, "\\n");
+    IF_OPT(SERVER) {
+        if (dbg_server == NULL) {
+            return;
         }
+
+        // if we're acting as a debug server, submit the latest copy of the
+        // IR to the list of events. The viewer will organize the timeline
+        // on it's end
+        int t = f->dbg_server_t++;
+
+        BufferOutStream s = bos_make();
+        s.header.quoted = true;
+        s_writef(&s.header, "{ \"type\":\"OPT\", \"name\":\"%s\", \"time\":%d, \"desc\":\"", f->super.name, t);
+
+        va_list ap;
+        va_start(ap, desc);
+        s.header.writef(&s.header, desc, ap);
+        va_end(ap);
+
+        s_writef(&s.header, "\", \"content\":\"");
+        aarray_for(i, cfg->blocks) {
+            TB_BasicBlock* bb = &cfg->blocks[i];
+            s_writef(&s.header, "BB %zu:\\n", i);
+            aarray_for(j, bb->items) {
+                s_writef(&s.header, "  ");
+                tb_print_dumb_node_raw(NULL, bb->items[j], &s.header);
+                s_writef(&s.header, "\\n");
+            }
+        }
+        // tb_print_to_stream(f, &s.header);
+        s_writef(&s.header, "\" }");
+
+        // printf("%.*s\n", (int) s.cnt, s.data);
+
+        write_bytes(dbg_client, s.data, s.cnt);
+        sb_poll_server(dbg_server, 0);
+        cuik_free(s.data);
     }
-    tb_print_to_stream(f, &s.header);
-    s_writef(&s.header, "\" }");
-
-    // printf("%.*s\n", (int) s.cnt, s.data);
-
-    write_bytes(dbg_client, s.data, s.cnt);
-    sb_poll_server(dbg_server, 0);
-    cuik_free(s.data);
-    #endif
 }
 
 static const char *level_strings[] = {
@@ -116,9 +116,9 @@ static const char *level_colors[] = {
 static void punt_to_server(log_Event *ev) {
     char buf[1000];
     int len = snprintf(
-        buf, sizeof(buf), "{ \"type\":\"LOG\", \"content\":\"Thread-%d %.4f s <span style=\\\"color: %s\\\">%-5s</span>: ",
-        ev->tid, ev->time / 1000000.0, level_colors[ev->level], level_strings[ev->level]
-    );
+                       buf, sizeof(buf), "{ \"type\":\"LOG\", \"content\":\"Thread-%d %.4f s <span style=\\\"color: %s\\\">%-5s</span>: ",
+                       ev->tid, ev->time / 1000000.0, level_colors[ev->level], level_strings[ev->level]
+                       );
     len += vsnprintf(&buf[len], sizeof(buf) - len, ev->fmt, ev->ap);
     len += snprintf(&buf[len], sizeof(buf) - len, "\"}");
 
@@ -178,10 +178,16 @@ static int event_handler(sb_Event *e) {
 }
 
 static void dbg_close_server(void) {
-    sb_close_server(dbg_server);
+    if (dbg_server != NULL) {
+        sb_close_server(dbg_server);
+    }
 }
 
 void dbg_startup_server(TB_Module* m) {
+    if (dbg_server != NULL) {
+        return;
+    }
+
     sb_Options opt = { .port = "8000", .handler = event_handler };
     dbg_server = sb_new_server(&opt);
     if (!dbg_server) {

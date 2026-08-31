@@ -1037,6 +1037,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
     CUIK_TIMED_BLOCK("emit") {
         STATS_ENTER(MACH_EMIT);
+        TB_OPTDEBUG(SERVER)(dbg_submit_event_sched(&ctx.cfg, f, "Emit"));
 
         // most functions are probably decently small, it's ok tho if it needs to
         // resize it can do that pretty quickly

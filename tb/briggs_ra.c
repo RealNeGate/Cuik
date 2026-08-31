@@ -465,16 +465,21 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
                 RegMask* rm = vreg->mask;
                 int def_class = rm->class;
-                int num_regs = def_class == REG_CLASS_STK ? stack_cap : ctx->num_regs[rm->class];
+                size_t num_fixed_regs = ctx->num_regs[rm->class];
+                size_t num_regs = def_class == REG_CLASS_STK ? stack_cap : ctx->num_regs[rm->class];
+
+                size_t fixed_word_count = (num_fixed_regs + 63) / 64;
                 size_t mask_word_count = (num_regs + 63) / 64;
                 TB_ASSERT(mask_word_count <= mask_cap);
 
                 // make sure it thinks the unusable regs are "in use" by someone else
                 FOR_N(j, 0, rm->count) { mask[j] = ~rm->mask[j]; }
-                FOR_N(j, rm->count, (ctx->num_regs[rm->class] + 63) / 64) { mask[j] = UINT64_MAX; }
-                if (ctx->num_regs[rm->class] % 64) {
-                    mask[num_regs / 64] &= UINT64_MAX >> (64ull - (ctx->num_regs[rm->class] % 64));
+                FOR_N(j, rm->count, (num_fixed_regs + 63) / 64) { mask[j] = UINT64_MAX; }
+                if (num_fixed_regs % 64) {
+                    mask[num_fixed_regs / 64] &= UINT64_MAX >> (64ull - (num_fixed_regs % 64));
                 }
+                // all the above space is unblocked, this only matters for stack slot coloring
+                FOR_N(j, fixed_word_count, mask_word_count) { mask[j] = 0; }
 
                 IF_OPT(REGALLOC) {
                     printf("#\n");
@@ -525,7 +530,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
                 if (!reg_assign(ctx, vreg, mask, num_regs)) {
                     // make any may-spills into "will-spills"
-                    if (vreg->mask->may_spill) {
+                    if (vreg->mask->may_spill && def_class != REG_CLASS_STK) {
                         vreg->spill_cost = INFINITY;
                         vreg->mask = intern_regmask(ctx, REG_CLASS_STK, true, 0);
                         vreg->reg_width = tb__reg_width_from_dt(REG_CLASS_STK, vreg->n->dt);
@@ -924,6 +929,7 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra, bool clobbers) {
                             }
                             VReg* v = &ctx->vregs[ctx->vreg_map[in->gvn]];
                             v->area += (proj_count + inst_count)*freq;
+                            sparse_set_put(&active, in->gvn);
                         }
                     }
                 }
@@ -1071,6 +1077,18 @@ static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
             ifg_ws_push(&hi, i);
         }
     }
+
+    #if 0
+    FOR_N(bb_id, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[bb_id];
+        aarray_for(i, bb->items) {
+            int vreg_id = ctx->vreg_map[bb->items[i]->gvn];
+            if (vreg_id != 0) {
+                TB_ASSERT(ctx->vregs[vreg_id].assigned < 0);
+            }
+        }
+    }
+    #endif
 
     // printf("Hi: %d, Lo: %d\n", hi.count, lo.count);
     for (;;) {

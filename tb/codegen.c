@@ -233,11 +233,12 @@ static int reg_assign(Ctx* ctx, VReg* vreg, uint64_t* mask, size_t num_regs) {
         // find unset bit
         FOR_N(j, 0, mask_word_count) {
             uint64_t m = mask[j];
+            if (m == UINT64_MAX) { continue; }
             int index = m != 0 ? tb_ffs64(~m) - 1 : 0;
             if (j*64 + index < num_regs) {
                 reg = j*64 + index;
+                break;
             }
-            break;
         }
     }
 
