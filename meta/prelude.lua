@@ -64,6 +64,25 @@ function Partitions()
         end
     end
 
+    function t:put_unique(k, v)
+        local list = self.entries[k]
+        if not list then
+            self.entries[k] = { v }
+            self.ord[#self.ord + 1] = k
+            return true
+        else
+            -- check if already inserted into list
+            for i=1,#list do
+                if list[i] == v then
+                    return false
+                end
+            end
+
+            list[#list + 1] = v
+            return false
+        end
+    end
+
     function t:put_if_new(k, v)
         local list = self.entries[k]
         if not list then

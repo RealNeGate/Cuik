@@ -103,3 +103,7 @@ include/tb_gen_public.h
 tb/tb_gen_private.h
 cuik_pp/dfa.h
 cuik_pp/keywords.h
+tests/suite/clang_cc.txt
+tests/suite/clang_log.txt
+tests/suite/cuik_log.txt
+tests/suite/cuik_cc.txt

@@ -78,6 +78,33 @@ function and_bits(l, r)
     return string.rep("0", b) .. table.concat(x)
 end
 
+function andn_bits(l, r)
+    if not l then
+        return r
+    elseif not r then
+        return l
+    end
+
+    local x = {}
+    local m = math.min(#l, #r)
+    local b = math.max(#l, #r) - m
+
+    -- propagate left most bits
+    l = l:sub(-m)
+    r = r:sub(-m)
+
+    for i=1,m do
+        local ll = l:sub(i,i)
+        local rr = r:sub(i,i) ~= "0" and "0" or "1"
+        if ll ~= "0" and rr ~= "0" then
+            x[i+b] = "1"
+        else
+            x[i+b] = "0"
+        end
+    end
+    return string.rep("0", b) .. table.concat(x)
+end
+
 function is_zero(x)
     for i=1,#x do
         if x:sub(i,i) ~= "0" then
@@ -138,13 +165,18 @@ funcs["bor"] = function(args)
     return res
 end
 
+-- (bextr bits dst src size)
 funcs["bextr"] = function(args)
     local trailing = string.rep("0", args[2])
     if type(args[1]) == "number" then
         -- constant bits
         local y = to_bits(args[1])
         local top = math.max(args[2] + args[4], #y)
-        return y..trailing
+        local slice = y:sub(args[3] + 1, args[3] + args[4])
+
+        local str = string.rep("0", args[4] - #slice)..slice..trailing
+        print("BEXTR", str, slice, inspect(args), args[3] + 1, args[3] + args[4])
+        return str
     else
         local ch = string.char(65 + codec_id)
         codec_id = codec_id + 1
@@ -155,7 +187,7 @@ end
 funcs["i8"]  = function(args) return { "xxxxxxxx" } end
 funcs["i16"] = function(args) return { "xxxxxxxx", "xxxxxxxx" } end
 funcs["i32"] = function(args) return { "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx" } end
-funcs["i64"] = function(args) return {  "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx" } end
+funcs["i64"] = function(args) return { "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx", "xxxxxxxx" } end
 
 function clone_table(arr)
     local dst = {}
@@ -193,8 +225,10 @@ function eval0(item, globals, params)
                 local arg = eval0(item[j], globals, params)
                 args[j - 1] = arg
             end
-            -- print("EVAL", item[1], inspect(args))
-            return fn(args)
+            -- print("EVAL", item[1], inspect(args), inspect(item))
+            local ret = fn(args)
+            -- print("> ", inspect(ret))
+            return ret
         end
     else
         return item
@@ -226,7 +260,35 @@ end
 
 local patterns = {}
 
-function shape_str(n) return table.concat(n, ",", 2) end
+local to_untyped = {
+  -- operand types
+  ["IMM8"] = "IMM", ["IMM16"] = "IMM", ["IMM32"] = "IMM", ["IMM64"] = "IMM",
+
+  -- instruction types
+  ["I8"] = "INT", ["I16"] = "INT", ["I32"] = "INT", ["I64"] = "INT"
+}
+
+function shape_str(n)
+    local list = {}
+    -- remove types from operand, allowing
+    -- for more shape coalescing
+    for i=2,#n do
+        local k = to_untyped[n[i]]
+        if not k then
+            k = n[i]
+        end
+        list[i - 1] = k
+    end
+    -- table.sort(list)
+
+    local k = to_untyped[n[1]]
+    if not k then
+        k = n[1]
+    end
+
+    return k..","..table.concat(list, ",")
+end
+
 function expand_combos(dst, pos, mnemonic, str, pat, shape)
     -- print(pos, inspect(pat))
 
@@ -327,10 +389,30 @@ print("PATTERN COUNT", #patterns)
 -- defines which patterns are equivalent
 function NFA_final_key(n)
     local operand_bits = {}
-    for i=1,#n[3] do
-        operand_bits[i] = n[3][i]:gsub("1", "0"):gsub("[a-zA-Z]", "1")
+    local skip = 1
+
+    -- skip any known prefixes to allow further
+    -- coalescing.
+    while skip <= #n[3] do
+        local b = n[3][skip]
+        if not b:match("0100....") and b ~= "01100110" then
+            break
+        end
+        skip = skip + 1
     end
-    return string.format("%s_%s", n[2], table.concat(operand_bits, ""))
+
+    for i=skip,#n[3] do
+        operand_bits[#operand_bits + 1] = n[3][i]:gsub("1", "0"):gsub("[a-zA-Z]", "1")
+    end
+ 
+    -- trim the trailing chars
+    local str = table.concat(operand_bits, "")
+    local i = #str
+    while i > 0 and str:sub(i,i) == "1" do
+        i = i - 1
+    end
+
+    return string.format("%s_%s", n[2], str:sub(1, i))
 end
 
 function NFA_done(n, state)
@@ -373,11 +455,10 @@ function NFA_has_leader(parts, q, state)
     for i=1,#q do
         local list = parts.entries[q[i]]
         for j=1,#list do
-            -- currently all partition members have the same size
-            if NFA_done(list[j], state) then break end
-
-            if not leader then leader = q[1] break
-            else return "MANY" end
+            if not NFA_done(list[j], state) then
+                if not leader then leader = q[1] break
+                else return "MANY" end
+            end
         end
     end
     return leader
@@ -386,133 +467,342 @@ end
 function find_first_oper(base, str)
     for i=base,#str do
         if str:sub(i,i) ~= "0" and str:sub(i,i) ~= "1" then
+            return i
+        end
+    end
+    return #str + 1
+end
+
+function find_first_opcode(base, str)
+    for i=base,#str do
+        if str:sub(i,i) == "0" or str:sub(i,i) == "1" then
             return i - 1
         end
     end
     return #str
 end
 
-function find_first_opcode(base, str)
-    for i=base,#str do
-        if str:sub(i,i) == "0" or str:sub(i,i) == "1" then
-            return i
+function iter_all_cases(str, i, fn)
+    if i <= #str then
+        local j = find_first_oper(i, str)
+        local k = find_first_opcode(j + 1, str)
+        if j > #str then
+            fn(str)
+            return
+        end
+
+        -- print(str, i, j, k)
+
+        local bit_count = (k - j) + 1
+        local cnt = 2^bit_count 
+        local bits = {}
+        for l=1,#str do
+            bits[l] = str:sub(l,l)
+        end
+
+        -- recurse for all cases beyond 0
+        for l=0,cnt - 1 do
+            local varying = to_bits(l)
+            varying = string.rep("0", bit_count - #varying)..varying
+
+            -- copy into the variant space
+            for l=1,#varying do
+                bits[j + l - 1] = varying:sub(l,l)
+            end
+
+            -- print("", "", table.concat(bits), j, bit_count, l)
+            iter_all_cases(table.concat(bits), k + 1, fn)
+        end
+    else
+        fn(str)
+    end
+end
+
+function KnownBits(N)
+    local t = { zeros = {}, ones = {} }
+    for i=1,N do
+        t.zeros[i] = "0"
+        t.ones[i]  = "0"
+    end
+
+    function t:union(x)
+        for i=1,#self.zeros do
+            local y = x:sub(i,i)
+            if self.zeros[i] == "0" and y == "0" then self.zeros[i] = "1" end
+            if self.ones[i]  == "0" and y ~= "0" then self.ones[i]  = "1" end
         end
     end
-    return #str
+
+    function t:to_known_mask()
+        local mask = {}
+        for i=1,#self.zeros do
+            if self.zeros[i] == self.ones[i] then
+                mask[i] = "0"
+            else
+                mask[i] = "1"
+            end
+        end
+        return table.concat(mask)
+    end
+
+    function t:to_unknown_mask()
+        local mask = {}
+        for i=1,#self.zeros do
+            if self.zeros[i] == self.ones[i] then
+                mask[i] = "1"
+            else
+                mask[i] = "0"
+            end
+        end
+        return table.concat(mask)
+    end
+
+    return t
 end
 
 -- q is a list of final keys
-function NFA_compile0(parts, ws, q, state, dfa_id, base)
+function NFA_compile0(uf, parts, ws, q, state, dfa_id)
     -- find all discriminating bits
     local discrim = {}
     for i=1,8 do
         discrim[i] = "1"
     end
 
-    local lwb = base
-    local upb = 32
+    local known = KnownBits(8)
 
-    -- discover all partitions
+    -- partition inputs based on their cache_keys
+    local deltas = Partitions()
     NFA_for_q(parts, q, function(k, v)
         -- all members of the partition have the same length
-        if NFA_done(v, state) then return true end
+        if NFA_done(v, state) then return false end
 
         local str = NFA_match_str(v, state)
-        local d   = find_first_opcode(base, str)
-        local d2  = find_first_oper(d, str)
 
-        upb = math.min(upb, d2)
-        lwb = math.max(lwb, d)
-
-        local discrim = str:sub(d, d2)
-        local key = str:sub(d+d2):gsub("0", "_"):gsub("1", "_")
-        print(base, discrim, key, d, d2)
-        parts:put(key, i)
+        -- compute all input variants
+        iter_all_cases(str, 1, function(bits)
+            if deltas:put_unique(bits, k) then
+                known:union(bits)
+            end
+        end)
     end)
 
-    if lwb >= upb then
-        lines[#lines + 1] = "TERM"
-        return
+    -- group deltas based on destination
+    local cases = Partitions()
+    local next_active = {}
+    for k,list in deltas:iter() do
+        table.sort(list)
+
+        -- print(k, #list)
+        for i=1,#list do
+            -- print("", list[i])
+        end
+
+        local target_key = table.concat(list, "|")
+        if cases:put(target_key, k) then
+            next_active[target_key] = list
+        end
     end
 
-    local bit_off = (8 - upb)
-    local bit_len = 1 + (upb - lwb)
-    print(bit_off, bit_len)
-    return
+    local next_state = state + 1
 
---[[
-    print("DISCRIM", state - 1, dfa_id, #q)
-    print(table.concat(discrim, ""))
+    local function increment_bin(x)
+        local l = #x
+        x = tonumber(x, 2) + 1
+        local y = to_bits(x)
+        return string.rep("0", l - #y)..y
+    end
 
-    -- for each unique prefix, check live paths
-    local inputs = Partitions()
-    NFA_for_q(parts, q, function(k, v)
-        if NFA_done(v, state) then return true end
+    local function compile_delta(k, next, indent)
+        local cache_key = next_state..":"..k
+        local leader = NFA_has_leader(parts, next, next_state)
+        if leader == "MANY" then
+            local dst = DFA_state_count
+            DFA_cache[cache_key] = dst
+            DFA_state_count = DFA_state_count + 1
+            ws[#ws + 1] = { next, next_state, dst }
 
-        local s = NFA_match_str(v, state)
-        local t = {}
-        for j=1,8 do
-            if discrim[j] == "0" then
-                t[j] = "_"
-            else
-                t[j] = s:sub(j,j)
+            lines[#lines + 1] = string.format("%sgoto L%d; // %s", indent, dst, cache_key)
+        else
+            lines[#lines + 1] = string.format("%sreturn 1; // %s", indent, leader)
+        end
+        lines[#lines + 1] = ""
+    end
+
+    local function use_case_ranges(list)
+        local min_key = list[1]
+        local ranges  = {}
+        for i=1,#list do
+            local inc = increment_bin(list[i])
+            if inc ~= list[i + 1] then
+                ranges[#ranges + 1] = { min_key, list[i] }
+                min_key = list[i + 1]
             end
         end
-        print(s, k)
-        inputs:put(table.concat(t), k)
-    end)
+        return ranges
+    end
 
-    -- for each input, check live paths
-    print("PARTS")
+    local function compile_split(cases, depth, parent_mask)
+        local indent = string.rep("    ", depth)
+        local discrim = {}
+        for k,list in cases:iter() do
+            local local_known = KnownBits(8)
+            for i=1,#list do
+                local_known:union(list[i])
 
-    local mask = table.concat(discrim)
-    lines[#lines + 1] = string.format("L%d: switch (read(%d) & 0b%s) {", dfa_id, state - 1, mask)
+                -- local with_ignore = andn_bits(list[i], parent_mask)
+                -- lines[#lines + 1] = string.format("%s// %s %s %s %s", indent, with_ignore, k, inspect(local_known.zeros), inspect(local_known.ones))
+            end
 
-    local next_state = state + 1
-    for k,v in inputs:iter() do
-        local finals = OrderedSet()
-        local full_list = OrderedSet()
-        for i=1,#v do
-            if finals:put(v[i]) then
-                local list = parts.entries[v[i]]
+            -- AND combine
+            local m = local_known:to_known_mask()
+            for i=1,#m do
+                if not discrim[i] then
+                    discrim[i] = m:sub(i,i)
+                elseif m:sub(i,i) == "0" then
+                    discrim[i] = "0"
+                end
+            end
+
+            lines[#lines + 1] = string.format("%s// UNK %s %s", indent, m, inspect(discrim))
+        end
+
+        local processed = {}
+        if parent_mask then
+            for i=1,#discrim do
+                processed[i] = discrim[i]
+
+                if parent_mask:sub(i,i) == "1" then
+                    discrim[i] = "0"
+                    processed[i] = "1"
+                end
+            end
+        else
+            for i=1,#discrim do
+                processed[i] = discrim[i]
+            end
+        end
+        processed = table.concat(processed)
+
+        -- Split on discriminating bits
+        local discrim_mask = table.concat(discrim)
+        lines[#lines + 1] = string.format("%s// G %s %s", indent, discrim_mask, processed)
+
+        if #cases.ord == 1 then
+            local k = cases.ord[1]
+            local next = next_active[k]
+
+            local ranges = use_case_ranges(cases.entries[k])
+            if #ranges == 1 then
+                if ranges[1][1] == ranges[1][2] then
+                    lines[#lines + 1] = string.format("%sif (in == 0b%s) {", indent, ranges[1][1])
+                else
+                    lines[#lines + 1] = string.format("%sif (in >= 0b%s && in <= 0b%s) {", indent, ranges[1][1], ranges[1][2])
+                end
+
+                -- compile_split(sub_cases, depth + 1, discrim_mask)
+                lines[#lines + 1] = indent.."}"
+                return
+            end
+        end
+
+        if true then -- discrim_mask == "00000000" then
+            lines[#lines + 1] = string.format("%sswitch (in) {", indent, state - 1)
+            for k,list in cases:iter() do
+                local next = next_active[k]
+
+                local full_list = OrderedSet()
+                for i=1,#next do
+                    local list2 = parts.entries[next[i]]
+                    for i=1,#list2 do
+                        full_list:put(list2[i][1])
+                    end
+                end
+                local states_summary = table.concat(full_list.ord, ", ")
+
+                local min_key = list[1]
+                for i=1,#list do
+                    local inc = increment_bin(list[i])
+                    if inc ~= list[i + 1] then
+                        if min_key == list[i] then
+                            lines[#lines + 1] = string.format("    case 0b%s: // %#x", min_key, tonumber(min_key, 2))
+                        else
+                            lines[#lines + 1] = string.format("    case 0b%s ... 0b%s: // %#x ... %#x", min_key, list[i], tonumber(min_key, 2), tonumber(list[i], 2))
+                        end
+                        min_key = list[i + 1]
+                    end
+                end
+                lines[#lines + 1] = string.format("    // %s", states_summary)
+
+                local cache_key = next_state..":"..k
+                local leader = NFA_has_leader(parts, next, next_state)
+                if leader == "MANY" then
+                    local dst = DFA_state_count
+                    DFA_cache[cache_key] = dst
+                    DFA_state_count = DFA_state_count + 1
+                    ws[#ws + 1] = { next, next_state, dst }
+
+                    lines[#lines + 1] = string.format("%s    goto L%d; // %s", indent, dst, cache_key)
+                else
+                    lines[#lines + 1] = string.format("%s    return 1; // %s", indent, leader)
+                end
+                lines[#lines + 1] = ""
+            end
+            lines[#lines + 1] = indent.."}"
+            return
+        end
+
+        local d  = discrim_mask:find("1")
+        local d2 = discrim_mask:find("0", d)
+        if d2 then
+            d2 = d2 - 1
+        else
+            d2 = #discrim_mask
+        end
+
+        lines[#lines + 1] = string.format("%s// %d %d", indent, d, d2)
+
+        local bit_len = 1 + (d2 - d)
+        local bit_off = (#discrim_mask - d2)
+
+        -- partition based on the top-level opcodes
+        local splits = Partitions()
+        for k,list in cases:iter() do
+            local mask_k = list[1]:sub(d, d2)
+            splits:put(mask_k, { k, list })
+        end
+
+        lines[#lines + 1] = string.format("%sswitch (BEXTR(in, %d, %d)) {", indent, bit_off, bit_len)
+        for mask_k,pair in splits:iter() do
+            lines[#lines + 1] = string.format("%s    case 0b%s:", indent, mask_k)
+
+            -- differences within a split
+            for i=1,#pair do
+                local sub_cases = Partitions()
+                local k     = pair[i][1]
+                local list  = pair[i][2]
                 for j=1,#list do
-                    full_list:put(list[j][1])
+                    local var_k = list[j]
+                    sub_cases:put(k, var_k)
+                end
+
+                if depth ~= 1 then -- if depth > 4 or processed == "11111111" then
+                    lines[#lines + 1] = string.format("%s    goto; // %s", indent, k)
+
+                    -- local next = next_active[k]
+                    -- compile_delta(k, next, depth + 1)
+                else
+                    compile_split(sub_cases, depth + 1, discrim_mask)
                 end
             end
         end
 
-        local states_summary = table.concat(full_list.ord, ", ")
-
-        local cache_key = next_state..":"..table.concat(finals.ord, "|")
-        local dst = DFA_cache[cache_key]
-        local leader = nil
-        if not dst then
-            print(k, #v, "GROUPS:", cache_key, "STATES:", states_summary)
-
-            leader = NFA_has_leader(parts, finals.ord, next_state)
-            if leader == "MANY" then
-                dst = DFA_state_count
-                DFA_cache[cache_key] = dst
-                DFA_state_count = DFA_state_count + 1
-                ws[#ws + 1] = { finals.ord, next_state, dst }
-            end
-        end
-
-        local k_formatted = k:gsub("_", "0")
-        if leader == "MANY" then
-            lines[#lines + 1] = string.format("    case 0b%s: goto L%d; // %s", k_formatted, dst, cache_key)
-        elseif leader then
-            lines[#lines + 1] = string.format("    case 0b%s: return 1; // %s  %s", k_formatted, leader, cache_key)
-        else
-            lines[#lines + 1] = string.format("    // 0b%s %s %s", k_formatted, leader, cache_key)
-        end
+        lines[#lines + 1] = indent.."    break;"
+        lines[#lines + 1] = indent.."}"
     end
 
-    lines[#lines + 1] = "}"
-    lines[#lines + 1] = ""
-
-    print()
-]]--
+    lines[#lines + 1] = string.format("    L%d:", dfa_id)
+    lines[#lines + 1] = string.format("    in = read(%d);", state - 1)
+    compile_split(cases, 1)
 end
 
 function NFA_compile(active, state)
@@ -524,9 +814,14 @@ function NFA_compile(active, state)
         local k = NFA_final_key(v)
         parts:put(k, v)
     end
+    print("PARTS", #parts.ord)
 
-    local q = {}
+    local q  = {}
+    local id = 0
     for k,v in parts:iter() do
+        uf[k] = id
+        id = id + 1
+
         print(k, #v)
         for i=1,#v do
             print("PAT", inspect(v[i]))
@@ -534,14 +829,16 @@ function NFA_compile(active, state)
     end
 
     DFA_state_count = DFA_state_count + 1
-
     local ws = { { parts.ord, state, 0 } }
-    while #ws > 0 do
-        local q = table.remove(ws)
-        NFA_compile0(parts, ws, q[1], q[2], q[3])
+    local head = 1
+    while head <= #ws do
+        local q = ws[head]
+        head = head + 1
+
+        NFA_compile0(uf, parts, ws, q[1], q[2], q[3])
     end
 end
 
 NFA_compile(patterns, 1)
-print(DFA_state_count)
 print(table.concat(lines, "\n"))
+print(DFA_state_count)

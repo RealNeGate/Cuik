@@ -39,9 +39,6 @@
 
 // define shape of instruction
 (defshape SSE_OP
-  // this is metadata per instruction
-  // used for codecs and mach nodes.
-  (meta :op uint8)
   // emit rules, if we define them in
   // the DSL we can also reverse them.
   (pat (SSE_T XMM XMM) (rex 0 $1 $2 0) 0x0F $op            (modrm 3 $1 $2))
@@ -57,8 +54,8 @@
     // 8bit requires the REX to use the modern
     // operand encoding.
     (rex_nw rx base 0)
-    // 16/32
-    (rex (select (isa $0 "I8") 1 0) rx base 0)
+    // 16/32/64
+    (rex (select (isa $0 "I64") 1 0) rx base 0)
 ))
 
 (defun simple_mr (base_op op pre rx base)
@@ -71,8 +68,7 @@
 
 // bit 1 is size (1 if not 8bit)
 (defshape SIMPLE_INT_OP
-  (meta :op uint8)
-
+#if 0
   // MR default
   (pat (I8  GPR_or_MEM GPR)   (simple_mr 0 $op ()   $1 $2))
   (pat (I16 GPR_or_MEM GPR)   (simple_mr 0 $op 0x66 $1 $2))
@@ -83,6 +79,7 @@
   (pat (I16 GPR GPR_or_MEM)   (simple_mr 2 $op 0x66 $2 $1))
   (pat (I32 GPR GPR_or_MEM)   (simple_mr 2 $op ()   $2 $1))
   (pat (I64 GPR GPR_or_MEM)   (simple_mr 2 $op ()   $2 $1))
+#endif
   // MI
   (pat (I8  GPR_or_MEM IMM8)  (simple_mi 0x80 $op ()   $1) (i8  $2))
   (pat (I16 GPR_or_MEM IMM16) (simple_mi 0x81 $op 0x66 $1) (i16 $2))
@@ -98,6 +95,8 @@
 // (definst SSE_OP FP_ADD "add" :op 0x58)
 // (definst SSE_OP FP_MUL "mul" :op 0x59)
 
+#if 0
+
 (definst SIMPLE_INT_OP ADD    "add" :op 0)
 (definst SIMPLE_INT_OP OR     "or"  :op 1)
 (definst SIMPLE_INT_OP ADC    "adc" :op 2)
@@ -107,3 +106,28 @@
 (definst SIMPLE_INT_OP XOR    "xor" :op 6)
 (definst SIMPLE_INT_OP CMP    "cmp" :op 7)
 
+(defun op_plus_r (pre op)
+  (simple_rex 0 $1) (bor op (bextr $1 0 0 3))
+)
+
+(defshape MOVABS
+  (pat (I8  GPR IMM8)  (op_plus_r ()   0xB0) (i8  $2))
+  (pat (I16 GPR IMM16) (op_plus_r 0x66 0xB8) (i16 $2))
+  (pat (I32 GPR IMM32) (op_plus_r ()   0xB8) (i32 $2))
+  (pat (I64 GPR IMM64) (op_plus_r ()   0xB8) (i64 $2))
+)
+(definst MOVABS MOVABS "mov")
+
+(defshape STK_OP
+  (pat (I64 GPR IMM64) (op_plus_r () $op) (i64 $2))
+)
+(definst STK_OP PUSH "push" :op 0x50)
+(definst STK_OP POP  "pop"  :op 0x58)
+
+#endif
+
+(definst SIMPLE_INT_OP ADD    "add" :op 0)
+
+// PREFIXES+ OPCODE (MODRM (SIB DISP?)?)? IMM?
+//
+//   OPCODE ::= NN | 0F NN | 0F 38 NN | 0F 3A NN
