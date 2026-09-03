@@ -118,7 +118,7 @@ function process_test(i)
     local r = {}
     local pass = true
     for j=1,#configs do
-        if cc_compile_and_test("cuik", x[i], { configs[i], includes }, args) then
+        if cc_compile_and_test("cuik", x[i], { configs[j], includes }, args) then
             local diff = os.execute("git diff --color-words clang_log.txt cuik_log.txt")
             if diff ~= true and diff ~= 0 then
                 r[j] = "DIFF"

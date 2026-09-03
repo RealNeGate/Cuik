@@ -241,7 +241,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // bt r/m, reg
         _0F(0xA3)        = OP_MODRM,
         // imul reg, r/m
-        _0F(0xAF)        = OP_MODRM,
+        _0F(0xAF)        = OP_MODRM | OP_DIR,
         // movdqa/movdqu reg, r/m
         _0F(0x6E)        = OP_MODRM | OP_DIR | OP_SSE | OP_2DT,
         _0F(0x7E)        = OP_MODRM | OP_SSE | OP_2DT,

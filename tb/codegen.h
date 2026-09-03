@@ -539,6 +539,13 @@ static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg
 #define BITS64_FOR_ANDN(it, A, B, C, cap) for (int it = bits64_first_andn(A, B, C, cap); it >= 0; it = bits64_next_andn(A, B, C, cap, it))
 #define BITS64_FOR_AND(it, A, B, cap) for (int it = bits64_first_and(A, B, cap); it >= 0; it = bits64_next_and(A, B, cap, it))
 
+static uint64_t* bits64_alloc(TB_Arena* arena, size_t cnt) {
+    size_t size = ((cnt + 63) / 64) * sizeof(uint64_t);
+    uint64_t* arr = tb_arena_alloc(arena, size);
+    memset(arr, 0, size);
+    return arr;
+}
+
 static int bits64_next(uint64_t* arr, size_t cnt, int x) {
     // skip one ahead
     x += 1;
@@ -563,6 +570,10 @@ static int bits64_next(uint64_t* arr, size_t cnt, int x) {
 static int bits64_first(uint64_t* arr, size_t cnt) {
     TB_ASSERT(cnt > 0);
     return arr[0] & 1 ? 0 : bits64_next(arr, cnt, 0);
+}
+
+static void bits64_or(uint64_t* A, uint64_t* B, size_t cnt, int x) {
+
 }
 
 static int bits64_next_and(uint64_t* A, uint64_t* B, size_t cnt, int x) {
@@ -621,10 +632,24 @@ static bool bits64_member(uint64_t* arr, size_t x) {
     return arr[x / 64] & (1ull << (x % 64));
 }
 
+static void bits64_set(uint64_t* arr, size_t x) {
+    arr[x / 64] |= (1ull << (x % 64));
+}
+
 static bool is_reload(TB_Node* n) {
     if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
         return reg_mask_is_stack(cpy->use);
+    }
+    return false;
+}
+
+static bool is_compatible_copy(Ctx* ctx, TB_Node* a, TB_Node* b) {
+    if (a->type == TB_MACH_COPY && b->type == TB_MACH_COPY) {
+        TB_NodeMachCopy* aa = TB_NODE_GET_EXTRA(a);
+        TB_NodeMachCopy* bb = TB_NODE_GET_EXTRA(b);
+        RegMask* meet = tb__reg_mask_meet(ctx, aa->def, bb->def);
+        return meet == aa->def;
     }
     return false;
 }

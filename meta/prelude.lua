@@ -11,6 +11,9 @@ function OrderedSet()
         if not self.entries[k] then
             self.entries[k] = v
             self.ord[#self.ord + 1] = k
+            return true
+        else
+            return false
         end
     end
 
@@ -170,6 +173,16 @@ for i=97,122 do ch_class[i] = "ident" end
 ch_class[36] = "ident"
 ch_class[95] = "ident"
 
+local hex_chars = "0123456789ABCDEFabcdef"
+function into_pattern(str, v)
+    local pat = {}
+    for i=1,#str do
+        pat[str:byte(i)] = v
+    end
+    return pat
+end
+hex_chars = into_pattern(hex_chars, true)
+
 local line_num = 1
 
 local function either(a, b, c) return a == b or a == c end
@@ -210,12 +223,18 @@ function lexer(str)
             end
             return str:sub(start, i - 1)
         elseif class == "num" then
-            i = i + 1
-            while ch_class[str:byte(i)] == "num" do
-                i = i + 1
+            if str:byte(i) == 48 and (str:byte(i + 1) == 88 or str:byte(i + 1) == 120) then
+                i = i + 2
+                while hex_chars[str:byte(i)] do
+                    i = i + 1
+                end
+            else
+                while ch_class[str:byte(i)] == "num" do
+                    i = i + 1
+                end
             end
             return tonumber(str:sub(start, i - 1))
-        elseif class == "ident" then
+        elseif class == "ident" or str:byte(i) == 58 then
             i = i + 1
             while either(ch_class[str:byte(i)], "ident", "num") do
                 i = i + 1
@@ -243,7 +262,7 @@ function parse_node(lex)
 
         t = lex()
         if t ~= ":" then
-            print("fuck but in colon")
+            print("fuck but in colon: " .. t)
             os.exit(1)
         end
 
