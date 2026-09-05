@@ -242,7 +242,13 @@ function lexer(str)
             end
             return str:sub(start, i - 1)
         elseif class == "num" then
-            if str:byte(i) == 48 and (str:byte(i + 1) == 88 or str:byte(i + 1) == 120) then
+            local peek = str:sub(i+1,i+1)
+            if str:byte(i) == 48 and (peek == "b" or peek == "B") then
+                i = i + 2
+                while str:sub(i,i) == "0" or str:sub(i,i) == "1" do
+                    i = i + 1
+                end
+            elseif str:byte(i) == 48 and (peek == "x" or peek == "X") then
                 i = i + 2
                 while hex_chars[str:byte(i)] do
                     i = i + 1

@@ -1,8 +1,8 @@
 buffer  = require "string.buffer"
 bit = require "bit"
 
-local jason = require('jason')
-local inspect = require('inspect')
+local jason = require('meta/jason')
+local inspect = require('meta/inspect')
 
 --[[ file structure
 	0. helper functions
@@ -366,7 +366,8 @@ local function walk_A64(list, instructions, parents, encodings, n, depth)
         -- end
         -- print(str..pattern, item.name)
 
-		if pattern:find('-') then
+		-- if item._type ~= "Instruction.Instruction" then
+        if pattern:find('-') then
             local kid = {}
 
 			table.insert(parents, item.name)
@@ -390,7 +391,7 @@ local function walk_A64(list, instructions, parents, encodings, n, depth)
 	end
 end
 
-local file = assert(io.open('Instructions.json', 'r'))
+local file = assert(io.open('meta/Instructions.json', 'r'))
 local content = file:read('*all')
 file:close()
 timer('load')
@@ -402,6 +403,149 @@ local instructions = {} -- list
 local decision_tree = {}
 walk_A64(data.instructions, instructions, nil, nil, decision_tree, 0)
 timer('walk')
+
+function print_asm(src)
+    local fmt = {}
+    local args = {}
+
+    local RULESET = {
+        ["COMMA"] = ",",
+        ["SPACE"] = " ",
+
+        ["Hd"] = "Hd",
+        ["Hn__5"] = "Hn",
+        ["Hm__2"] = "Hm",
+        ["Ha__2"] = "Ha",
+    }
+
+    for i=1,#src.symbols do
+        if src.symbols[i]._type == "Instruction.Symbols.Literal" then
+            fmt[#fmt + 1] = src.symbols[i].value
+        else
+            local rule = src.symbols[i].rule_id
+            fmt[#fmt + 1] = RULESET[rule] or rule
+        end
+    end
+
+    print(table.concat(fmt))
+end
+
+local interning = {}
+local lines = {}
+
+function field_str(fields)
+    local str = {}
+    for i=1,#fields do
+        str[i] = string.format("%s_%d_%d", fields[i].name, fields[i].bit, fields[i].len)
+    end
+    return table.concat(str, ",")
+end
+
+function write_shape(fields)
+    local str = {}
+    for i=1,#fields do
+        str[i] = string.format("%c_%d_%d", 65 + i, fields[i].bit, fields[i].len)
+    end
+    return table.concat(str, ",")
+end
+
+local icount = 0
+local count = 0
+for _,group in ipairs(instructions) do
+    if not group.path:find("A64/s[ve]") then
+    -- if group.path:find("A64/dp") then
+    -- print(group.pattern, group.path, key)
+
+	local parent_pattern = group.pattern
+	for _, inst in ipairs(group.original.children) do
+        count = count + 1
+
+		local pattern = {}
+		for i=0,#parent_pattern - 1 do
+            local j = #parent_pattern - i
+            table.insert(pattern, parent_pattern:sub(j, j))
+		end
+
+		local bits_count = 0
+        local complete = {}
+		for _, bits in ipairs(inst.encoding.values) do
+			if bits._type == 'Instruction.Encodeset.Bits' then
+				bits_count = bits_count + 1
+				local bit = bits.range.start
+				local len = bits.range.width
+				local str = bits.value.value
+                if str:sub(1,1) == "'" then
+                    str = str:sub(2, -2)
+                end
+                str = string.reverse(str):sub(1, len)
+                complete[bit] = str
+
+                for i=1,#str do
+                    pattern[bit + i] = str:sub(i,i)
+                end
+			end
+		end
+
+        local params = {}
+        local args = {}
+
+        -- group fields
+        local cache_key = {}
+        for i, f in ipairs(group.fields) do
+            cache_key[#cache_key + 1] = string.format("%s%d_%d", complete[f.bit] and "O" or "o", f.len, f.bit)
+
+            -- print(f.name, f.bit, f.len, complete[f.bit])
+            if complete[f.bit] then
+                table.insert(args, string.format(":op%d 0b%s ", i, complete[f.bit]))
+            else
+                table.insert(params, "X ")
+            end
+        end
+        cache_key = table.concat(cache_key, "$")
+
+        if not interning[cache_key] then
+            interning[cache_key] = true
+            icount = icount + 1
+
+            -- compute shape
+            lines[#lines + 1] = ""
+            lines[#lines + 1] = string.format("(defshape %s (pat ( I64 %s) (bor", cache_key, table.concat(params))
+
+            -- copy fixed bits
+            lines[#lines + 1] = "    \""..parent_pattern:gsub("_", "0").."\""
+
+            local arg_cnt = 1
+            for i, f in ipairs(group.fields) do
+                if complete[f.bit] then
+                    lines[#lines + 1] = string.format("    (bextr $op%d %d 0 %d)", i, f.bit, f.len)
+                else
+                    lines[#lines + 1] = string.format("    (bextr $%d %d 0 %d)", arg_cnt, f.bit, f.len)
+                    arg_cnt = arg_cnt + 1
+                end
+            end
+            lines[#lines + 1] = string.format(")))")
+        end
+        pattern = string.reverse(table.concat(pattern, ""))
+
+        local mnemonic = inst.name
+        if inst.assembly.symbols and inst.assembly.symbols[1]._type == "Instruction.Symbols.Literal" then
+            mnemonic = inst.assembly.symbols[1].value
+        end
+
+        local definst = string.format("(definst %s %s %s %s)", cache_key, inst.name, mnemonic, table.concat(args))
+        lines[#lines + 1] = definst
+
+        -- print("", inst.name, pattern, #pattern, cache_key)
+        -- print_asm(inst.assembly)
+    end
+else
+print("// SKIP", group.name, group.path)
+    end
+end
+
+-- print(count, icount)
+print(table.concat(lines, "\n"))
+os.exit(1)
 
 local pat = "-__100____----------------------"
 local dp1 = decision_tree["_--____-------------------------"][pat]

@@ -1,3 +1,7 @@
+// PREFIXES+ OPCODE (MODRM (SIB DISP?)?)? IMM?
+//
+//   OPCODE ::= NN | 0F NN | 0F 38 NN | 0F 3A NN
+//
 // define data types
 (defdatatype IMM8  int8)
 (defdatatype IMM16 int16)
@@ -17,18 +21,19 @@
 (let XMM_or_MEM (any XMM MEM))
 
 // (bextr bits dst src size)
-(defun rex (wide rx base index) 
-  (opt_if 0x40
+(defun rex  (rx base index) 
+  (prefix (bor 0x40 (bextr base  0 3 1)
+                    (bextr index 1 3 1)
+                    (bextr rx    2 3 1)
+                    (bextr wide  3 0 1)))
+)
+
+(defun rex_opt (wide rx base index) 
+  (prefix_opt 0x40
     (bor 0x40 (bextr base  0 3 1)
               (bextr index 1 3 1)
               (bextr rx    2 3 1)
               (bextr wide  3 0 1)))
-)
-
-(defun rex_nw (rx base index) 
-  (bor 0x40 (bextr base  0 3 1)
-            (bextr index 1 3 1)
-            (bextr rx    2 3 1))
 )
 
 (defun modrm (mod rx rm) 
@@ -37,97 +42,83 @@
        (bextr rm  0 0 3))
 )
 
-// define shape of instruction
-(defshape SSE_OP
-  // emit rules, if we define them in
-  // the DSL we can also reverse them.
-  (pat (SSE_T XMM XMM) (rex 0 $1 $2 0) 0x0F $op            (modrm 3 $1 $2))
-  (pat (SSE_T MEM XMM) (rex 0 $2 $1 0) 0x0F (bor $op 0x10) (modrm 0 $2 $1))
-  (pat (SSE_T XMM MEM) (rex 0 $1 $2 0) 0x0F $op            (modrm 0 $1 $2))
-  // printing rules, for assembling
-  // or pretty printing mach nodes.
-  // calls into C
-  // (print x86_sse_op_print)
-)
-
 (defun simple_rex (rx base) (select (isa $0 "I8")
     // 8bit requires the REX to use the modern
     // operand encoding.
-    (rex_nw rx base 0)
+    (rex 0 rx base 0)
     // 16/32/64
-    (rex (select (isa $0 "I64") 1 0) rx base 0)
+    (rex_opt (select (isa $0 "I64") 1 0) rx base 0)
 ))
 
-(defun simple_mr (base_op op pre rx base)
-  (simple_rex rx base) pre (bor base_op (bextr op 3 0 3)) (modrm 3 rx base)
+(defun data16 (select (isa $0 "I16") (prefix 0x66) ()))
+
+(defun simple_mr (base op rx base)
+  (simple_rex rx base) (data16) (bor base (bextr op 3 0 3)) (modrm 3 rx base)
 )
 
-(defun simple_mi (base_op op pre base)
-  (simple_rex op base) pre base_op (modrm 3 rx base)
+(defun simple_r (op)
+  (simple_rex 0 $1) (data16) (bor op (bextr $1 0 0 3))
 )
 
-// bit 1 is size (1 if not 8bit)
-(defshape SIMPLE_INT_OP
-#if 0
+// many integer ops use the bottom bit to say that they're 8bit rather
+// than sized to the data width.
+(defun op_sized (op) (bor op (select (isa $0 "I8") 1 0)))
+
+(defshape INT_OP1
   // MR default
-  (pat (I8  GPR_or_MEM GPR)   (simple_mr 0 $op ()   $1 $2))
-  (pat (I16 GPR_or_MEM GPR)   (simple_mr 0 $op 0x66 $1 $2))
-  (pat (I32 GPR_or_MEM GPR)   (simple_mr 0 $op ()   $1 $2))
-  (pat (I64 GPR_or_MEM GPR)   (simple_mr 0 $op ()   $1 $2))
+  (pat (INT GPR_or_MEM GPR)   (simple_mr 0 $op $1 $2))
   // RM, (just MR opcode bit 2 is set)
-  (pat (I8  GPR GPR_or_MEM)   (simple_mr 2 $op ()   $2 $1))
-  (pat (I16 GPR GPR_or_MEM)   (simple_mr 2 $op 0x66 $2 $1))
-  (pat (I32 GPR GPR_or_MEM)   (simple_mr 2 $op ()   $2 $1))
-  (pat (I64 GPR GPR_or_MEM)   (simple_mr 2 $op ()   $2 $1))
-#endif
+  (pat (INT GPR GPR_or_MEM)   (simple_mr 2 $op $2 $1))
   // MI
-  (pat (I8  GPR_or_MEM IMM8)  (simple_mi 0x80 $op ()   $1) (i8  $2))
-  (pat (I16 GPR_or_MEM IMM16) (simple_mi 0x81 $op 0x66 $1) (i16 $2))
-  (pat (I32 GPR_or_MEM IMM32) (simple_mi 0x81 $op ()   $1) (i32 $2))
-  (pat (I64 GPR_or_MEM IMM32) (simple_mi 0x81 $op ()   $1) (i32 $2))
+  (pat (I8  GPR_or_MEM IMM8)  (simple_mr 0x80 0 $op $1) (i8  $2))
+  (pat (I16 GPR_or_MEM IMM16) (simple_mr 0x81 0 $op $1) (i16 $2))
+  (pat (I32 GPR_or_MEM IMM32) (simple_mr 0x81 0 $op $1) (i32 $2))
+  (pat (I64 GPR_or_MEM IMM32) (simple_mr 0x81 0 $op $1) (i32 $2))
   // imm8 when opcode bit 2 is set
-  (pat (I16 GPR_or_MEM IMM8)  (simple_mi 0x83 $op 0x66 $1) (i8 $2))
-  (pat (I32 GPR_or_MEM IMM8)  (simple_mi 0x83 $op ()   $1) (i8 $2))
-  (pat (I64 GPR_or_MEM IMM8)  (simple_mi 0x83 $op ()   $1) (i8 $2))
+  (pat (I16 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (i8 $2))
+  (pat (I32 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (i8 $2))
+  (pat (I64 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (i8 $2))
+)
+
+(defshape INT_OP2
+  // MR default
+  (pat (INT GPR_or_MEM GPR)   (simple_mr $op          0 $1 $2))
+  // RM, (just MR opcode bit 2 is set)
+  (pat (INT GPR GPR_or_MEM)   (simple_mr (bor $op 2)  0 $2 $1))
+  // MI
+  (pat (I8  GPR_or_MEM IMM8)  (simple_mr $imm         0 $op $1) (i8  $2))
+  (pat (I16 GPR_or_MEM IMM16) (simple_mr (bor $imm 1) 0 $op $1) (i16 $2))
+  (pat (I32 GPR_or_MEM IMM32) (simple_mr (bor $imm 1) 0 $op $1) (i32 $2))
+  (pat (I64 GPR_or_MEM IMM32) (simple_mr (bor $imm 1) 0 $op $1) (i32 $2))
 )
 
 // defining a simple instruction
 // (definst SSE_OP FP_ADD "add" :op 0x58)
 // (definst SSE_OP FP_MUL "mul" :op 0x59)
 
-#if 0
+(definst INT_OP1 ADD  "add"  :base 0 :op 0)
+(definst INT_OP1 OR   "or"   :base 0 :op 1)
+(definst INT_OP1 ADC  "adc"  :base 0 :op 2)
+(definst INT_OP1 SBB  "sbb"  :base 0 :op 3)
+(definst INT_OP1 AND  "and"  :base 0 :op 4)
+(definst INT_OP1 SUB  "sub"  :base 0 :op 5)
+(definst INT_OP1 XOR  "xor"  :base 0 :op 6)
+(definst INT_OP1 CMP  "cmp"  :base 0 :op 7)
 
-(definst SIMPLE_INT_OP ADD    "add" :op 0)
-(definst SIMPLE_INT_OP OR     "or"  :op 1)
-(definst SIMPLE_INT_OP ADC    "adc" :op 2)
-(definst SIMPLE_INT_OP SBB    "sbb" :op 3)
-(definst SIMPLE_INT_OP AND    "and" :op 4)
-(definst SIMPLE_INT_OP SUB    "sub" :op 5)
-(definst SIMPLE_INT_OP XOR    "xor" :op 6)
-(definst SIMPLE_INT_OP CMP    "cmp" :op 7)
-
-(defun op_plus_r (pre op)
-  (simple_rex 0 $1) (bor op (bextr $1 0 0 3))
-)
+(definst INT_OP2 MOV  "mov"  :op 0x88 :imm 0xC6)
+(definst INT_OP2 TEST "test" :op 0x84 :imm 0xF6)
 
 (defshape MOVABS
-  (pat (I8  GPR IMM8)  (op_plus_r ()   0xB0) (i8  $2))
-  (pat (I16 GPR IMM16) (op_plus_r 0x66 0xB8) (i16 $2))
-  (pat (I32 GPR IMM32) (op_plus_r ()   0xB8) (i32 $2))
-  (pat (I64 GPR IMM64) (op_plus_r ()   0xB8) (i64 $2))
+  (pat (I8  GPR IMM8)  (simple_r 0xB0) (i8  $2))
+  (pat (I16 GPR IMM16) (simple_r 0xB8) (i16 $2))
+  (pat (I32 GPR IMM32) (simple_r 0xB8) (i32 $2))
+  (pat (I64 GPR IMM64) (simple_r 0xB8) (i64 $2))
 )
 (definst MOVABS MOVABS "mov")
 
 (defshape STK_OP
-  (pat (I64 GPR IMM64) (op_plus_r () $op) (i64 $2))
+  (pat (I64 GPR IMM64) (simple_r $op))
 )
 (definst STK_OP PUSH "push" :op 0x50)
 (definst STK_OP POP  "pop"  :op 0x58)
 
-#endif
-
-(definst SIMPLE_INT_OP ADD    "add" :op 0)
-
-// PREFIXES+ OPCODE (MODRM (SIB DISP?)?)? IMM?
-//
-//   OPCODE ::= NN | 0F NN | 0F 38 NN | 0F 3A NN

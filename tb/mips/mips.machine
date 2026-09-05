@@ -1,0 +1,53 @@
+
+(defshape J_TYPE
+  (pat (I64 IMM) (bor
+    (bextr $op 26 0 6)
+    (bextr $1  0  0 26)))
+)
+
+(defshape I_TYPE
+  (pat (I64 GPR GPR IMM) (bor
+    (bextr $op 26 0 6)
+    (bextr $1  21 0 5)
+    (bextr $2  16 0 5)
+    (bextr $3  0  0 16)))
+)
+
+(defshape R_TYPE
+  (pat (I64 GPR GPR GPR IMM) (bor
+    (bextr $op    26 0 6)
+    (bextr $1     21 0 5)
+    (bextr $2     16 0 5)
+    (bextr $3     11 0 5)
+    (bextr $4     6  0 5)
+    (bextr $funct 0  0 6)))
+)
+
+(definst J_TYPE JAL "jal" :op 0b000011)
+
+(definst I_TYPE BEQ "beq" :op 0b000100)
+(definst I_TYPE BEQ "bne" :op 0b000101)
+(definst I_TYPE BLE "ble" :op 0b000110)
+(definst I_TYPE BGT "bgt" :op 0b000111)
+
+(definst R_TYPE AAA "sll"   :op 0b000000 :funct 0b000000 )
+(definst R_TYPE AAA "srl"   :op 0b000000 :funct 0b000010 )
+(definst R_TYPE AAA "dsll"  :op 0b000000 :funct 0b111000 )
+(definst R_TYPE AAA "dsrl"  :op 0b000000 :funct 0b111010 )
+(definst R_TYPE AAA "sllv"  :op 0b000000 :funct 0b000100 )
+(definst R_TYPE AAA "srlv"  :op 0b000000 :funct 0b000110 )
+(definst R_TYPE AAA "srav"  :op 0b000000 :funct 0b000111 )
+(definst R_TYPE AAA "sra"   :op 0b000000 :funct 0b000011 )
+(definst R_TYPE AAA "add"   :op 0b000000 :funct 0b100000 )
+(definst R_TYPE AAA "addu"  :op 0b000000 :funct 0b100001 )
+(definst R_TYPE AAA "dadd"  :op 0b000000 :funct 0b101100 )
+(definst R_TYPE AAA "daddu" :op 0b000000 :funct 0b101101 )
+(definst R_TYPE AAA "sub"   :op 0b000000 :funct 0b100010 )
+(definst R_TYPE AAA "subu"  :op 0b000000 :funct 0b100011 )
+(definst R_TYPE AAA "dsub"  :op 0b000000 :funct 0b101110 )
+(definst R_TYPE AAA "dsubu" :op 0b000000 :funct 0b101111 )
+(definst R_TYPE AAA "and"   :op 0b000000 :funct 0b100100 )
+(definst R_TYPE AAA "or"    :op 0b000000 :funct 0b100101 )
+(definst R_TYPE AAA "xor"   :op 0b000000 :funct 0b100110 )
+(definst R_TYPE AAA "nor"   :op 0b000000 :funct 0b100111 )
+(definst R_TYPE AAA "jr"    :op 0b000000 :funct 0b001000 )
