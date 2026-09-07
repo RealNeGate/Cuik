@@ -449,11 +449,17 @@ function write_shape(fields)
     return table.concat(str, ",")
 end
 
+local names = {}
+for k,v in ipairs({ "STUR", "LDUR", "STR", "LDR" }) do
+    names[v] = true
+end
+
 local icount = 0
 local count = 0
+lines[#lines + 1] = "(bits 32)"
 for _,group in ipairs(instructions) do
-    if not group.path:find("A64/s[ve]") then
-    -- if group.path:find("A64/dp") then
+    -- if not group.path:find("A64/s[ve]") then
+    if group.path:find("A64/ldst") or group.path:find("A64/dp") then
     -- print(group.pattern, group.path, key)
 
 	local parent_pattern = group.pattern
@@ -465,6 +471,11 @@ for _,group in ipairs(instructions) do
             local j = #parent_pattern - i
             table.insert(pattern, parent_pattern:sub(j, j))
 		end
+
+        local mnemonic = inst.name
+        if inst.assembly.symbols and inst.assembly.symbols[1]._type == "Instruction.Symbols.Literal" then
+            mnemonic = inst.assembly.symbols[1].value
+        end
 
 		local bits_count = 0
         local complete = {}
@@ -486,19 +497,68 @@ for _,group in ipairs(instructions) do
 			end
 		end
 
+        function find_op(name)
+            for _,v in ipairs(group.fields) do
+                if v.name == name then return v end
+            end
+        end
+
+        function parse_cond0(tree)
+            if tree._type == "AST.BinaryOp" and tree.op == "==" then
+                local lhs = tree.left._type == "AST.Identifier" and find_op(tree.left.value)
+                local rhs = tree.right._type == "Values.Value" and tree.right.value
+
+                if lhs then
+                    local bit = lhs.bit
+                    if rhs:sub(1,1) == "'" then
+                        rhs = rhs:sub(2, -2)
+                    end
+                    rhs = string.rep("0", lhs.len - #rhs)..rhs
+
+                    -- mark in pattern
+                    for i=1,#rhs do
+                        pattern[bit + i] = rhs:sub(i,i)
+                    end
+                    complete[bit] = str
+
+                    print(inspect(lhs), "MUST BE", rhs)
+                end
+            end
+        end
+
+        function parse_cond(tree)
+            while tree._type == "AST.BinaryOp" and tree.op == "&&" do
+                parse_cond0(tree.left)
+                tree = tree.right
+            end
+
+            parse_cond0(tree)
+        end
+
+        if inst.condition then
+        -- handle subset of binary ops
+        parse_cond(inst.condition)
+        end
+
+        if names[mnemonic] then
+            print(mnemonic, inspect(inst.condition), inspect(group.fields))
+        end
+ 
         local params = {}
         local args = {}
+
+        table.insert(params, "I64")
 
         -- group fields
         local cache_key = {}
         for i, f in ipairs(group.fields) do
-            cache_key[#cache_key + 1] = string.format("%s%d_%d", complete[f.bit] and "O" or "o", f.len, f.bit)
+            cache_key[#cache_key + 1] = string.format("%s_%s_%d_%d", complete[f.bit] and "O" or "o", f.name, f.len, f.bit)
 
             -- print(f.name, f.bit, f.len, complete[f.bit])
             if complete[f.bit] then
-                table.insert(args, string.format(":op%d 0b%s ", i, complete[f.bit]))
+                table.insert(args, string.format(":%s 0b%s ", f.name, complete[f.bit]))
             else
-                table.insert(params, "X ")
+                table.insert(params, "X")
             end
         end
         cache_key = table.concat(cache_key, "$")
@@ -509,7 +569,7 @@ for _,group in ipairs(instructions) do
 
             -- compute shape
             lines[#lines + 1] = ""
-            lines[#lines + 1] = string.format("(defshape %s (pat ( I64 %s) (bor", cache_key, table.concat(params))
+            lines[#lines + 1] = string.format("(defshape %s (pat (%s) (bor", cache_key, table.concat(params, " "))
 
             -- copy fixed bits
             lines[#lines + 1] = "    \""..parent_pattern:gsub("_", "0").."\""
@@ -517,7 +577,7 @@ for _,group in ipairs(instructions) do
             local arg_cnt = 1
             for i, f in ipairs(group.fields) do
                 if complete[f.bit] then
-                    lines[#lines + 1] = string.format("    (bextr $op%d %d 0 %d)", i, f.bit, f.len)
+                    lines[#lines + 1] = string.format("    (bextr $%s %d 0 %d)", f.name, f.bit, f.len)
                 else
                     lines[#lines + 1] = string.format("    (bextr $%d %d 0 %d)", arg_cnt, f.bit, f.len)
                     arg_cnt = arg_cnt + 1
@@ -527,24 +587,22 @@ for _,group in ipairs(instructions) do
         end
         pattern = string.reverse(table.concat(pattern, ""))
 
-        local mnemonic = inst.name
-        if inst.assembly.symbols and inst.assembly.symbols[1]._type == "Instruction.Symbols.Literal" then
-            mnemonic = inst.assembly.symbols[1].value
-        end
-
         local definst = string.format("(definst %s %s %s %s)", cache_key, inst.name, mnemonic, table.concat(args))
         lines[#lines + 1] = definst
 
         -- print("", inst.name, pattern, #pattern, cache_key)
         -- print_asm(inst.assembly)
     end
-else
-print("// SKIP", group.name, group.path)
+    else
+    table.insert(lines, string.format("// SKIP %s %s", group.name, group.path))
     end
 end
 
--- print(count, icount)
-print(table.concat(lines, "\n"))
+local f = io.open("meta/a64.machine", "w")
+f:write(table.concat(lines, "\n"))
+f:close()
+
+print(count, icount)
 os.exit(1)
 
 local pat = "-__100____----------------------"

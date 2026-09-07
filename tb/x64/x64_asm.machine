@@ -1,3 +1,5 @@
+(bits 8)
+
 // PREFIXES+ OPCODE (MODRM (SIB DISP?)?)? IMM?
 //
 //   OPCODE ::= NN | 0F NN | 0F 38 NN | 0F 3A NN
@@ -21,7 +23,7 @@
 (let XMM_or_MEM (any XMM MEM))
 
 // (bextr bits dst src size)
-(defun rex  (rx base index) 
+(defun rex (rx base index) 
   (prefix (bor 0x40 (bextr base  0 3 1)
                     (bextr index 1 3 1)
                     (bextr rx    2 3 1)

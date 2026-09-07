@@ -11,7 +11,7 @@ local shapes = {}
 
 local codec_id = 0
 local codecs = {}
-local MIN_UNIT_WIDTH = 32
+local MIN_UNIT_WIDTH = 8
 
 function iter_combos(in_combos, fn)
     -- compute all input possibilities
@@ -434,6 +434,8 @@ while true do
         decls[tree[2]] = tree[3]
     elseif tree[1] == "defun" then
         funcs[tree[2]] = tree
+    elseif tree[1] == "bits" then
+        MIN_UNIT_WIDTH = tree[2]
     elseif tree[1] == "definst" then
         local globals = {}
         local i = 5
@@ -510,7 +512,7 @@ for i=1,#patterns do
     -- stage which is mostly downstream of opcode
     -- parsing if possible.
     patterns[i].stage1_key = str
-    -- print("PAT", i, inspect(pat), str)
+    print("PAT", patterns[i][1], i, inspect(pat), str)
 end
 print("PATTERN COUNT", #patterns)
 
@@ -621,17 +623,33 @@ function NFA_dump(all_parts, q)
 end
 
 function NFA_compile_term(all_parts, q, state, depth)
+    local indent = string.rep("    ", depth)
+
     local list = {}
+    local max_len = 0
     for _,v in ipairs(q) do
-        add_if_new(list, UF[v])
+        -- add_if_new(list, v.stage1_key:sub(1 + ((state - 1)*8)))
+        -- add_if_new(list, v[1])
+        -- add_if_new(list, UF[v])
+        add_if_new(list, v[3][1])
+        max_len = math.max(max_len, #v[3])
+    end
+    -- lines[#lines + 1] = string.format("%s// %d %d %s", indent, state, max_len, table.concat(list, ","))
+
+    for _,v in ipairs(q) do
+        lines[#lines + 1] = string.format("%s// %s %s", indent, v[3][1], v[1])
     end
 
-    local indent = string.rep("    ", depth)
-    lines[#lines + 1] = string.format("%sreturn SOMETHING; // %s", indent, table.concat(list, ","))
+    if state >= max_len then
+        lines[#lines + 1] = string.format("%sreturn SOMETHING;", indent)
+    else
+        lines[#lines + 1] = string.format("%sinst = read(%d);", indent, MIN_UNIT_WIDTH / 8)
+        NFA_compile0(all_parts, q, state + 1, nil, depth)
+    end
 end
 
 local ALL_BITS = string.rep(MIN_UNIT_WIDTH, "1")
-function NFA_compile0(all_parts, q, state, parent_mask, depth, TAG)
+function NFA_compile0(all_parts, q, state, parent_mask, depth)
     -- if all live cases fit into the same final state then
     -- we've terminated
     local leader = nil
@@ -657,17 +675,18 @@ function NFA_compile0(all_parts, q, state, parent_mask, depth, TAG)
     end
 
     for _,v in ipairs(q) do
-        if NFA_done(v, state) then return end
-        local str = NFA_match_str(v, state)
+        if not NFA_done(v, state) then
+            local str = NFA_match_str(v, state)
 
-        -- fill in fresh operand bits
-        for i=1,MIN_UNIT_WIDTH do
-            if discrim[i] == "1" and str:sub(i,i) == "_" then
-                discrim[i] = "0"
-            end
+            -- fill in fresh operand bits
+            for i=1,MIN_UNIT_WIDTH do
+                if discrim[i] == "1" and str:sub(i,i) == "_" then
+                    discrim[i] = "0"
+                end
 
-            if str:sub(i,i) ~= "_" then
-                histo[i] = histo[i] + 1
+                if str:sub(i,i) ~= "_" then
+                    histo[i] = histo[i] + 1
+                end
             end
         end
     end
@@ -731,10 +750,15 @@ function NFA_compile0(all_parts, q, state, parent_mask, depth, TAG)
         end
         assert(lwb > 0)
 
-        -- check how far we can push the upper bound
         upb = lwb
-        for j=lwb+1,math.min(lwb+4, MIN_UNIT_WIDTH) do
-            if histo[j] == 0 then
+        if lwb+2 <= MIN_UNIT_WIDTH and histo[lwb+1] == 0 and histo[lwb+2] ~= 0 then
+            print("SKIP", histo[lwb], histo[lwb+1], histo[lwb+2])
+            upb = lwb+2
+        end
+
+        -- check how far we can push the upper bound
+        for j=upb+1,math.min(upb+4, MIN_UNIT_WIDTH) do
+            if histo[j] == 0 and j == lwb+1 then
                 break
             end
             upb = j
@@ -749,7 +773,11 @@ function NFA_compile0(all_parts, q, state, parent_mask, depth, TAG)
         discrim[j] = "1"
     end
 
-    print(string.format("%d %s lwb=%d upb=%d width=%d cnt=%d | %s", depth, string.rep("  ", depth), lwb, upb, 1 + (upb - lwb), #q, table.concat(discrim)))
+    local list = {}
+    for _,v in ipairs(q) do
+        add_if_new(list, v[3][1]:sub(lwb, upb))
+    end
+    print(string.format("%d %s lwb=%d upb=%d width=%d cnt=%d | %s | %s", depth, string.rep("  ", depth), lwb, upb, 1 + (upb - lwb), #q, table.concat(discrim), table.concat(list, " ")))
 
     -- combine with the parent_mask now, this now represents the
     -- fully processed set of bits.
@@ -765,26 +793,27 @@ function NFA_compile0(all_parts, q, state, parent_mask, depth, TAG)
     local deltas = Partitions()
     local known = KnownBits(MIN_UNIT_WIDTH)
     for _,v in ipairs(q) do
-        if NFA_done(v, state) then return end
-        local str = NFA_match_str(v, state)
+        if not NFA_done(v, state) then
+            local str = NFA_match_str(v, state)
 
-        -- compute all input variants
-        local list = {}
-        for i=lwb,upb do
-            local ch = str:sub(i,i)
-            if ch == "0" or ch == "1" then
-                list[#list + 1] = ch
-            else
-                list[#list + 1] = { "0", "1" }
+            -- compute all input variants
+            local list = {}
+            for i=lwb,upb do
+                local ch = str:sub(i,i)
+                if ch == "0" or ch == "1" then
+                    list[#list + 1] = ch
+                else
+                    list[#list + 1] = { "0", "1" }
+                end
             end
+
+            iter_combos(list, function(bits)
+                bits = table.concat(bits)
+                if deltas:put_unique(bits, v) then
+                    -- known:union(bits)
+                end
+            end)
         end
-
-        iter_combos(list, function(bits)
-            bits = table.concat(bits)
-            if deltas:put_unique(bits, v) then
-                -- known:union(bits)
-            end
-        end)
     end
 
     -- group deltas based on destination
@@ -804,16 +833,46 @@ function NFA_compile0(all_parts, q, state, parent_mask, depth, TAG)
         end
     end
 
-    if #cases.ord == 1 then
-        local next = next_active[cases.ord[1]]
-        NFA_compile0(all_parts, next, state, discrim, depth+2)
-        return
-    end
-
     local bit_off = (MIN_UNIT_WIDTH - upb)
     local bit_len = 1 + (upb - lwb)
     local indent = string.rep("    ", depth)
-    lines[#lines + 1] = string.format("%sswitch (BEXTR(inst, %d, %d)) { // %s", indent, bit_off, bit_len, table.concat(discrim))
+
+    -- OR chain from the keys in a case
+    local function gen_either_expr(list)
+        local strs = {}
+        for i=1,#list do
+            strs[i] = "key == 0b"..list[i]
+        end
+        return table.concat(strs, " || ")
+    end
+
+    local list2 = {}
+    for j=lwb,upb do
+        list2[#list2 + 1] = histo[j]
+    end
+
+    lines[#lines + 1] = string.format("%s// %s, HISTO: %s", indent, table.concat(discrim), table.concat(list2, " "))
+    if #cases.ord == 1 then
+        local k = cases.ord[1]
+        local next = next_active[k]
+        local either = gen_either_expr(cases.entries[k])
+
+        -- figure out if there's more cases where they don't match than
+        -- cases where they do and flip the expr based on that.
+        local total_cases = 2^bit_len
+        if #cases.entries[k] == total_cases then
+            NFA_compile0(all_parts, next, state, discrim, depth)
+            return
+        end
+ 
+        print("TOL", #cases.entries[k], total_cases)
+        lines[#lines + 1] = string.format("%sif (key = BEXTR(inst, %d, %d), %s) {", indent, bit_off, bit_len, either)
+        NFA_compile0(all_parts, next, state, discrim, depth+1)
+        lines[#lines + 1] = indent.."}"
+        return
+    end
+
+    lines[#lines + 1] = string.format("%sswitch (BEXTR(inst, %d, %d)) {", indent, bit_off, bit_len)
     for k,list in cases:iter() do
         local next = next_active[k]
         for i=1,#list - 1 do
