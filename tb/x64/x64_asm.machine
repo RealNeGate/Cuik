@@ -44,33 +44,41 @@
        (bextr rm  0 0 3))
 )
 
-(defun simple_rex (rx base) (select (isa $0 "I8")
-    // 8bit requires the REX to use the modern
-    // operand encoding.
-    (rex 0 rx base 0)
-    // 16/32/64
-    (rex_opt (select (isa $0 "I64") 1 0) rx base 0)
-))
-
 (defun data16 (select (isa $0 "I16") (prefix 0x66) ()))
 
-(defun simple_mr (base op rx base)
-  (simple_rex rx base) (data16) (bor base (bextr op 3 0 3)) (modrm 3 rx base)
-)
-
+(defun simple_rex (rx base) (select (isa $0 "I8")
+  // 8bit requires the REX to use the modern
+  // operand encoding.
+  (rex 0 rx base 0)
+  // 16/32/64
+  (rex_opt (select (isa $0 "I64") 1 0) rx base 0)))
+(defun simple_mr (base op rx rm)
+  (simple_rex rx rm) (data16) (bor base (bextr op 3 0 3)) (MODRM $0 rx rm))
 (defun simple_r (op)
-  (simple_rex 0 $1) (data16) (bor op (bextr $1 0 0 3))
-)
+  (simple_rex 0 $1)  (data16) (bor op (bextr $1 0 0 3)))
 
 // many integer ops use the bottom bit to say that they're 8bit rather
 // than sized to the data width.
 (defun op_sized (op) (bor op (select (isa $0 "I8") 1 0)))
 
+// OP /r
+(defshape MODRM
+  (pat (INT GPR_or_MEM GPR) (modrm 3 $1 $2))
+)
+
+// OP /n id
+(defshape MODRM_IMM32
+  (pat (INT GPR_or_MEM IMM32) (modrm 3 $op $1) (i32 $2))
+)
+
 (defshape INT_OP1
   // MR default
-  (pat (INT GPR_or_MEM GPR)   (simple_mr 0 $op $1 $2))
+  (pat (INT GPR_or_MEM GPR) (simple_mr 0 $op $2 $1))
   // RM, (just MR opcode bit 2 is set)
-  (pat (INT GPR GPR_or_MEM)   (simple_mr 2 $op $2 $1))
+  (pat (INT GPR GPR_or_MEM) (simple_mr 2 $op $1 $2))
+
+#if 0
+  (pat (INT GPR GPR_or_MEM)   (simple_mr 2 $op $2 $1) MODRM_RM)
   // MI
   (pat (I8  GPR_or_MEM IMM8)  (simple_mr 0x80 0 $op $1) (i8  $2))
   (pat (I16 GPR_or_MEM IMM16) (simple_mr 0x81 0 $op $1) (i16 $2))
@@ -80,6 +88,7 @@
   (pat (I16 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (i8 $2))
   (pat (I32 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (i8 $2))
   (pat (I64 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (i8 $2))
+#endif
 )
 
 (defshape INT_OP2
@@ -107,6 +116,7 @@
 (definst INT_OP1 XOR  "xor"  :base 0 :op 6)
 (definst INT_OP1 CMP  "cmp"  :base 0 :op 7)
 
+#if 0
 (definst INT_OP2 MOV  "mov"  :op 0x88 :imm 0xC6)
 (definst INT_OP2 TEST "test" :op 0x84 :imm 0xF6)
 
@@ -123,4 +133,4 @@
 )
 (definst STK_OP PUSH "push" :op 0x50)
 (definst STK_OP POP  "pop"  :op 0x58)
-
+#endif
