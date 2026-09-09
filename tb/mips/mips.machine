@@ -1,28 +1,68 @@
 (bits 32)
 
-(defshape J_TYPE
-  (pat (I64 IMM) (bor
-    (bextr $op 26 0 6)
-    (bextr $1  0  0 26)))
-)
+// This is a data type, not an operand but they
+// actually count as the same thing in the DSL.
+(defop I64)
 
-(defshape I_TYPE
-  (pat (I64 GPR GPR IMM) (bor
-    (bextr $op 26 0 6)
-    (bextr $1  21 0 5)
-    (bextr $2  16 0 5)
-    (bextr $3  0  0 16)))
-)
+// Not very many operand shapes
+(defop GPR (any
+    ZR                      // zero reg
+    AT                      // reserved for assembler
+    V0 V1                   // returns
+    A0 A1 A2 A3 A4 A5 A6 A7 // call params
+    T4 T5 T6 T7             // temporaries (volatile)
+    S0 S1 S2 S3 S4 S5 S6 S7 // temporaries (non-volatile)
+    T8 T9                   // temporaries (volatile)
+    K0 K1                   // kernel regs
+    GP                      // global ptr
+    SP                      // stack ptr
+    FP                      // frame ptr
+    RA                      // return addr
+))
 
-(defshape R_TYPE
-  (pat (I64 GPR GPR GPR IMM) (bor
-    (bextr $op    26 0 6)
-    (bextr $1     21 0 5)
-    (bextr $2     16 0 5)
-    (bextr $3     11 0 5)
-    (bextr $4     6  0 5)
-    (bextr $funct 0  0 6)))
-)
+(defop FPR (any
+    F0  F1  F2  F3  F4  F5  F6  F7
+    F8  F9  F10 F11 F12 F13 F14 F15
+    F16 F17 F18 F19 F20 F21 F22 F23
+    F24 F25 F26 F27 F28 F29 F30 F31
+))
+
+(defop IMM16 :imm INT16)
+(defop MEM   :base GPR :disp INT16)
+
+// not sure how this will work yet...
+(defop LABEL)
+
+(defun j_type (op imm) (bor
+    (bextr op  26 0 6)
+    (bextr imm 0  0 26)
+))
+
+(defun i_type (op a b c) (bor
+    (bextr op 26 0 6)
+    (bextr a  21 0 5)
+    (bextr b  16 0 5)
+    (bextr c  0  0 16)
+))
+
+(defun r_type (op a b c d funct) (bor
+    (bextr op    26 0 6)
+    (bextr a     21 0 5)
+    (bextr b     16 0 5)
+    (bextr c     11 0 5)
+    (bextr d     6  0 5)
+    (bextr funct 0  0 6)
+))
+
+(defshape J_TYPE (pat (I64 LABEL) (j_type $op $1)))
+(defshape I_TYPE (pat (I64 GPR GPR IMM16) (i_type $op $1 $2 $3)))
+(defshape R_TYPE (pat (I64 GPR GPR GPR IMM16) (r_type $op $1 $2 $3 $4 $funct)))
+
+(defshape LD_OP  (pat (I64 GPR MEM) (i_type $op $1 (MEM_base $2) (MEM_disp $2))))
+(definst LD_OP LB   "lb"   :op 0b100000)
+(definst LD_OP LW   "lw"   :op 0b100011)
+(definst LD_OP LD   "ld"   :op 0b110111)
+(definst LD_OP LDC1 "ldc1" :op 0b110101)
 
 (definst J_TYPE JAL "jal" :op 0b000011)
 
@@ -31,24 +71,26 @@
 (definst I_TYPE BLE "ble" :op 0b000110)
 (definst I_TYPE BGT "bgt" :op 0b000111)
 
-(definst R_TYPE AAA "sll"   :op 0b000000 :funct 0b000000 )
-(definst R_TYPE AAA "srl"   :op 0b000000 :funct 0b000010 )
-(definst R_TYPE AAA "dsll"  :op 0b000000 :funct 0b111000 )
-(definst R_TYPE AAA "dsrl"  :op 0b000000 :funct 0b111010 )
-(definst R_TYPE AAA "sllv"  :op 0b000000 :funct 0b000100 )
-(definst R_TYPE AAA "srlv"  :op 0b000000 :funct 0b000110 )
-(definst R_TYPE AAA "srav"  :op 0b000000 :funct 0b000111 )
-(definst R_TYPE AAA "sra"   :op 0b000000 :funct 0b000011 )
-(definst R_TYPE AAA "add"   :op 0b000000 :funct 0b100000 )
-(definst R_TYPE AAA "addu"  :op 0b000000 :funct 0b100001 )
-(definst R_TYPE AAA "dadd"  :op 0b000000 :funct 0b101100 )
-(definst R_TYPE AAA "daddu" :op 0b000000 :funct 0b101101 )
-(definst R_TYPE AAA "sub"   :op 0b000000 :funct 0b100010 )
-(definst R_TYPE AAA "subu"  :op 0b000000 :funct 0b100011 )
-(definst R_TYPE AAA "dsub"  :op 0b000000 :funct 0b101110 )
-(definst R_TYPE AAA "dsubu" :op 0b000000 :funct 0b101111 )
-(definst R_TYPE AAA "and"   :op 0b000000 :funct 0b100100 )
-(definst R_TYPE AAA "or"    :op 0b000000 :funct 0b100101 )
-(definst R_TYPE AAA "xor"   :op 0b000000 :funct 0b100110 )
-(definst R_TYPE AAA "nor"   :op 0b000000 :funct 0b100111 )
-(definst R_TYPE AAA "jr"    :op 0b000000 :funct 0b001000 )
+(definst R_TYPE AAA "sll"   :op 0b000000 :funct 0b000000)
+(definst R_TYPE AAA "srl"   :op 0b000000 :funct 0b000010)
+(definst R_TYPE AAA "dsll"  :op 0b000000 :funct 0b111000)
+(definst R_TYPE AAA "dsrl"  :op 0b000000 :funct 0b111010)
+(definst R_TYPE AAA "sllv"  :op 0b000000 :funct 0b000100)
+(definst R_TYPE AAA "srlv"  :op 0b000000 :funct 0b000110)
+(definst R_TYPE AAA "srav"  :op 0b000000 :funct 0b000111)
+(definst R_TYPE AAA "sra"   :op 0b000000 :funct 0b000011)
+(definst R_TYPE AAA "add"   :op 0b000000 :funct 0b100000)
+(definst R_TYPE AAA "addu"  :op 0b000000 :funct 0b100001)
+(definst R_TYPE AAA "dadd"  :op 0b000000 :funct 0b101100)
+(definst R_TYPE AAA "daddu" :op 0b000000 :funct 0b101101)
+(definst R_TYPE AAA "sub"   :op 0b000000 :funct 0b100010)
+(definst R_TYPE AAA "subu"  :op 0b000000 :funct 0b100011)
+(definst R_TYPE AAA "dsub"  :op 0b000000 :funct 0b101110)
+(definst R_TYPE AAA "dsubu" :op 0b000000 :funct 0b101111)
+(definst R_TYPE AAA "and"   :op 0b000000 :funct 0b100100)
+(definst R_TYPE AAA "or"    :op 0b000000 :funct 0b100101)
+(definst R_TYPE AAA "xor"   :op 0b000000 :funct 0b100110)
+(definst R_TYPE AAA "nor"   :op 0b000000 :funct 0b100111)
+(definst R_TYPE AAA "jr"    :op 0b000000 :funct 0b001000)
+
+

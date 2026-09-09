@@ -450,7 +450,7 @@ function write_shape(fields)
 end
 
 local names = {}
-for k,v in ipairs({ "STUR", "LDUR", "STR", "LDR" }) do
+for k,v in ipairs({ "CPYFP", "CPYFM" }) do
     names[v] = true
 end
 
@@ -541,7 +541,7 @@ for _,group in ipairs(instructions) do
         end
 
         if names[mnemonic] then
-            print(mnemonic, inspect(inst.condition), inspect(group.fields))
+            print(mnemonic, inspect(inst), inspect(group.fields), group.name)
         end
  
         local params = {}
@@ -554,7 +554,10 @@ for _,group in ipairs(instructions) do
         for i, f in ipairs(group.fields) do
             cache_key[#cache_key + 1] = string.format("%s_%s_%d_%d", complete[f.bit] and "O" or "o", f.name, f.len, f.bit)
 
-            -- print(f.name, f.bit, f.len, complete[f.bit])
+            if names[mnemonic] then
+            print(mnemonic, f.name, f.bit, f.len, complete[f.bit])
+            end
+
             if complete[f.bit] then
                 table.insert(args, string.format(":%s 0b%s ", f.name, complete[f.bit]))
             else

@@ -53,7 +53,7 @@
   // 16/32/64
   (rex_opt (select (isa $0 "I64") 1 0) rx base 0)))
 (defun simple_mr (base op rx rm)
-  (simple_rex rx rm) (data16) (bor base (bextr op 3 0 3)) (MODRM $0 rx rm))
+  (simple_rex rx rm) (data16) (bor base (bextr op 3 0 3)))
 (defun simple_r (op)
   (simple_rex 0 $1)  (data16) (bor op (bextr $1 0 0 3)))
 
@@ -62,50 +62,54 @@
 (defun op_sized (op) (bor op (select (isa $0 "I8") 1 0)))
 
 // OP /r
-(defshape MODRM
-  (pat (INT GPR_or_MEM GPR) (modrm 3 $1 $2))
-)
-
-// OP /n id
-(defshape MODRM_IMM32
-  (pat (INT GPR_or_MEM IMM32) (modrm 3 $op $1) (i32 $2))
-)
+(defshape MODRM_MR    (pat (INT GPR_or_MEM GPR) (modrm 3 $2 $1)))
+(defshape MODRM_RM    (pat (INT GPR GPR_or_MEM) (modrm 3 $1 $2)))
+// OP /n imm
+(defshape MODRM_IMM8  (pat (INT GPR_or_MEM IMM8)  (modrm 3 $op $1) (i8  $2)))
+(defshape MODRM_IMM16 (pat (INT GPR_or_MEM IMM16) (modrm 3 $op $1) (i16 $2)))
+(defshape MODRM_IMM32 (pat (INT GPR_or_MEM IMM32) (modrm 3 $op $1) (i32 $2)))
 
 (defshape INT_OP1
   // MR default
-  (pat (INT GPR_or_MEM GPR) (simple_mr 0 $op $2 $1))
+  (pat (INT GPR_or_MEM GPR)   (simple_mr 0 $op $2 $1)   (MODRM_MR))
   // RM, (just MR opcode bit 2 is set)
-  (pat (INT GPR GPR_or_MEM) (simple_mr 2 $op $1 $2))
-
-#if 0
-  (pat (INT GPR GPR_or_MEM)   (simple_mr 2 $op $2 $1) MODRM_RM)
+  (pat (INT GPR GPR_or_MEM)   (simple_mr 2 $op $1 $2)   (MODRM_RM))
   // MI
-  (pat (I8  GPR_or_MEM IMM8)  (simple_mr 0x80 0 $op $1) (i8  $2))
-  (pat (I16 GPR_or_MEM IMM16) (simple_mr 0x81 0 $op $1) (i16 $2))
-  (pat (I32 GPR_or_MEM IMM32) (simple_mr 0x81 0 $op $1) (i32 $2))
-  (pat (I64 GPR_or_MEM IMM32) (simple_mr 0x81 0 $op $1) (i32 $2))
+  (pat (I8  GPR_or_MEM IMM8)  (simple_mr 0x80 0 $op $1) (MODRM_IMM8))
+  (pat (I16 GPR_or_MEM IMM16) (simple_mr 0x81 0 $op $1) (MODRM_IMM16))
+  (pat (I32 GPR_or_MEM IMM32) (simple_mr 0x81 0 $op $1) (MODRM_IMM32))
+  (pat (I64 GPR_or_MEM IMM32) (simple_mr 0x81 0 $op $1) (MODRM_IMM32))
   // imm8 when opcode bit 2 is set
-  (pat (I16 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (i8 $2))
-  (pat (I32 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (i8 $2))
-  (pat (I64 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (i8 $2))
-#endif
+  (pat (I16 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (MODRM_IMM8))
+  (pat (I32 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (MODRM_IMM8))
+  (pat (I64 GPR_or_MEM IMM8)  (simple_mr 0x83 0 $op $1) (MODRM_IMM8))
 )
 
 (defshape INT_OP2
   // MR default
-  (pat (INT GPR_or_MEM GPR)   (simple_mr $op          0 $1 $2))
+  (pat (INT GPR_or_MEM GPR)   (simple_mr $op          0 $2 $1)  (MODRM_MR))
   // RM, (just MR opcode bit 2 is set)
-  (pat (INT GPR GPR_or_MEM)   (simple_mr (bor $op 2)  0 $2 $1))
+  (pat (INT GPR GPR_or_MEM)   (simple_mr (bor $op 2)  0 $1 $2)  (MODRM_RM))
   // MI
-  (pat (I8  GPR_or_MEM IMM8)  (simple_mr $imm         0 $op $1) (i8  $2))
-  (pat (I16 GPR_or_MEM IMM16) (simple_mr (bor $imm 1) 0 $op $1) (i16 $2))
-  (pat (I32 GPR_or_MEM IMM32) (simple_mr (bor $imm 1) 0 $op $1) (i32 $2))
-  (pat (I64 GPR_or_MEM IMM32) (simple_mr (bor $imm 1) 0 $op $1) (i32 $2))
+  (pat (I8  GPR_or_MEM IMM8)  (simple_mr $imm         0 $op $1) (MODRM_IMM8))
+  (pat (I16 GPR_or_MEM IMM16) (simple_mr (bor $imm 1) 0 $op $1) (MODRM_IMM16))
+  (pat (I32 GPR_or_MEM IMM32) (simple_mr (bor $imm 1) 0 $op $1) (MODRM_IMM32))
+  (pat (I64 GPR_or_MEM IMM32) (simple_mr (bor $imm 1) 0 $op $1) (MODRM_IMM32))
+)
+
+/*(defshape SSE_OP
+  // MR default
+  (pat (INT GPR_or_MEM GPR)   (simple_mr $op          0 $2 $1)  (MODRM_MR))
+  // RM, (just MR opcode bit 2 is set)
+  (pat (INT GPR GPR_or_MEM)   (simple_mr (bor $op 2)  0 $1 $2)  (MODRM_RM))
+
+  (pat (SSE_T XMM_or_MEM XMM) (rex 0 $1 $2 0) 0x0F $op            (modrm 3 $1 $2))
+  (pat (SSE_T XMM XMM_or_MEM) (rex 0 $2 $1 0) 0x0F (bor $op 0x10) (modrm 0 $2 $1))
 )
 
 // defining a simple instruction
-// (definst SSE_OP FP_ADD "add" :op 0x58)
-// (definst SSE_OP FP_MUL "mul" :op 0x59)
+(definst SSE_OP FP_ADD "add" :op 0x58)
+(definst SSE_OP FP_MUL "mul" :op 0x59) */
 
 (definst INT_OP1 ADD  "add"  :base 0 :op 0)
 (definst INT_OP1 OR   "or"   :base 0 :op 1)
@@ -116,7 +120,6 @@
 (definst INT_OP1 XOR  "xor"  :base 0 :op 6)
 (definst INT_OP1 CMP  "cmp"  :base 0 :op 7)
 
-#if 0
 (definst INT_OP2 MOV  "mov"  :op 0x88 :imm 0xC6)
 (definst INT_OP2 TEST "test" :op 0x84 :imm 0xF6)
 
@@ -128,6 +131,7 @@
 )
 (definst MOVABS MOVABS "mov")
 
+#if 0
 (defshape STK_OP
   (pat (I64 GPR IMM64) (simple_r $op))
 )
