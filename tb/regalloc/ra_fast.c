@@ -30,6 +30,12 @@ enum {
     FRA_LOG_CURR = FRA_LOG_HIGH,
 };
 
+static int fra_def_count(Ctx* ctx, RABase* ra, TB_Node* n) {
+    int leader = uf_find(ra->uf, ra->uf_len, n->gvn);
+    ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
+    return set ? aarray_length(set) : 1;
+}
+
 static bool fra_interfere(Ctx* restrict ctx, RABase* ra_base, TB_Node* lhs, TB_Node* rhs) {
     return true;
 }
@@ -106,7 +112,7 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
     } else {
         // insert a reload *after* pos for the evicted reg, remap
         // all uses below this point to a new vreg
-        bool remat = can_remat(ctx, evict.n);
+        bool remat = can_remat(ctx, evict.n); // && fra_def_count(ctx, &ra->base, evict.n) == 1;
         // it's already allocated we don't really care to change it
         RegMask* old_mask = ctx->vregs[evict.vreg_id].mask;
         // we will compute a fresh "new mask" because there's now less restrictions on it
@@ -145,6 +151,7 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
         if (ctx->f->node_count >= ra->base.uf_len) {
             tb__ra_resize_uf(&ra->base, ctx->f->node_count + 1);
         }
+
         if (spill != NULL) {
             // spill is alone
             ra->base.uf[spill->gvn] = spill->gvn;
@@ -188,6 +195,8 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
         TB_Node* new_leader = NULL;
         int old_leader = uf_find(ra->base.uf, ra->base.uf_len, evict.n->gvn);
 
+        bool used_right_now = false;
+
         // point all uses below the reload to the reload
         size_t cnt2;
         TB_Node** arr2 = coalesce_set_array(&ra->base, &ctx->vregs[evict.vreg_id].n, &cnt2);
@@ -199,6 +208,7 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
 
                 int t = ra->order[un->gvn] - 1;
                 if (NODE_ISA(un, PROJ) || ctx->f->scheduled[un->gvn] != bb || t <= pos) {
+                    used_right_now |= (t == pos);
                     j += 1;
                     continue;
                 }
@@ -215,17 +225,18 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
             int t = ra->order[k->gvn] - 1;
             if (t > pos) {
                 ctx->vreg_map[k->gvn] = reload_vreg_id;
-                aarray_push(new_set, reload);
+                aarray_push(new_set, k);
             } else if (new_leader == NULL) {
                 new_leader = k;
 
                 // reset
                 ra->base.uf[k->gvn] = k->gvn;
                 ctx->vreg_map[k->gvn] = evict.vreg_id;
-                aarray_push(old_set, reload);
+                aarray_push(old_set, k);
             } else {
                 ra->base.uf[k->gvn] = new_leader->gvn;
                 ctx->vreg_map[k->gvn] = evict.vreg_id;
+                aarray_push(old_set, k);
             }
         }
         TB_ASSERT(aarray_length(new_set) > 0 && aarray_length(old_set) > 0);
@@ -235,6 +246,13 @@ static void fra_evict(Ctx* restrict ctx, FastRA* ra, FRA_Evict evict, TB_BasicBl
         nl_table_remove(&ra->base.coalesce_set, (void*) (uintptr_t) (old_leader + 1));
         nl_table_put(&ra->base.coalesce_set, (void*) (uintptr_t) (reload->gvn + 1), new_set);
         nl_table_put(&ra->base.coalesce_set, (void*) (uintptr_t) (new_leader->gvn + 1), old_set);
+
+        if (used_right_now) {
+            // This case gets nasty, usually it means we need to evict an input
+            // which is an input to an eviction (CISC-coalescing) for the sake
+            // of another input.
+            __builtin_debugtrap();
+        }
 
         if (spill != NULL) {
             TB_ASSERT(evict.vreg_id < ra->spill_cap);
@@ -411,6 +429,7 @@ static TB_Node* fra_allocate_reg(Ctx* restrict ctx, FastRA* ra, TB_Node* n, int 
             // tracking ordinals.
             TB_Node* k = ra->active[class][i];
             int other_vreg_id = ctx->vreg_map[k->gvn];
+
             size_t cnt2;
             TB_Node** arr2 = coalesce_set_array(&ra->base, &ctx->vregs[other_vreg_id].n, &cnt2);
 

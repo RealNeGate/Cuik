@@ -69,7 +69,7 @@ static TB_Node** coalesce_set_array(RABase* ra, TB_Node** n_ptr, size_t* out_cou
 }
 
 void tb__ra_resize_uf(RABase* ra, size_t new_len);
-void tb__ra_coalesce(RABase* ra, int x, int y, TB_Node* xn, TB_Node* yn);
+int tb__ra_coalesce(RABase* ra, TB_Node* xn, TB_Node* yn);
 bool tb__ra_can_coalesce(RABase* ra, TB_Node* xn, TB_Node* yn);
 
 void tb__ra_init(RABase* ra, TB_Arena* arena);

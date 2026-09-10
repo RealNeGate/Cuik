@@ -489,9 +489,8 @@ static void print_extra(OutStream* s, TB_Node* n) {
     }
 }
 
-
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
-    int vreg_id = ctx->vreg_map[n->gvn];
+    int vreg_id = n->gvn < aarray_length(ctx->vreg_map) ? ctx->vreg_map[n->gvn] : 0;
     if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
         VReg* v = &ctx->vregs[vreg_id];
         // printf("V%d:", vreg_id);

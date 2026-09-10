@@ -329,8 +329,6 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n, bool kill_node
     }
 }
 
-#define BITS64_TEST(x, i) (((x) >> (i)) & 1)
-
 static bool ifg_member(Briggs* ra, int i, int j);
 static bool briggs_interfere(Ctx* restrict ctx, RABase* ra_base, TB_Node* lhs, TB_Node* rhs) {
     int x = ctx->vreg_map[lhs->gvn];
@@ -459,10 +457,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 int degree = ra.adj[s.vreg_id][0] = s.degree;
                 int def_class = vreg->mask->class;
                 if (briggs_select_vreg(ctx, &ra, s.vreg_id, degree, stack_cap, mask_cap)) {
-                    if (def_class == REG_CLASS_STK && vreg->assigned+vreg->reg_width > num_spills) {
-                        num_spills = vreg->assigned+vreg->reg_width;
-                    }
-
+                    TB_ASSERT(vreg->reg_width > 0);
                     IF_OPT(REGALLOC) {
                         printf("#   assigned to ");
                         print_reg_name(vreg->class, vreg->assigned);
@@ -501,6 +496,11 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                     int degree = ra.adj[vreg_id][0];
 
                     if (briggs_select_vreg(ctx, &ra, vreg_id, degree, stack_cap, mask_cap)) {
+                        TB_ASSERT(vreg->class == REG_CLASS_STK);
+                        if (vreg->assigned+vreg->reg_width > num_spills) {
+                            num_spills = vreg->assigned+vreg->reg_width;
+                        }
+
                         IF_OPT(REGALLOC) {
                             printf("#   assigned to ");
                             print_reg_name(vreg->class, vreg->assigned);

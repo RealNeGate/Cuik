@@ -49,6 +49,8 @@ function flatten(arr)
     return new_arr
 end
 
+local repros = {}
+
 function run_command(exe, args, outfile)
     assert(exe)
     assert(args)
@@ -67,12 +69,19 @@ function run_command(exe, args, outfile)
 
     local f = io.popen(cmd)
     if not f then
+        repros[#repros + 1] = cmd
         return false
     end
 
     local content = f:read("*all")
     f:close()
-    return content == "0\n"
+
+    if content ~= "0\n" then
+        repros[#repros + 1] = cmd
+        return false
+    end
+
+    return true
 end
 
 function run_command0(cmd)
@@ -83,7 +92,6 @@ function run_command0(cmd)
 end
 
 local skips   = {}
-local repros  = {}
 local results = {}
 
 function cc_compile_and_test(cc, infile, cc_args, exec_args)

@@ -158,7 +158,6 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
                     }
 
                     int y = uf_find(ra->uf, ra->uf_len, in->gvn);
-
                     RegMask* in_mask = constraint_in(ctx, n, shared_edge);
                     RegMask* new_mask = tb__reg_mask_meet(ctx, in_mask, ctx->vregs[ctx->vreg_map[y]].mask);
                     new_mask = tb__reg_mask_meet(ctx, new_mask, ctx->vregs[vreg_id].mask);
@@ -190,8 +189,7 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
                     }
 
                     // hard coalesce with direct input
-                    y = uf_find(ra->uf, ra->uf_len, in->gvn);
-                    tb__ra_coalesce(ra, x, y, n, in);
+                    tb__ra_coalesce(ra, n, in);
                 }
             }
         }
@@ -256,12 +254,11 @@ void tb__ra_init(RABase* ra, TB_Arena* arena) {
                 }
 
                 // hard coalesce with direct input
-                y = uf_find(ra->uf, ra->uf_len, n->inputs[k]->gvn);
-                tb__ra_coalesce(ra, x, y, n, n->inputs[k]);
+                tb__ra_coalesce(ra, n, n->inputs[k]);
             }
 
-            TB_ASSERT(x == ra->uf[x]); // must've stayed the head
-            ctx->vregs[ctx->vreg_map[x]].mask = rm;
+            TB_ASSERT(x == ra->uf[x]);
+            ctx->vregs[vreg_id].mask = rm;
         }
 
         // compute lists of coalesced nodes
@@ -472,22 +469,32 @@ void tb__ra_resize_uf(RABase* ra, size_t new_len) {
     ra->uf_len = new_len;
 }
 
-void tb__ra_coalesce(RABase* ra, int x, int y, TB_Node* xn, TB_Node* yn) {
+int tb__ra_coalesce(RABase* ra, TB_Node* xn, TB_Node* yn) {
+    int x = uf_find(ra->uf, ra->uf_len, xn->gvn);
+    int y = uf_find(ra->uf, ra->uf_len, yn->gvn);
     if (x == y) {
-        return;
+        return x;
     }
+
+    /* if (y < x) {
+    SWAP(int, x, y);
+    SWAP(TB_Node*, xn, yn);
+    } */
 
     int max = TB_MAX(x, y) + 1;
     if (max >= ra->uf_len) {
         tb__ra_resize_uf(ra, max);
     }
 
+    // both must be roots
+    TB_ASSERT(ra->uf[x] == x);
+    TB_ASSERT(ra->uf[y] == y);
+
     // hard coalesce with direct input
     TB_ASSERT(x < ra->uf_len && y < ra->uf_len);
     ra->uf[y] = x;
     ra->uf_size[x] += ra->uf_size[y];
 
-    TB_ASSERT(ra->uf[x] == x);
     ArenaArray(TB_Node*)* new_set = (ArenaArray(TB_Node*)*) nl_table_getp(&ra->coalesce_set, (void*) (uintptr_t) (x + 1));
     if (new_set == NULL) {
         ArenaArray(TB_Node*) set = aarray_create(&ra->ctx->f->arena, TB_Node*, 4);
@@ -500,12 +507,17 @@ void tb__ra_coalesce(RABase* ra, int x, int y, TB_Node* xn, TB_Node* yn) {
 
     ArenaArray(TB_Node*) old_set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (y + 1));
     if (old_set == NULL) {
+        TB_ASSERT(ra->uf_size[y] == 1);
         aarray_push(*new_set, yn);
     } else {
+        TB_ASSERT(ra->uf_size[y] == aarray_length(old_set));
         aarray_for(i, old_set) {
             aarray_push(*new_set, old_set[i]);
         }
+        nl_table_remove(&ra->coalesce_set, (void*) (uintptr_t) (y + 1));
     }
+    ra->uf_size[y] = 0;
+    return x;
 }
 
 bool tb__ra_can_coalesce(RABase* ra, TB_Node* xn, TB_Node* yn) {

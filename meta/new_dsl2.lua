@@ -212,11 +212,11 @@ local leaf_matchers = {}
 -- A matcher maps pattern strings to accept states, pattern strings
 -- are variable arrays with variable strings inside.
 function Matcher()
-    local t = { patterns={}, parts=Partitions(), to_accept={} }
+    local t = { patterns={}, to_accept={}, accept_fn={} }
 
-    function t:accept(pat, accept)
-        self.parts:put(accept, pat)
+    function t:accept(pat, accept, fn)
         self.to_accept[pat] = accept
+        self.accept_fn[accept] = fn
         table.insert(self.patterns, pat)
     end
 
