@@ -671,6 +671,7 @@ TB_Node* tb_builder_get_var(TB_GraphBuilder* g, int id) {
 void tb_builder_set_var(TB_GraphBuilder* g, int id, TB_Node* src) {
     TB_NodeSymbolTable* extra = TB_NODE_GET_EXTRA(g->curr);
     TB_ASSERT(extra->complete);
+    TB_ASSERT(2 + id < g->curr->input_count);
     set_input(g->f, g->curr, src, 2 + id);
 }
 

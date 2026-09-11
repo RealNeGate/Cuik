@@ -71,7 +71,7 @@ local modules = {
             "tb/libtb.c",
             -- archictectures
             "tb/x64/x64_target.c", "tb/aarch64/aarch64_target.c", "tb/mips/mips_target.c", "tb/wasm/wasm_target.c"
-        }, flags="-DCONFIG_HAS_TB", deps={"common", "cuik_pp"}
+        }, flags="-DCONFIG_HAS_TB", deps={"common"}
     },
     --   Linker
     linker = { srcs={
@@ -183,6 +183,7 @@ end
 
 local cc = "clang"
 local ld = ""
+local ar = "llvm-ar"
 if options.gcc then
     cc = "gcc"
     ld = "ld"
@@ -202,9 +203,10 @@ end
 rules({
     { name = "cc",   command = cc.." $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
     { name = "cc2",  command = "cuik $in $flags -MD -MF $out.d -o $out",   description = "CC $in", depfile = "$out.d" },
-    { name = "ld",   command = ld.." $in $flags$out",                  description = "LINK $out" },
+    { name = "ld",   command = ld.." $in $flags$out",                      description = "LINK $out" },
+    { name = "ar",   command = ar.." $flags $out $in",                     description = "LIB $out" },
     { name = "ld2",  command = "cuik -link $in $flags -out:$out",          description = "LINK $out" },
-    { name = "nasm", command = "nasm $in -f "..nasm_fmt.." -o $out",                description = "NASM $out" },
+    { name = "nasm", command = "nasm $in -f "..nasm_fmt.." -o $out",       description = "NASM $out" },
     { name = "run",  command = "$cmd",                                     description = "$cmd"      },
     { name = "meta", command = arg[-1].." $script $out $in",               description = "META $out" }
 })
@@ -266,7 +268,7 @@ else
         ldflags = ldflags.." -fsanitize=address"
     end
 
-    if true then
+    if false then
         cflags  = cflags .." -DCUIK_USE_URING"
         ldflags = ldflags.." -luring"
     end
@@ -359,19 +361,31 @@ if visited["cuik_go"] then
     objs[#objs + 1] = "bin/objs/checkpoint.o"
 end
 
-local out = "bin/cuik"
+local out = nil
 if is_windows then
     if options.shared then
-        out = out..".dll"
+        out = "cuik.dll"
+    elseif not is_exe then
+        out = "cuik.lib"
     else
-        out = out..".exe"
+        out = "cuik.exe"
     end
-elseif options.shared then
-    out = out..".so"
+else
+    if options.shared then
+        out = "cuik.so"
+    elseif not is_exe then
+        out = "libcuik.a"
+    end
 end
+out = "bin/"..out
 
-table.insert(lines, string.format("build %s: ld %s", out, table.concat(objs, " ")))
-table.insert(lines, "    flags = "..ldflags)
+if not options.shared and not is_exe then
+    table.insert(lines, string.format("build %s: ar %s", out, table.concat(objs, " ")))
+    table.insert(lines, "    flags = -rcs")
+else
+    table.insert(lines, string.format("build %s: ld %s", out, table.concat(objs, " ")))
+    table.insert(lines, "    flags = "..ldflags)
+end
 table.insert(lines, "")
 
 -- Export & run ninja file

@@ -438,7 +438,7 @@ static const uint8_t tb_jit__trampoline[] = {
     #else
     // use new SP and save old SP
     0x48, 0x87, 0xFC,           // xchg rsp, rdi
-    0x56,                       // push rdi
+    0x57,                       // push rdi
     // shuffle some params into sysv volatile regs
     0x48, 0x89, 0xF0,           // mov rax, rsi
     0x49, 0x89, 0xD2,           // mov r10, rdx
@@ -458,6 +458,14 @@ static const uint8_t tb_jit__trampoline[] = {
 
 _Static_assert(sizeof(TB_Stacklet) <= 0x40, "TODO? tb_jit_thread_userdata");
 size_t tb_jit_thread_userdata(void) { return 0x40; }
+
+void* tb_jit_thread_pc(TB_Stacklet* stacklet) {
+    return stacklet->pc;
+}
+
+void* tb_jit_thread_sp(TB_Stacklet* stacklet) {
+    return stacklet->sp;
+}
 
 TB_Safepoint* tb_jit_get_safepoint(TB_JIT* jit, void* pc) {
     mtx_lock(&jit->lock);
@@ -554,6 +562,12 @@ bool tb_jit_thread_call(TB_Stacklet* stack, void* pc, uint64_t* ret, size_t arg_
     if (ret) { *ret = r; }
     return true;
 }
+
+bool tb_jit_thread_step(TB_Stacklet* stacklet, uintptr_t lo, uintptr_t hi) {
+    assert(0 && "TODO");
+    return false;
+}
+
 #endif // CUIK__IS_X64
 #endif // EMSCRIPTEN
 

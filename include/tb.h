@@ -668,7 +668,13 @@ TB_API void tb_jit_thread_init(TB_JIT* jit, TB_Stacklet* stack, size_t ud_size, 
 // offsetof user_data in the TB_Stacklet
 TB_API size_t tb_jit_thread_userdata(void);
 
+TB_API void* tb_jit_thread_pc(TB_Stacklet* stacklet);
+TB_API void* tb_jit_thread_sp(TB_Stacklet* stacklet);
+
 TB_API bool tb_jit_thread_call(TB_Stacklet* stacklet, void* pc, uint64_t* ret, size_t arg_count, void** args);
+
+// Break out once we leave the specified range.
+TB_API bool tb_jit_thread_step(TB_Stacklet* stacklet, uintptr_t lo, uintptr_t hi);
 #endif
 
 ////////////////////////////////

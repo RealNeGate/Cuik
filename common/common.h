@@ -74,7 +74,7 @@
 #define TODO() (assert(0 && "TODO"), __builtin_unreachable())
 #endif
 
-#if !CUIK_ALLOW_THREADS
+#ifndef CUIK_ALLOW_THREADS
 typedef struct {
     int nothing;
 } mtx_t;
