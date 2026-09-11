@@ -164,13 +164,13 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     // sort by hottest edge
     qsort(traces.edges, aarray_length(traces.edges), sizeof(Edge), edge_cmp);
 
-    #if TB_OPTDEBUG_PLACEMENT
-    printf("== EDGES ==\n");
-    for (int i = 0; i < aarray_length(traces.edges); i++) {
-        Edge edge = traces.edges[i];
-        printf("  BB%-3d -> BB%-3d (%f)\n", edge.start_bb, edge.end_bb, edge.freq);
+    IF_OPT(PLACEMENT) {
+        printf("== EDGES ==\n");
+        for (int i = 0; i < aarray_length(traces.edges); i++) {
+            Edge edge = traces.edges[i];
+            printf("  BB%-3d -> BB%-3d (%f)\n", edge.start_bb, edge.end_bb, edge.freq);
+        }
     }
-    #endif
 
     for (int i = 0; i < aarray_length(traces.edges); i++) {
         Edge e = traces.edges[i];

@@ -103,37 +103,40 @@ function cc_compile_and_test(cc, infile, cc_args, exec_args)
 end
 
 local total  = 0
-local passed = 0
+local passed = {}
+for i=1,#configs do
+    passed[i] = 0
+end
+
 function process_test(i)
     -- HACK REMOVE LATER
     local includes = "-I /usr/include/csmith/"
     local args     = ""
     if x[i] == "nbody.c" then
         args = "100000"
-    elseif x[i] == "whetstone.c" then
-        args = ""
+    elseif x[i]:match("^cs") then
+        args = "1"
     end
 
     -- Generate golden test results, if these fail then we skip the test later
     if not cc_compile_and_test("clang", x[i], { "-lm", includes }, args) then
         skips[#skips + 1] = x[i]
-        return
+        goto skip
     end
 
     print("Testing", x[i])
 
     -- Compare against clang
     local r = {}
-    local pass = true
     for j=1,#configs do
         if cc_compile_and_test("cuik", x[i], { configs[j], includes }, args) then
             local diff = os.execute("git diff --color-words clang_log.txt cuik_log.txt")
             if diff ~= true and diff ~= 0 then
                 r[j] = "DIFF"
                 repros[#repros + 1] = cmd
-                pass = false
             else
                 r[j] = "GOOD"
+                passed[j] = passed[j] + 1
             end
         else
             r[j] = tostring(code)
@@ -142,11 +145,9 @@ function process_test(i)
         end
     end
     results[i] = r
-
-    if pass then
-        passed = passed + 1
-    end
     total = total + 1
+
+    ::skip::
 end
 
 for i=1,#x do process_test(i) end
@@ -193,6 +194,13 @@ for i=1,#x do
     end
 end
 
+tab[1] = pad_str("PASS", entry_width)
+for j=1,#configs do
+    local str = tostring(passed[j])
+    tab[j + 1] = pad_str(str, entry_width)
+end
+print(table.concat(tab, " | "))
+
 print()
 print("Skip:")
 for i=1,#skips do
@@ -206,6 +214,6 @@ for i=1,#repros do
 end
 
 print()
-print("Passed", passed, " out of ", total)
+print("Total tests", total)
 
 

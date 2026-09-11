@@ -375,6 +375,8 @@ else
         out = "cuik.so"
     elseif not is_exe then
         out = "libcuik.a"
+    else
+        out = "cuik"
     end
 end
 out = "bin/"..out
